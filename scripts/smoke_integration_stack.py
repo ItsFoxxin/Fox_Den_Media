@@ -87,6 +87,10 @@ def main() -> None:
     assert created.status == 303
     assert b"Your media den" in request(admin, base + "/").read()
 
+    # Deferred upstream DNS can lag container health briefly; wait for both modules.
+    wait_for(admin, base + "/music/")
+    wait_for(admin, base + "/media/")
+
     # One Portal session enters both real modules with no module login.
     for path in ("/music/", "/music/static/styles.css", "/media/", "/media/assets/style.css"):
         response = request(admin, base + path)
