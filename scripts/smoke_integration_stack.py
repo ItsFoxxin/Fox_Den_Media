@@ -148,7 +148,7 @@ def main() -> None:
     # Disposable SQLite and module state survive safe restarts.
     compose(env_path, "restart", "portal", "music", "music-worker", "media")
     wait_for(admin, base + "/")
-    assert request(admin, base + "/media/api/requests").status == 200
+    wait_for(admin, base + "/media/api/requests")
 
     logs = compose(env_path, "logs", "--no-color", capture=True)
     for secret_name in ("INTEGRATION_PORTAL_SECRET", "INTEGRATION_BOOTSTRAP_SECRET",
