@@ -239,6 +239,7 @@ def create_app(settings=None, *, start_worker=True, qbit=None):
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>{title} · Fox Den request browser</title>
 <link rel="stylesheet" href="../assets/request-browser.css">
+<link rel="stylesheet" href="../assets/denkit.css">
 <script src="../assets/request-browser.js" defer></script></head>
 <body data-home-url="{home}"><header class="browser-toolbar">
 <a class="browser-button primary" href="../?view=requests">← Back to requests</a>

@@ -35,6 +35,7 @@ def test_workspace_shell_and_current_navigation(settings, database, path, active
         assert 'aria-label="Browse library"' in response.text
         assert 'href="#main-content"' in response.text
         assert f'/workspace.css?v={__version__}' in response.text
+        assert f'/denkit.css?v={__version__}' in response.text
         links = Links()
         links.feed(response.text)
         assert links.current == active
@@ -50,3 +51,4 @@ def test_dashboard_keeps_polling_and_manual_scan_form(settings, database):
         assert 'name="csrf_token"' in html
         assert 'aria-label="How music reaches your library"' in html
         assert client.get("/static/workspace.css").status_code == 200
+        assert client.get("/static/denkit.css").status_code == 200

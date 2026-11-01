@@ -38,9 +38,9 @@ try:
     probe = """import importlib.resources as r,urllib.request
 from foxden_music import __version__
 root=r.files('foxden_music')
-for name in ['styles.css','workspace.css','app.js','browser.js','browser-home-bridge.js']:
+for name in ['styles.css','workspace.css','denkit.css','app.js','browser.js','browser-home-bridge.js']:
     assert root.joinpath('static',name).is_file(), name
-for route in ['/health','/','/add','/library','/static/workspace.css']:
+for route in ['/health','/','/add','/library','/static/workspace.css','/static/denkit.css']:
     response=urllib.request.urlopen('http://127.0.0.1:8000'+route)
     assert response.status==200
 print('Packaged UI and HTTP health passed',__version__)

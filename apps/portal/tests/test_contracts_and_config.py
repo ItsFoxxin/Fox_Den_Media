@@ -63,8 +63,12 @@ def test_responsive_navigation_and_state_styles_exist(tmp_path):
         bootstrap_admin(client)
         page = client.get("/")
         css = client.get("/static/portal.css")
+        denkit = client.get("/static/denkit.css")
         assert 'name="viewport"' in page.text
         assert 'aria-label="Platform"' in page.text
+        assert "/static/denkit.css" in page.text
+        assert denkit.status_code == 200
+        assert "--den-midnight" in denkit.text
         assert "@media(max-width:680px)" in css.text
         for state in ("healthy", "unhealthy", "offline"):
             assert f"state-{state}" in css.text
