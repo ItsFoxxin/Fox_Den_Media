@@ -26,12 +26,17 @@ def test_optional_modules_use_deferred_resolution_and_safe_failure():
 
 def test_jellyfin_uses_dedicated_native_auth_host_and_no_portal_auth_request():
     block = CONFIG.split("server_name __JELLYFIN_PUBLIC_HOST__;", 1)[1].split("server {", 1)[0]
+    assert "listen 8080 default_server" not in block
     assert "set $jellyfin_backend jellyfin:8096;" in block
     assert "auth_request" not in block
     assert "proxy_set_header Upgrade $http_upgrade;" in block
     assert "proxy_buffering off;" in block
     assert "access_log off;" in block
     assert "foxden-theme.css" in block and "foxden-mascot.png" in block
+
+
+def test_portal_is_the_default_host_when_jellyfin_name_does_not_match():
+    assert "listen 8080 default_server;\n        server_name _;" in CONFIG
 
 
 def test_ingress_strips_identity_headers_and_preserves_transport_controls():
