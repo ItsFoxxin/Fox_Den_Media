@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.6.0 - 2026-11-01
+
+### Added
+
+- Optional official Jellyfin 12.4 Compose profile with persistent config/cache,
+  read-only media, dedicated-host ingress, WebSockets, resource limits, and an
+  explicit Intel `/dev/dri` hardware-acceleration override.
+- Maintainable Jellyfin Web Fox Den Midnight theme served by ingress without
+  modifying the official image.
+- Existing-instance inventory, copied-state rehearsal, cutover, backup, and
+  rollback documentation.
+
+### Security
+
+- Music, Movies/TV, and contained-browser ingress now require an administrator
+  Portal session; general users receive only their media-server link.
+- Jellyfin retains native authentication for client compatibility and is never
+  placed in Gluetun's network namespace.
+- Portal roles never imply Jellyfin administrator privileges.
+
+### Boundary
+
+- No live Jellyfin state, NAS path, Caddy configuration, Authentik provider, or
+  production container was inspected or modified.
+
 ## 0.5.0 - 2026-10-30
 
 ### Added

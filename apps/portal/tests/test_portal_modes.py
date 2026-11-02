@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 from fastapi.testclient import TestClient
 import httpx
 
@@ -90,3 +92,22 @@ def test_disabled_module_is_not_contacted_or_rendered(tmp_path):
         bootstrap_admin(client)
         page = client.get("/")
         assert "No media modules are enabled" in page.text
+
+
+def test_general_user_sees_jellyfin_but_not_admin_modules_or_activity(tmp_path):
+    modules = configured_modules("music", "media")
+    configured = replace(settings(tmp_path, modules), jellyfin_public_url="https://jellyfin.example.invalid")
+    transport = module_transport({"music.test": module_summary("music"), "media.test": module_summary("media")})
+    with TestClient(create_app(configured, ModuleClient(.2, transport))) as client:
+        bootstrap_admin(client)
+        with client.app.state.store.connection() as db:
+            password_hash = db.execute("SELECT password_hash FROM users WHERE username='admin'").fetchone()[0]
+        viewer = client.app.state.store.create_local_user("viewer", "Viewer", password_hash, "user")
+        token, token_csrf = client.app.state.store.create_session(viewer["id"], "local", 3600)
+        client.cookies.set("foxden_portal_session", token)
+        client.cookies.set("foxden_portal_csrf", token_csrf)
+        page = client.get("/")
+        assert "https://jellyfin.example.invalid" in page.text
+        assert "Media access only" in page.text
+        assert "state-healthy" not in page.text and "Recent activity" not in page.text
+        assert client.get("/api/platform/v1/status").status_code == 403

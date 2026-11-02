@@ -46,7 +46,7 @@ x-music-service: &music-service
 services:
   ingress:
     image: "${NGINX_IMAGE:-nginx:1.28.0-alpine}"
-    user: "101:101"
+    user: "${FOXDEN_PUID:-10001}:${FOXDEN_PGID:-10001}"
     read_only: true
     restart: unless-stopped
     cap_drop: [ALL]
@@ -68,7 +68,7 @@ services:
 
   portal:
     <<: *hardening
-    image: "${PORTAL_IMAGE:-foxden-portal:0.5.0}"
+    image: "${PORTAL_IMAGE:-foxden-portal:0.6.0}"
     build:
       context: ../apps/portal
       args:
@@ -86,6 +86,7 @@ services:
       PORTAL_IDENTITY_ISSUER: "${FOXDEN_IDENTITY_ISSUER:-foxden-portal}"
       PORTAL_INGRESS_AUTH_SECRET_FILE: /run/secrets/ingress-auth
       PORTAL_MODULES_JSON: "${PORTAL_MODULES_JSON:-[]}"
+      PORTAL_JELLYFIN_URL: "${JELLYFIN_PUBLIC_URL:-}"
       PORTAL_OIDC_ISSUER: "${PORTAL_OIDC_ISSUER:-}"
       PORTAL_OIDC_CLIENT_ID: "${PORTAL_OIDC_CLIENT_ID:-}"
       PORTAL_OIDC_CLIENT_SECRET_FILE: /run/secrets/oidc-client-secret
@@ -157,7 +158,7 @@ services:
   media:
     <<: *hardening
     profiles: [media]
-    image: "${MEDIA_IMAGE:-fox-den-media:0.5.0}"
+    image: "${MEDIA_IMAGE:-fox-den-media:0.6.0}"
     build:
       context: ..
       dockerfile: apps/media/Dockerfile
@@ -216,6 +217,29 @@ services:
     networks: [platform, outbound]
     mem_limit: "${FOXDEN_BROWSER_MEMORY_LIMIT:-2g}"
     cpus: "${FOXDEN_BROWSER_CPUS:-2.0}"
+
+  jellyfin:
+    profiles: [jellyfin]
+    image: "${JELLYFIN_IMAGE:-jellyfin/jellyfin:12.4}"
+    user: "${JELLYFIN_PUID:-10001}:${JELLYFIN_PGID:-10001}"
+    init: true
+    read_only: true
+    restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: [/tmp:rw,nosuid,nodev,size=512m,mode=1777]
+    environment:
+      TZ: "${TZ:-UTC}"
+      JELLYFIN_PublishedServerUrl: "${JELLYFIN_PUBLIC_URL:-http://jellyfin.invalid}"
+    volumes:
+      - {type: bind, source: "${JELLYFIN_CONFIG_PATH:-./.disabled/jellyfin-config}", target: /config, bind: {create_host_path: false}}
+      - {type: bind, source: "${JELLYFIN_CACHE_PATH:-./.disabled/jellyfin-cache}", target: /cache, bind: {create_host_path: false}}
+      - {type: bind, source: "${JELLYFIN_MEDIA_PATH:-./.disabled/jellyfin-media}", target: "${JELLYFIN_MEDIA_CONTAINER_PATH:-/media}", read_only: true, bind: {create_host_path: false}}
+    expose: ["8096"]
+    networks: [platform, outbound]
+    mem_limit: "${JELLYFIN_MEMORY_LIMIT:-4g}"
+    cpus: "${JELLYFIN_CPUS:-4.0}"
+    stop_grace_period: 1m
 
   gluetun:
     profiles: [managed]

@@ -13,6 +13,7 @@ retains its separate version.
 | Dependency consistency (`pip check`) | Required | Required |
 | JUnit test reports | Uploaded | Uploaded; no unexpected skipped cases allowed |
 | Build media and Music images | Required | Required |
+| Official Jellyfin image: isolated health, web asset, non-root/read-only smoke | Required | Required |
 | Real container gateway, shared login/logout, API version, non-root users, read-only staging | Required | Required |
 | Container full decode, reviewed import, checksum audit, overwrite refusal, source retention, restart persistence | - | Required |
 | Version increase compared with stable target | - | Required |
@@ -30,9 +31,11 @@ other skipped or expected-failure cases fail stable checks.
 Each job has a time limit; superseded runs are cancelled. Failed or skipped layers
 fail the aggregate gate. Tests run on isolated temporary data and containers;
 cleanup runs even on failure. CI never uses production paths or private VPN keys.
-The container test intentionally excludes the real VPN, qBittorrent, and downloader
-browser. Their live connectivity, killswitch, browser interaction, and real seeding
-behavior remain deployment checks. CI does not deploy or merge code.
+The Jellyfin smoke test uses disposable named volumes and synthetic read-only
+media; it never mounts production state. The container test intentionally excludes
+the real VPN, qBittorrent, and downloader browser. Their live connectivity,
+killswitch, browser interaction, and real seeding behavior remain deployment
+checks. CI does not deploy or merge code.
 
 ## Release procedure
 

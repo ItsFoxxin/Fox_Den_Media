@@ -121,3 +121,21 @@ def test_spoofed_ingress_marker_cannot_reach_private_session_endpoint(tmp_path):
             "X-FoxDen-Ingress": "1", "X-FoxDen-Ingress-Auth": configured.ingress_auth_secret,
         })
         assert valid.status_code == 204 and valid.content == b""
+
+
+def test_ingress_admin_gate_rejects_general_user_and_accepts_admin(tmp_path):
+    from dataclasses import replace
+
+    configured = replace(settings(tmp_path), ingress_auth_secret="ingress-test-secret-123456789012345")
+    headers = {"X-FoxDen-Ingress": "1", "X-FoxDen-Ingress-Auth": configured.ingress_auth_secret}
+    with TestClient(create_app(configured)) as client:
+        bootstrap_admin(client)
+        assert client.get("/api/platform/v1/session?required_role=admin", headers=headers).status_code == 204
+        with client.app.state.store.connection() as db:
+            password_hash = db.execute("SELECT password_hash FROM users WHERE username='admin'").fetchone()[0]
+        viewer = client.app.state.store.create_local_user("viewer", "Viewer", password_hash, "user")
+        token, token_csrf = client.app.state.store.create_session(viewer["id"], "local", 3600)
+        client.cookies.set("foxden_portal_session", token)
+        client.cookies.set("foxden_portal_csrf", token_csrf)
+        assert client.get("/api/platform/v1/session?required_role=admin", headers=headers).status_code == 403
+        assert client.get("/api/platform/v1/session?required_role=owner", headers=headers).status_code == 503

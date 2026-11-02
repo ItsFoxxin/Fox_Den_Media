@@ -30,6 +30,7 @@ def test_config_validation_and_redaction(monkeypatch, tmp_path):
     monkeypatch.setenv("PORTAL_SECRET_KEY", "portal-configuration-secret-123456789")
     monkeypatch.setenv("PORTAL_BOOTSTRAP_SECRET", "bootstrap-configuration-secret-123456")
     monkeypatch.setenv("PORTAL_COOKIE_SECURE", "false")
+    monkeypatch.setenv("PORTAL_JELLYFIN_URL", "https://jellyfin.example.invalid")
     monkeypatch.setenv("PORTAL_MODULES_JSON", json.dumps([{
         "id": "music", "name": "Music", "base_url": "http://music:8000", "navigation_path": "/music/"
     }]))
@@ -38,6 +39,8 @@ def test_config_validation_and_redaction(monkeypatch, tmp_path):
     assert redacted["bootstrap_configured"] is True
     assert "secret" not in json.dumps(redacted).lower()
     assert configured.modules[0].module_id == "music"
+    assert configured.jellyfin_public_url == "https://jellyfin.example.invalid"
+    assert redacted["jellyfin_link_configured"] is True
 
 
 def test_config_rejects_credentials_in_module_url(monkeypatch, tmp_path):
@@ -45,6 +48,15 @@ def test_config_rejects_credentials_in_module_url(monkeypatch, tmp_path):
     monkeypatch.setenv("PORTAL_SECRET_KEY", "portal-configuration-secret-123456789")
     monkeypatch.setenv("PORTAL_BOOTSTRAP_SECRET", "bootstrap-configuration-secret-123456")
     monkeypatch.setenv("PORTAL_MODULES_JSON", '[{"id":"music","name":"Music","base_url":"http://user:pass@music:8000","navigation_path":"/music/"}]')
+    with pytest.raises(ConfigError):
+        Settings.from_env()
+
+
+def test_config_rejects_credentials_in_jellyfin_url(monkeypatch, tmp_path):
+    monkeypatch.setenv("PORTAL_DATABASE_PATH", str(tmp_path / "portal.db"))
+    monkeypatch.setenv("PORTAL_SECRET_KEY", "portal-configuration-secret-123456789")
+    monkeypatch.setenv("PORTAL_BOOTSTRAP_SECRET", "bootstrap-configuration-secret-123456")
+    monkeypatch.setenv("PORTAL_JELLYFIN_URL", "https://user:password@jellyfin.example.invalid")
     with pytest.raises(ConfigError):
         Settings.from_env()
 
@@ -64,11 +76,15 @@ def test_responsive_navigation_and_state_styles_exist(tmp_path):
         page = client.get("/")
         css = client.get("/static/portal.css")
         denkit = client.get("/static/denkit.css")
+        jellyfin_theme = client.get("/static/jellyfin-midnight.css")
+        mascot = client.get("/static/fox-den-mascot.png")
         assert 'name="viewport"' in page.text
         assert 'aria-label="Platform"' in page.text
         assert "/static/denkit.css" in page.text
         assert denkit.status_code == 200
         assert "--den-midnight" in denkit.text
+        assert jellyfin_theme.status_code == 200 and "--den-coral" in jellyfin_theme.text
+        assert mascot.status_code == 200 and mascot.headers["content-type"] == "image/png"
         assert "@media(max-width:680px)" in css.text
         for state in ("healthy", "unhealthy", "offline"):
             assert f"state-{state}" in css.text

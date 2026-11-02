@@ -33,7 +33,11 @@ body {
 :focus-visible { outline: 3px solid var(--den-mint); outline-offset: 3px; }
 .skip:focus { background: var(--den-cream); color: var(--den-midnight); }
 .topbar { background: rgb(11 20 35 / 94%); }
-.brand span[aria-hidden="true"] { filter: saturate(.9); }
+.brand { display: inline-flex; align-items: center; gap: .65rem; }
+.brand-mark { width: 2.15rem; height: 2.15rem; object-fit: contain; filter: drop-shadow(0 4px 8px rgb(0 0 0 / 28%)); }
+.hero { position: relative; overflow: hidden; align-items: center; }
+.hero > div:first-child { position: relative; z-index: 1; }
+.hero-mascot { width: clamp(6rem, 11vw, 9rem); max-height: 8rem; object-fit: contain; align-self: end; filter: drop-shadow(0 12px 24px rgb(0 0 0 / 25%)); }
 .module-card, .panel, .empty, .auth-card {
   background: linear-gradient(145deg, var(--den-slate), var(--den-raised));
   box-shadow: 0 14px 36px rgb(0 0 0 / 22%);
@@ -47,6 +51,11 @@ body {
   background: var(--den-coral);
   color: var(--den-midnight);
 }
+.module-link.secondary { background: var(--den-mint); }
+.media-server-card { display: flex; justify-content: space-between; align-items: center; gap: 1.5rem; margin: 0 0 2.5rem; padding: 1.35rem; border: 1px solid var(--den-border); border-left: 4px solid var(--den-mint); border-radius: 1rem; background: linear-gradient(135deg, rgb(151 231 202 / 10%), var(--den-raised)); }
+.media-server-card h2, .media-server-card p { margin-block: .25rem; }
+.media-server-card .module-link { flex: 0 0 auto; }
+.user-boundary { border-left: 4px solid var(--den-amber); }
 .module-link:hover, .oidc-button:hover, .stack button:hover, .primary:hover { background: #ffadb0; }
 .module-link.disabled { background: var(--den-slate); color: var(--den-muted); }
 .stack input, .stack select { background: var(--den-midnight); }
@@ -60,5 +69,9 @@ body {
   .auth-card { width: 100%; max-width: 100%; margin: 3vh 0; padding: 1.35rem; overflow-wrap: anywhere; }
   .stack { min-width: 0; }
   .stack input, .stack select, .stack button { min-width: 0; max-width: 100%; }
+  .topbar { gap: .8rem; }
+  .topbar nav { flex-wrap: wrap; justify-content: flex-end; }
+  .hero-mascot { position: absolute; right: -.5rem; bottom: -.75rem; width: 6.5rem; opacity: .42; }
+  .media-server-card { align-items: flex-start; flex-direction: column; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; } }

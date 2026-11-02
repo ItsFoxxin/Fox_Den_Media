@@ -1,5 +1,25 @@
 # Validation evidence
 
+## Fox Den Midnight and optional Jellyfin 0.6.0 - 2026-11-01
+
+- Portal suite: **46 passed** locally on Windows, including local authentication,
+  role-gated ingress sessions, non-admin dashboard isolation, configuration
+  redaction, and the real Movies/TV contract.
+- Platform, ingress, migration, and DenKit slice: **33 passed** locally.
+- Music suite: **253 passed, 2 skipped** locally; the real-audio case could not
+  run without FFmpeg and one hard-link test was denied by Windows permissions.
+  Both remain required Linux CI checks and were not weakened or marked passing.
+- Release metadata and Python compilation passed locally.
+- A disposable Opera walkthrough covered first-run administrator creation,
+  authenticated navigation, offline module states, the Jellyfin entry card, and
+  mascot/theme asset loading. The sanitized result is in
+  `docs/foxden-midnight-portal-desktop.png`.
+- Docker is unavailable locally. The official Jellyfin image health check,
+  running Nginx/Jellyfin WebSocket proxy, image builds, and full/reduced Compose
+  runtime remain hosted-CI checks for this branch.
+- No NAS paths, production databases, live Jellyfin configuration, media files,
+  VPN credentials, or external identity providers were accessed.
+
 ## Guided Movie/TV browser 0.4.0 - 2026-10-15
 
 - Media suite: **40 passed, 1 skipped** locally on Windows. The skip requires

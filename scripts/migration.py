@@ -24,6 +24,9 @@ PATH_ROLES = {
     "torrent-data": "TORRENT_DATA_PATH",
     "qbittorrent-config": "QBIT_CONFIG_PATH",
     "gluetun-config": "GLUETUN_CONFIG_PATH",
+    "jellyfin-config": "JELLYFIN_CONFIG_PATH",
+    "jellyfin-cache": "JELLYFIN_CACHE_PATH",
+    "jellyfin-media": "JELLYFIN_MEDIA_PATH",
 }
 
 BACKUP_ROLES = {
@@ -34,9 +37,11 @@ BACKUP_ROLES = {
     "media-config",
     "qbittorrent-config",
     "gluetun-config",
+    "jellyfin-config",
+    "jellyfin-cache",
 }
 
-LARGE_DATA_ROLES = {"music-library", "media-library", "torrent-data"}
+LARGE_DATA_ROLES = {"music-library", "media-library", "torrent-data", "jellyfin-media"}
 
 
 def _sha256(path: Path) -> str:
@@ -194,7 +199,7 @@ def main() -> int:
     inv.add_argument("--output", type=Path, required=True)
     ready = sub.add_parser("readiness")
     ready.add_argument("--env", type=Path, required=True)
-    ready.add_argument("--mode", choices=("music", "media", "full-external", "full-managed"), required=True)
+    ready.add_argument("--mode", choices=("music", "media", "jellyfin", "full-external", "full-managed"), required=True)
     ready.add_argument("--output", type=Path, required=True)
     backup = sub.add_parser("backup")
     backup.add_argument("--env", type=Path, required=True)

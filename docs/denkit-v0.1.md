@@ -1,5 +1,10 @@
 # Fox Den Midnight (DenKit v0.1)
 
+The user-approved headphone fox is the shared mascot. This milestone uses it on
+the Portal entry experience and Jellyfin browser login, while keeping the Music
+and Movies/TV operational workspaces deliberately restrained. The original PNG
+is stored once with Portal static assets and served to Jellyfin through ingress.
+
 DenKit v0.1 is the shared visual foundation for the Fox Den Media Portal, Music workspace, and Movies/TV workspace. It is intentionally CSS-only: application routes, templates, authentication, identity assertions, APIs, databases, workers, networking, and deployment behavior remain unchanged.
 
 ## Canonical tokens

@@ -2,10 +2,19 @@
 {% block title %}Portal · Fox Den Media{% endblock %}
 {% block content %}
 <section class="hero">
-  <div><p class="eyebrow">Platform overview</p><h1>Your media den</h1><p>Music, movies, and television in one place.</p></div>
+  <div><p class="eyebrow">Platform overview</p><h1>Your media den</h1><p>{% if is_admin %}Music, movies, television, and system workflows in one place.{% else %}Your authorized Fox Den media services in one cozy place.{% endif %}</p></div>
   <div class="user-chip"><span>{{ user.display_name }}</span><small>{{ user.role }}</small></div>
+  <img class="hero-mascot" src="{{ url_for('static', path='/fox-den-mascot.png') }}" alt="Fox Den fox mascot wearing headphones">
 </section>
 
+{% if jellyfin_url %}
+<section class="media-server-card" aria-labelledby="jellyfin-title">
+  <div><p class="eyebrow">Watch and listen</p><h2 id="jellyfin-title">Jellyfin media server</h2><p>Open your authorized libraries with your Jellyfin account. Playback and library permissions are managed by Jellyfin.</p></div>
+  <a class="module-link secondary" href="{{ jellyfin_url }}">Open Jellyfin</a>
+</section>
+{% endif %}
+
+{% if is_admin %}
 <section aria-labelledby="modules-title">
   <div class="section-heading"><div><p class="eyebrow">Modules</p><h2 id="modules-title">Available services</h2></div></div>
   {% if modules %}
@@ -30,4 +39,7 @@
   {% if activity %}<div class="activity-list">{% for item in activity %}<article><span class="activity-source">{{ item.module_name }}</span><div><strong>{{ item.title }}</strong><p>{{ item.kind }} · {{ item.status }}</p></div><time datetime="{{ item.occurred_at.isoformat() }}">{{ item.occurred_at.strftime('%Y-%m-%d %H:%M UTC') }}</time></article>{% endfor %}</div>
   {% else %}<p class="muted">No recent module activity is available.</p>{% endif %}
 </section>
+{% else %}
+<section class="panel user-boundary" aria-labelledby="account-boundary-title"><p class="eyebrow">Account access</p><h2 id="account-boundary-title">Media access only</h2><p>Your account does not include acquisition, download, server-browser, or infrastructure administration. Ask an administrator if you need a different role.</p></section>
+{% endif %}
 {% endblock %}

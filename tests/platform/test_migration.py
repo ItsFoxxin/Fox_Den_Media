@@ -68,3 +68,24 @@ def test_large_data_roots_are_inventory_only_and_not_backed_up(tmp_path: Path) -
     restore = tmp_path / "restore-large"
     restore_rehearsal(archive, restore, execute=True)
     assert not (restore / "media-library").exists()
+
+
+def test_jellyfin_state_is_backed_up_but_media_is_inventory_only(tmp_path: Path) -> None:
+    values = fixture_values(tmp_path)
+    config = tmp_path / "jellyfin" / "config"
+    cache = tmp_path / "jellyfin" / "cache"
+    media = tmp_path / "jellyfin" / "media"
+    for path in (config, cache, media):
+        path.mkdir(parents=True)
+    (config / "jellyfin.db").write_bytes(b"synthetic-jellyfin-database")
+    (cache / "image.cache").write_bytes(b"synthetic-cache")
+    (media / "movie.mkv").write_bytes(b"synthetic-media")
+    values.update(JELLYFIN_CONFIG_PATH=str(config), JELLYFIN_CACHE_PATH=str(cache), JELLYFIN_MEDIA_PATH=str(media))
+    report = inventory(values)
+    assert next(item for item in report["entries"] if item["role"] == "jellyfin-media")["content_scan"] == "skipped-large-data-root"
+    archive = create_backup(values, tmp_path / "backups", execute=True, writers_stopped=True)
+    restore = tmp_path / "restore-jellyfin"
+    restore_rehearsal(archive, restore, execute=True)
+    assert (restore / "jellyfin-config" / "jellyfin.db").exists()
+    assert (restore / "jellyfin-cache" / "image.cache").exists()
+    assert not (restore / "jellyfin-media").exists()

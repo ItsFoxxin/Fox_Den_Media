@@ -87,6 +87,7 @@ class Settings:
     login_lock_seconds: int
     module_timeout_seconds: float
     modules: tuple[ModuleConfig, ...]
+    jellyfin_public_url: str | None
     oidc_issuer: str | None
     oidc_client_id: str | None
     oidc_client_secret: str | None
@@ -120,6 +121,11 @@ class Settings:
             raise ConfigError("PORTAL_AUTH_MODE must be local, oidc, or hybrid.")
 
         modules = _modules_from_env()
+        jellyfin_public_url = os.getenv("PORTAL_JELLYFIN_URL", "").rstrip("/") or None
+        if jellyfin_public_url:
+            jp = urlsplit(jellyfin_public_url)
+            if jp.scheme not in {"http", "https"} or not jp.hostname or jp.username or jp.password:
+                raise ConfigError("PORTAL_JELLYFIN_URL must be HTTP(S) and must not contain credentials.")
         issuer = os.getenv("PORTAL_OIDC_ISSUER", "").rstrip("/") or None
         client_id = os.getenv("PORTAL_OIDC_CLIENT_ID", "").strip() or None
         client_secret = _secret("PORTAL_OIDC_CLIENT_SECRET", minimum=16)
@@ -156,6 +162,7 @@ class Settings:
             login_lock_seconds=_integer("PORTAL_LOGIN_LOCK_SECONDS", 900, 60, 86400),
             module_timeout_seconds=_floating("PORTAL_MODULE_TIMEOUT_SECONDS", 1.5, 0.1, 10.0),
             modules=modules,
+            jellyfin_public_url=jellyfin_public_url,
             oidc_issuer=issuer,
             oidc_client_id=client_id,
             oidc_client_secret=client_secret,
@@ -203,6 +210,7 @@ class Settings:
             "identity_signing_configured": bool(self.identity_private_key_path),
             "ingress_auth_configured": bool(self.ingress_auth_secret),
             "modules": [{"id": m.module_id, "name": m.name, "enabled": m.enabled} for m in self.modules],
+            "jellyfin_link_configured": bool(self.jellyfin_public_url),
         }
 
 

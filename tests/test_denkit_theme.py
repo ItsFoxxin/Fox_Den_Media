@@ -67,3 +67,13 @@ def test_denkit_layers_are_loaded_after_existing_component_styles() -> None:
     assert music.index("workspace.css") < music.index("denkit.css")
     assert media.index("style.css") < media.index("denkit.css")
     assert 'href="../assets/denkit.css"' in media_app
+
+
+def test_jellyfin_theme_is_isolated_and_mascot_is_packaged() -> None:
+    css = (ROOT / "apps/portal/src/foxden_portal/static/jellyfin-midnight.css").read_text(encoding="utf-8").lower()
+    mascot = ROOT / "apps/portal/src/foxden_portal/static/fox-den-mascot.png"
+    for name, value in TOKENS.items():
+        assert re.search(rf"--{name}\s*:\s*{value}\b", css), name
+    assert "@import url('/foxden-theme.css')" in css
+    assert "prefers-reduced-motion" in css
+    assert mascot.is_file() and mascot.stat().st_size > 100_000

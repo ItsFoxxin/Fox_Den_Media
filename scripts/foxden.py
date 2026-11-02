@@ -19,6 +19,7 @@ GATEWAY_TEMPLATE = ROOT / "infra" / "gateway" / "portal-ingress.conf"
 MODES = {
     "music": {"profiles": ("music",), "modules": {"music"}},
     "media": {"profiles": ("media",), "modules": {"media"}},
+    "jellyfin": {"profiles": ("jellyfin",), "modules": set()},
     "full-external": {"profiles": ("music", "media"), "modules": {"music", "media"}},
     "full-managed": {"profiles": ("music", "media", "managed"), "modules": {"music", "media"}},
 }
@@ -26,6 +27,7 @@ CORE_PATHS = ("FOXDEN_SECRETS_DIR", "FOXDEN_RUNTIME_DIR", "PORTAL_CONFIG_PATH")
 MUSIC_PATHS = ("MUSIC_CONFIG_PATH", "MUSIC_STAGING_PATH", "MUSIC_DOWNLOAD_PATH", "MUSIC_LIBRARY_PATH")
 MEDIA_PATHS = ("MEDIA_CONFIG_PATH", "MEDIA_LIBRARY_PATH", "TORRENT_DATA_PATH")
 MANAGED_PATHS = ("QBIT_CONFIG_PATH", "GLUETUN_CONFIG_PATH")
+JELLYFIN_PATHS = ("JELLYFIN_CONFIG_PATH", "JELLYFIN_CACHE_PATH", "JELLYFIN_MEDIA_PATH")
 SECRET_FILES = ("portal-secret", "portal-bootstrap", "ingress-auth", "identity-private.pem", "identity-public.json")
 MUSIC_SECRET_FILES = ("music-csrf",)
 MEDIA_SECRET_FILES = ("media-app-token", "qbit-password")
@@ -96,10 +98,10 @@ def _paths(values: dict[str, str], keys: tuple[str, ...], *, create: bool = Fals
         if not path.is_dir():
             raise ConfigError(f"{key} is not an existing directory: {path}")
         required_access = os.R_OK | os.X_OK
-        if key != "TORRENT_DATA_PATH":
+        if key not in {"TORRENT_DATA_PATH", "JELLYFIN_MEDIA_PATH"}:
             required_access |= os.W_OK
         if not os.access(path, required_access):
-            expectation = "readable" if key == "TORRENT_DATA_PATH" else "readable and writable"
+            expectation = "readable" if key in {"TORRENT_DATA_PATH", "JELLYFIN_MEDIA_PATH"} else "readable and writable"
             raise ConfigError(f"{key} must be {expectation} by the deployment UID/GID: {path}")
         resolved.append(path.resolve())
     if len(set(resolved)) != len(resolved):
@@ -116,8 +118,10 @@ def _secret(path: Path, *, allow_empty: bool = False, private: bool = True) -> N
         raise ConfigError(f"Secret file permissions are too broad; require mode 0600: {path.name}")
 
 
-def validate(mode: str, values: dict[str, str], *, browser: bool = False, create_paths: bool = False) -> None:
+def validate(mode: str, values: dict[str, str], *, browser: bool = False, jellyfin: bool = False,
+             jellyfin_hwaccel: bool = False, create_paths: bool = False) -> None:
     definition = MODES[mode]
+    jellyfin = jellyfin or mode == "jellyfin" or jellyfin_hwaccel
     _resources(values)
     _url(values, "FOXDEN_PUBLIC_ORIGIN")
     for key in ("FOXDEN_PUID", "FOXDEN_PGID", "FOXDEN_PORT"):
@@ -136,6 +140,27 @@ def validate(mode: str, values: dict[str, str], *, browser: bool = False, create
             _required(values, key)
     elif "media" in definition["modules"]:
         _url(values, "QBIT_URL")
+    if jellyfin:
+        jellyfin_paths = _paths(values, JELLYFIN_PATHS, create=create_paths)
+        # The read-only Jellyfin media root may intentionally contain the Music
+        # and Movies/TV library roots. Its writable config/cache must not overlap.
+        all_paths += jellyfin_paths[:2]
+        _url(values, "JELLYFIN_PUBLIC_URL")
+        for key in ("JELLYFIN_PUID", "JELLYFIN_PGID"):
+            if int(_required(values, key)) <= 0:
+                raise ConfigError(f"{key} must be a positive numeric ID.")
+        container_path = _required(values, "JELLYFIN_MEDIA_CONTAINER_PATH")
+        if not container_path.startswith("/") or ".." in Path(container_path).parts:
+            raise ConfigError("JELLYFIN_MEDIA_CONTAINER_PATH must be a safe absolute container path.")
+    if jellyfin_hwaccel:
+        device = Path(_required(values, "JELLYFIN_DRI_DEVICE"))
+        if not device.is_absolute():
+            raise ConfigError("JELLYFIN_DRI_DEVICE must be an absolute host device path.")
+        if not device.exists():
+            raise ConfigError(f"JELLYFIN_DRI_DEVICE does not exist on this host: {device}")
+        for key in ("JELLYFIN_RENDER_GID", "JELLYFIN_VIDEO_GID"):
+            if int(_required(values, key)) < 0:
+                raise ConfigError(f"{key} must be a non-negative group ID.")
     if values.get("JELLYFIN_URL", "").strip():
         _url(values, "JELLYFIN_URL")
     if browser:
@@ -209,7 +234,8 @@ def initialize(values: dict[str, str], *, create_paths: bool) -> None:
         if not target.exists():
             target.touch(mode=0o600)
     if create_paths:
-        keys = list(CORE_PATHS[2:]) + list(MUSIC_PATHS) + list(MEDIA_PATHS) + list(MANAGED_PATHS) + ["BROWSER_CONFIG_PATH"]
+        keys = (list(CORE_PATHS[2:]) + list(MUSIC_PATHS) + list(MEDIA_PATHS)
+                + list(MANAGED_PATHS) + list(JELLYFIN_PATHS) + ["BROWSER_CONFIG_PATH"])
         for key in keys:
             raw = values.get(key, "").strip()
             if raw:
@@ -226,9 +252,19 @@ def render_gateway(values: dict[str, str]) -> Path:
     ingress_secret = (secret_dir / "ingress-auth").read_text(encoding="utf-8").strip()
     if len(ingress_secret) < 32:
         raise ConfigError("ingress-auth must contain at least 32 characters.")
-    rendered = GATEWAY_TEMPLATE.read_text(encoding="utf-8").replace("__PORTAL_INGRESS_AUTH_SECRET__", ingress_secret)
+    jellyfin_host = "jellyfin.invalid"
+    if values.get("JELLYFIN_PUBLIC_URL", "").strip():
+        parsed = urlparse(values["JELLYFIN_PUBLIC_URL"].strip())
+        if not parsed.hostname:
+            raise ConfigError("JELLYFIN_PUBLIC_URL must include a hostname.")
+        jellyfin_host = parsed.hostname
+    rendered = (GATEWAY_TEMPLATE.read_text(encoding="utf-8")
+                .replace("__PORTAL_INGRESS_AUTH_SECRET__", ingress_secret)
+                .replace("__JELLYFIN_PUBLIC_HOST__", jellyfin_host))
     if ingress_secret not in rendered:
         raise ConfigError("Gateway template did not contain the expected secret placeholder.")
+    if "__JELLYFIN_PUBLIC_HOST__" in rendered:
+        raise ConfigError("Gateway template did not render the Jellyfin hostname.")
     runtime_dir.mkdir(parents=True, exist_ok=True)
     target = runtime_dir / "nginx.conf"
     temporary = runtime_dir / ".nginx.conf.tmp"
@@ -238,12 +274,17 @@ def render_gateway(values: dict[str, str]) -> Path:
     return target
 
 
-def compose_command(mode: str, env_path: Path, *, browser: bool, action: str) -> list[str]:
+def compose_command(mode: str, env_path: Path, *, browser: bool, action: str,
+                    jellyfin: bool = False, jellyfin_hwaccel: bool = False) -> list[str]:
     profiles = list(MODES[mode]["profiles"])
     if browser:
         profiles.append("browser")
+    if jellyfin or jellyfin_hwaccel:
+        profiles.append("jellyfin")
     command = ["docker", "compose", "--env-file", str(env_path), "-f", str(COMPOSE)]
-    for profile in profiles:
+    if jellyfin_hwaccel:
+        command += ["-f", str(ROOT / "deploy" / "compose.jellyfin-hwaccel.yaml")]
+    for profile in dict.fromkeys(profiles):
         command += ["--profile", profile]
     command.append(action)
     if action == "up":
@@ -262,6 +303,9 @@ def main() -> int:
         command.add_argument("mode", choices=MODES)
         command.add_argument("--env", type=Path, required=True)
         command.add_argument("--browser", action="store_true")
+        command.add_argument("--jellyfin", action="store_true", help="enable the optional Jellyfin profile")
+        command.add_argument("--jellyfin-hwaccel", action="store_true",
+                             help="enable Jellyfin and the reviewed /dev/dri override")
         if name in {"deploy", "stop"}:
             command.add_argument("--execute", action="store_true", help="actually invoke Docker Compose")
     args = parser.parse_args()
@@ -270,10 +314,12 @@ def main() -> int:
         if args.command == "init":
             initialize(values, create_paths=args.create_paths)
             return 0
-        validate(args.mode, values, browser=args.browser)
+        validate(args.mode, values, browser=args.browser, jellyfin=args.jellyfin,
+                 jellyfin_hwaccel=args.jellyfin_hwaccel)
         gateway = render_gateway(values)
         action = {"validate": "config", "config": "config", "deploy": "up", "stop": "down"}[args.command]
-        command = compose_command(args.mode, args.env.resolve(), browser=args.browser, action=action)
+        command = compose_command(args.mode, args.env.resolve(), browser=args.browser, action=action,
+                                  jellyfin=args.jellyfin, jellyfin_hwaccel=args.jellyfin_hwaccel)
         redacted = " ".join(command)
         print(f"Configuration valid for {args.mode}; rendered gateway at {gateway}.")
         print(redacted)

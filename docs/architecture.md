@@ -4,15 +4,19 @@
 Browser -> gateway :8000 -> media :8010       /transfers/
                        -> music web :8000   /
                        -> download-browser  /server-browser/
+Jellyfin hostname -> gateway :8080 -> jellyfin :8096 (native Jellyfin auth)
 
 media -> gluetun:8080 -> qBittorrent Web API (server-side credentials)
 qBittorrent -> Gluetun network namespace -> WireGuard VPN
 media -> read-only torrent staging -> isolated copy -> media/Movies or media/TV
 music web -> music SQLite/staging -> music worker -> music library
+jellyfin -> read-only media root; normal outbound network (never Gluetun)
 ```
 
-The gateway checks a media session before serving music or its browser. The media
-login/static page is public; its API requires the same cookie or a bearer token.
+The production-candidate gateway asks Portal for an administrator-qualified,
+audience-bound session before serving Music, Movies/TV, or the contained browser.
+Jellyfin uses a dedicated hostname and its own authentication for native-client
+compatibility. General Portal users cannot reach acquisition modules.
 Movie/TV jobs use a dedicated SQLite database in `MEDIA_CONFIG_PATH`, never the
 music database. One durable queue is consumed by one background thread in one
 media Uvicorn process. qBittorrent HTTP calls are serialized with a session lock.

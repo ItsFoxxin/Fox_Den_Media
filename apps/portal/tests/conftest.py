@@ -25,6 +25,7 @@ def settings(tmp_path: Path, modules: tuple[ModuleConfig, ...] = (), auth_mode: 
         auth_mode=auth_mode, cookie_secure=False, session_seconds=3600,
         login_max_attempts=3, login_window_seconds=900, login_lock_seconds=900,
         module_timeout_seconds=.2, modules=modules,
+        jellyfin_public_url=None,
         oidc_issuer="https://auth.example/application/o/fox-den-media" if auth_mode in {"oidc", "hybrid"} else None,
         oidc_client_id="portal-client" if auth_mode in {"oidc", "hybrid"} else None,
         oidc_client_secret="test-client-secret-123456" if auth_mode in {"oidc", "hybrid"} else None,

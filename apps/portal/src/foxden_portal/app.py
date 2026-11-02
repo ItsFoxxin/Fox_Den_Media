@@ -86,7 +86,13 @@ def create_app(settings: Settings | None = None, module_client: ModuleClient | N
         return response
 
     def render(request: Request, name: str, context: dict | None = None, status_code: int = 200):
-        values = {"version": __version__, "user": request.state.session, **(context or {})}
+        user = request.state.session
+        values = {
+            "version": __version__, "user": user,
+            "navigation_modules": settings.modules if user and user["role"] == "admin" else (),
+            "jellyfin_url": settings.jellyfin_public_url,
+            **(context or {}),
+        }
         return templates.TemplateResponse(request=request, name=name, context=values, status_code=status_code)
 
     def require_user(request: Request) -> dict:
@@ -130,7 +136,7 @@ def create_app(settings: Settings | None = None, module_client: ModuleClient | N
                 "setup_required": settings.local_enabled and not store.has_admin()}
 
     @app.get("/api/platform/v1/session")
-    def ingress_session(request: Request, audience: str | None = None):
+    def ingress_session(request: Request, audience: str | None = None, required_role: str | None = None):
         """Private Nginx auth_request target; never returns assertions to browsers."""
         supplied = request.headers.get("X-FoxDen-Ingress-Auth", "")
         if (request.headers.get("X-FoxDen-Ingress") != "1"
@@ -139,6 +145,11 @@ def create_app(settings: Settings | None = None, module_client: ModuleClient | N
             raise HTTPException(404)
         if not request.state.session:
             return Response(status_code=401)
+        if required_role is not None:
+            if required_role != "admin":
+                return Response(status_code=503)
+            if request.state.session["role"] != "admin":
+                return Response(status_code=403)
         headers = {}
         if audience is not None:
             if audience not in {"music", "media"} or not signer:
@@ -279,10 +290,12 @@ def create_app(settings: Settings | None = None, module_client: ModuleClient | N
             return RedirectResponse("/setup", status_code=303)
         if not request.state.session:
             return RedirectResponse("/login", status_code=303)
-        snapshots = await registry.snapshots()
+        is_admin = request.state.session["role"] == "admin"
+        snapshots = await registry.snapshots() if is_admin else []
         csrf = request.cookies.get(CSRF_COOKIE, "")
         return render(request, "dashboard.html", {
             "modules": snapshots, "activity": registry.combined_activity(snapshots), "csrf": csrf,
+            "is_admin": is_admin,
         })
 
     @app.get("/admin/users", response_class=HTMLResponse)
@@ -320,7 +333,7 @@ def create_app(settings: Settings | None = None, module_client: ModuleClient | N
 
     @app.get("/api/platform/v1/status")
     async def platform_status(request: Request):
-        require_user(request)
+        require_admin(request)
         snapshots = await registry.snapshots()
         return {
             "contract_version": CONTRACT_VERSION,

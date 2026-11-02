@@ -23,6 +23,10 @@ def configured(tmp_path: Path, mode: str) -> dict[str, str]:
         "FOXDEN_RUNTIME_DIR": str(tmp_path / "runtime"),
         "PORTAL_CONFIG_PATH": str(tmp_path / "portal"),
         "PORTAL_AUTH_MODE": "local",
+        "JELLYFIN_PUBLIC_URL": "https://jellyfin.example.invalid",
+        "JELLYFIN_PUID": "10001",
+        "JELLYFIN_PGID": "10001",
+        "JELLYFIN_MEDIA_CONTAINER_PATH": "/media",
         "PORTAL_MODULES_JSON": json.dumps([
             {"id": item, "name": item.title(), "base_url": f"http://{item}:8000", "navigation_path": f"/{item}/"}
             for item in sorted(modules)
@@ -33,9 +37,11 @@ def configured(tmp_path: Path, mode: str) -> dict[str, str]:
         "WIREGUARD_PUBLIC_KEY": "test-public-key",
         "WIREGUARD_ENDPOINT_IP": "192.0.2.2",
     }
-    for key in (*foxden.MUSIC_PATHS, *foxden.MEDIA_PATHS, *foxden.MANAGED_PATHS, "BROWSER_CONFIG_PATH"):
+    for key in (*foxden.MUSIC_PATHS, *foxden.MEDIA_PATHS, *foxden.MANAGED_PATHS,
+                *foxden.JELLYFIN_PATHS, "BROWSER_CONFIG_PATH"):
         values[key] = str(tmp_path / key.lower())
-    for key in (*foxden.CORE_PATHS, *foxden.MUSIC_PATHS, *foxden.MEDIA_PATHS, *foxden.MANAGED_PATHS):
+    for key in (*foxden.CORE_PATHS, *foxden.MUSIC_PATHS, *foxden.MEDIA_PATHS,
+                *foxden.MANAGED_PATHS, *foxden.JELLYFIN_PATHS):
         if key in values:
             Path(values[key]).mkdir(parents=True, exist_ok=True)
     secret_dir = Path(values["FOXDEN_SECRETS_DIR"])
@@ -70,6 +76,26 @@ def test_music_does_not_require_torrent_or_vpn_configuration(tmp_path: Path) -> 
     foxden.validate("music", values)
 
 
+def test_existing_modes_do_not_require_jellyfin_configuration(tmp_path: Path) -> None:
+    values = configured(tmp_path, "music")
+    for key in (*foxden.JELLYFIN_PATHS, "JELLYFIN_PUBLIC_URL", "JELLYFIN_PUID",
+                "JELLYFIN_PGID", "JELLYFIN_MEDIA_CONTAINER_PATH"):
+        values.pop(key, None)
+    foxden.validate("music", values)
+
+
+def test_jellyfin_profile_requires_only_core_and_jellyfin_configuration(tmp_path: Path) -> None:
+    values = configured(tmp_path, "jellyfin")
+    for key in (*foxden.MUSIC_PATHS, *foxden.MEDIA_PATHS, *foxden.MANAGED_PATHS,
+                "MUSICBRAINZ_CONTACT", "QBIT_URL"):
+        values.pop(key, None)
+    foxden.validate("jellyfin", values)
+    secret_dir = Path(values["FOXDEN_SECRETS_DIR"])
+    for name in (*foxden.MUSIC_SECRET_FILES, *foxden.MEDIA_SECRET_FILES):
+        (secret_dir / name).unlink()
+    foxden.validate("jellyfin", values)
+
+
 def test_media_does_not_require_music_configuration(tmp_path: Path) -> None:
     values = configured(tmp_path, "media")
     for key in (*foxden.MUSIC_PATHS, "MUSICBRAINZ_CONTACT"):
@@ -94,6 +120,11 @@ def test_latest_image_tags_are_rejected(tmp_path: Path) -> None:
     with pytest.raises(foxden.ConfigError, match="pinned"):
         foxden.validate("full-managed", values)
 
+    values = configured(tmp_path, "jellyfin")
+    values["JELLYFIN_IMAGE"] = "jellyfin/jellyfin:latest"
+    with pytest.raises(foxden.ConfigError, match="pinned"):
+        foxden.validate("jellyfin", values)
+
 
 def test_invalid_resource_limits_are_rejected(tmp_path: Path) -> None:
     values = configured(tmp_path, "music")
@@ -116,6 +147,33 @@ def test_compose_profiles_select_only_requested_modules(tmp_path: Path) -> None:
     command = foxden.compose_command("full-managed", env, browser=True, action="config")
     assert command.count("--profile") == 4
     assert all(profile in command for profile in ("music", "media", "managed", "browser"))
+
+
+def test_jellyfin_profile_and_hardware_override_are_explicit(tmp_path: Path) -> None:
+    env = tmp_path / ".env"
+    disabled = foxden.compose_command("music", env, browser=False, action="config")
+    assert "jellyfin" not in disabled
+    enabled = foxden.compose_command("music", env, browser=False, action="config", jellyfin=True)
+    assert enabled[enabled.index("--profile") + 1] == "music"
+    assert "jellyfin" in enabled
+    hardware = foxden.compose_command("jellyfin", env, browser=False, action="config",
+                                      jellyfin_hwaccel=True)
+    assert str(foxden.ROOT / "deploy" / "compose.jellyfin-hwaccel.yaml") in hardware
+
+
+def test_jellyfin_is_off_vpn_and_media_is_read_only() -> None:
+    import yaml
+    compose = yaml.safe_load((ROOT / "deploy" / "compose.yaml").read_text(encoding="utf-8"))
+    jellyfin = compose["services"]["jellyfin"]
+    assert jellyfin["profiles"] == ["jellyfin"]
+    assert jellyfin["image"].startswith("${JELLYFIN_IMAGE:-jellyfin/jellyfin:")
+    assert jellyfin["networks"] == ["platform", "outbound"]
+    assert "network_mode" not in jellyfin and "gluetun" not in str(jellyfin).lower()
+    mounts = {item["target"]: item for item in jellyfin["volumes"]}
+    media_mount = next(item for item in jellyfin["volumes"] if item.get("read_only"))
+    assert media_mount["read_only"] is True
+    assert mounts["/config"].get("read_only") is not True
+    assert mounts["/cache"].get("read_only") is not True
 
 
 def test_gateway_render_keeps_secret_out_of_return_value(tmp_path: Path) -> None:

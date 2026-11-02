@@ -8,10 +8,12 @@ secret files.
 |---|---|---|
 | `music` | `music` | ingress, Portal, Music web, Music worker |
 | `media` | `media` | ingress, Portal, Movies/TV |
+| `jellyfin` | `jellyfin` | ingress, Portal, official Jellyfin server |
 | `full-external` | `music`, `media` | both modules with external qBittorrent and optional external Jellyfin |
 | `full-managed` | `music`, `media`, `managed` | both modules, qBittorrent, and Gluetun |
 
-`--browser` adds the optional contained browser. Disabled profiles do not make
+`--browser` adds the contained browser. `--jellyfin` adds Jellyfin to another
+mode. `--jellyfin-hwaccel` also loads the explicit `/dev/dri` override. Disabled profiles do not make
 their configuration mandatory.
 
 Application containers join a private internal module network plus a separate
@@ -51,4 +53,6 @@ The first migration keeps Jellyfin external. Set `JELLYFIN_URL` and place the
 API key in the generated `jellyfin-api-key` secret; only the Music worker sees
 that file. Leave the URL blank when refresh is not wanted. Existing libraries
 are bind-mounted at stable paths so a future managed Jellyfin phase will not
-require moving media.
+require moving media. The optional managed profile is documented in
+[jellyfin.md](jellyfin.md); it must use copied state until the
+[Jellyfin migration runbook](jellyfin-migration.md) is approved.
