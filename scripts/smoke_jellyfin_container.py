@@ -41,18 +41,25 @@ def main() -> None:
             "-v", f"{media.resolve()}:/media:ro", IMAGE,
         )
         print(f"Started {IMAGE}: {result.stdout.strip()[:12]}")
-        for _ in range(120):
+        health = None
+        for _ in range(180):
             state = json.loads(docker("inspect", name).stdout)[0]["State"]
             if not state["Running"]:
                 raise RuntimeError("Jellyfin exited:\n" + docker("logs", name).stdout[-4000:])
-            if state.get("Health", {}).get("Status") == "healthy":
+            health = docker(
+                "exec", name, "curl", "--noproxy", "localhost", "-fsS",
+                "http://localhost:8096/health", check=False,
+            )
+            if health.returncode == 0 and health.stdout.strip().lower() == "healthy":
                 break
             time.sleep(1)
         else:
-            raise RuntimeError("Jellyfin did not become healthy:\n" + docker("logs", name).stdout[-4000:])
+            last_health = health.stdout.strip() if health else "unreachable"
+            raise RuntimeError(
+                f"Jellyfin did not become ready (last health: {last_health!r}):\n"
+                + docker("logs", name).stdout[-4000:]
+            )
         assert docker("exec", name, "id", "-u").stdout.strip() == uid
-        health = docker("exec", name, "curl", "--noproxy", "localhost", "-fsS", "http://localhost:8096/health")
-        assert health.stdout.strip().lower() == "healthy"
         web = docker("exec", name, "curl", "--noproxy", "localhost", "-LfsS", "http://localhost:8096/web/index.html")
         assert "jellyfin" in web.stdout.lower()
         print("Official Jellyfin image passed non-root, read-only, health, and web-client smoke checks.")
