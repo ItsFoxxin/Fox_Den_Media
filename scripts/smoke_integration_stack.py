@@ -123,8 +123,10 @@ def main() -> None:
         "password": "Integration-Reader-Password-8!",
     })
     assert signed_in.status == 303
-    assert request(reader, base + "/music/").status == 200
-    assert request(reader, base + "/media/api/status").status == 200
+    reader_dashboard = request(reader, base + "/").read()
+    assert b"Media access only" in reader_dashboard
+    assert request(reader, base + "/music/").status == 403
+    assert request(reader, base + "/media/api/status").status == 403
     denied = request(reader, base + "/media/api/requests", body={
         "query": "Must be denied", "media_type": "Movie",
     }, headers={"Origin": base})
