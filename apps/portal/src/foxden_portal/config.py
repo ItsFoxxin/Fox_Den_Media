@@ -88,6 +88,9 @@ class Settings:
     module_timeout_seconds: float
     modules: tuple[ModuleConfig, ...]
     jellyfin_public_url: str | None
+    jellyfin_internal_url: str | None
+    jellyfin_token_secret: str | None
+    jellyfin_timeout_seconds: float
     oidc_issuer: str | None
     oidc_client_id: str | None
     oidc_client_secret: str | None
@@ -110,6 +113,10 @@ class Settings:
     def oidc_enabled(self) -> bool:
         return self.auth_mode in {"oidc", "hybrid"}
 
+    @property
+    def watch_enabled(self) -> bool:
+        return bool(self.jellyfin_public_url and self.jellyfin_internal_url and self.jellyfin_token_secret)
+
     @classmethod
     def from_env(cls) -> "Settings":
         public_url = os.getenv("PORTAL_PUBLIC_URL", "http://localhost:8020").rstrip("/")
@@ -124,8 +131,17 @@ class Settings:
         jellyfin_public_url = os.getenv("PORTAL_JELLYFIN_URL", "").rstrip("/") or None
         if jellyfin_public_url:
             jp = urlsplit(jellyfin_public_url)
-            if jp.scheme not in {"http", "https"} or not jp.hostname or jp.username or jp.password:
-                raise ConfigError("PORTAL_JELLYFIN_URL must be HTTP(S) and must not contain credentials.")
+            if (jp.scheme not in {"http", "https"} or not jp.hostname or jp.username or jp.password
+                    or jp.query or jp.fragment):
+                raise ConfigError(
+                    "PORTAL_JELLYFIN_URL must be HTTP(S) and must not contain credentials, a query, or a fragment."
+                )
+        jellyfin_internal_url = os.getenv("PORTAL_JELLYFIN_INTERNAL_URL", "").rstrip("/") or None
+        if jellyfin_internal_url:
+            ji = urlsplit(jellyfin_internal_url)
+            if ji.scheme not in {"http", "https"} or not ji.hostname or ji.username or ji.password or ji.query or ji.fragment:
+                raise ConfigError("PORTAL_JELLYFIN_INTERNAL_URL must be HTTP(S) and must not contain credentials.")
+        jellyfin_token_secret = _secret("PORTAL_JELLYFIN_TOKEN_SECRET", minimum=32)
         issuer = os.getenv("PORTAL_OIDC_ISSUER", "").rstrip("/") or None
         client_id = os.getenv("PORTAL_OIDC_CLIENT_ID", "").strip() or None
         client_secret = _secret("PORTAL_OIDC_CLIENT_SECRET", minimum=16)
@@ -163,6 +179,9 @@ class Settings:
             module_timeout_seconds=_floating("PORTAL_MODULE_TIMEOUT_SECONDS", 1.5, 0.1, 10.0),
             modules=modules,
             jellyfin_public_url=jellyfin_public_url,
+            jellyfin_internal_url=jellyfin_internal_url,
+            jellyfin_token_secret=jellyfin_token_secret,
+            jellyfin_timeout_seconds=_floating("PORTAL_JELLYFIN_TIMEOUT_SECONDS", 4.0, 0.5, 30.0),
             oidc_issuer=issuer,
             oidc_client_id=client_id,
             oidc_client_secret=client_secret,
@@ -198,6 +217,14 @@ class Settings:
             raise ConfigError("OIDC-only mode requires PORTAL_OIDC_ADMIN_GROUPS so an administrator can be identified.")
         if len({module.module_id for module in self.modules}) != len(self.modules):
             raise ConfigError("PORTAL_MODULES_JSON contains duplicate module IDs.")
+        configured = (self.jellyfin_public_url, self.jellyfin_internal_url, self.jellyfin_token_secret)
+        # A public URL by itself preserves the existing safe-link integration.
+        # Enabling the Watch API requires all three values.
+        if self.jellyfin_internal_url and not all(configured):
+            raise ConfigError(
+                "Watch & Listen requires PORTAL_JELLYFIN_URL, PORTAL_JELLYFIN_INTERNAL_URL, "
+                "and PORTAL_JELLYFIN_TOKEN_SECRET (or its file form)."
+            )
 
     def redacted(self) -> dict:
         return {
@@ -211,6 +238,7 @@ class Settings:
             "ingress_auth_configured": bool(self.ingress_auth_secret),
             "modules": [{"id": m.module_id, "name": m.name, "enabled": m.enabled} for m in self.modules],
             "jellyfin_link_configured": bool(self.jellyfin_public_url),
+            "watch_listen_enabled": self.watch_enabled,
         }
 
 

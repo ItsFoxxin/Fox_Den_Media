@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://thefoxden.link/contracts/v1/watch-listen.schema.json",
+  "title": "Fox Den Watch & Listen home response",
+  "type": "object",
+  "required": ["contract_version", "state", "user", "libraries", "recent_video", "recent_audio", "continue_watching"],
+  "properties": {
+    "contract_version": {"const": "1.0"},
+    "state": {"const": "ready"},
+    "user": {
+      "type": "object",
+      "required": ["id", "name"],
+      "properties": {"id": {"type": "string"}, "name": {"type": "string"}},
+      "additionalProperties": false
+    },
+    "libraries": {"$ref": "#/$defs/items"},
+    "recent_video": {"$ref": "#/$defs/items"},
+    "recent_audio": {"$ref": "#/$defs/items"},
+    "continue_watching": {"$ref": "#/$defs/items"}
+  },
+  "$defs": {
+    "items": {"type": "array", "items": {"$ref": "#/$defs/item"}},
+    "item": {
+      "type": "object",
+      "required": ["id", "name", "type", "artwork_url", "details_url"],
+      "properties": {
+        "id": {"type": "string", "maxLength": 128},
+        "name": {"type": "string", "maxLength": 300},
+        "type": {"type": "string", "maxLength": 40},
+        "year": {"type": ["integer", "null"]},
+        "album_artist": {"type": ["string", "null"]},
+        "artists": {"type": "array", "items": {"type": "string"}},
+        "runtime_ticks": {"type": ["integer", "null"]},
+        "played": {"type": "boolean"},
+        "favorite": {"type": "boolean"},
+        "playback_position_ticks": {"type": "integer"},
+        "artwork_url": {"type": "string", "pattern": "^/api/watch/v1/artwork/"},
+        "details_url": {"type": "string", "pattern": "^/watch/item/"}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

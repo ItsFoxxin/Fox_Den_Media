@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.7.0 - 2026-11-03
+
+### Added
+
+- Fox Den Watch & Listen at `/watch/` with real per-user Jellyfin libraries,
+  recent video and music, continue watching, search, details, and artwork.
+- Versioned `/api/watch/v1` adapter and language-neutral response schema for
+  future web and Android clients.
+- Encrypted per-user Jellyfin token links in a backward-compatible Portal
+  SQLite schema migration; passwords and administrator API keys are not stored.
+- Android/Media3 and Wear OS/MediaSession roadmap plus an Authentik, AD, LDAP,
+  Jellyfin SSO, native-client, and recovery architecture.
+- Machine-readable migration evidence gates that keep cutover closed until
+  inventory, consistent backup, isolated restore, playback/client checks, and
+  rollback have all been confirmed.
+
+### Boundary
+
+- Browser playback remains a safe handoff to Jellyfin until user-scoped stream
+  negotiation and progress reporting are reviewed.
+- No Android or Wear OS application, live SSO plugin, production NAS change, or
+  deployment is included.
+
 ## 0.6.0 - 2026-11-01
 
 ### Added

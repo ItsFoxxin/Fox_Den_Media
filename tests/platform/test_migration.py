@@ -9,7 +9,8 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from foxden import ConfigError
-from migration import create_backup, inventory, readiness, restore_rehearsal, verify_backup
+from migration import (EVIDENCE_GATES, create_backup, inventory, load_evidence,
+                       readiness, restore_rehearsal, verify_backup)
 
 
 def fixture_values(tmp_path: Path) -> dict[str, str]:
@@ -89,3 +90,26 @@ def test_jellyfin_state_is_backed_up_but_media_is_inventory_only(tmp_path: Path)
     assert (restore / "jellyfin-config" / "jellyfin.db").exists()
     assert (restore / "jellyfin-cache" / "image.cache").exists()
     assert not (restore / "jellyfin-media").exists()
+
+
+def test_readiness_stays_closed_until_every_evidence_gate_passes(tmp_path: Path) -> None:
+    from test_deployment import configured
+    values = configured(tmp_path, "music")
+    pending = readiness(values, "music")
+    assert pending["ready_for_cutover"] is False
+    assert any(item["status"] == "manual-approval-required" for item in pending["checks"])
+
+    evidence = {key: True for key in EVIDENCE_GATES}
+    passed = readiness(values, "music", evidence)
+    assert passed["ready_for_cutover"] is True
+    assert all(item["status"] == "pass" for item in passed["checks"])
+
+    evidence["rollback_confirmed"] = False
+    assert readiness(values, "music", evidence)["ready_for_cutover"] is False
+
+
+def test_evidence_parser_rejects_unknown_or_non_boolean_values(tmp_path: Path) -> None:
+    bad = tmp_path / "bad-evidence.json"
+    bad.write_text('{"inventory_reviewed": "yes", "secret": true}', encoding="utf-8")
+    with pytest.raises(ConfigError):
+        load_evidence(bad)

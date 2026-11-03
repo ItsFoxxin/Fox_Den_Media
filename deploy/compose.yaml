@@ -68,7 +68,7 @@ services:
 
   portal:
     <<: *hardening
-    image: "${PORTAL_IMAGE:-foxden-portal:0.6.0}"
+    image: "${PORTAL_IMAGE:-foxden-portal:0.7.0}"
     build:
       context: ../apps/portal
       args:
@@ -87,6 +87,9 @@ services:
       PORTAL_INGRESS_AUTH_SECRET_FILE: /run/secrets/ingress-auth
       PORTAL_MODULES_JSON: "${PORTAL_MODULES_JSON:-[]}"
       PORTAL_JELLYFIN_URL: "${JELLYFIN_PUBLIC_URL:-}"
+      PORTAL_JELLYFIN_INTERNAL_URL: "${JELLYFIN_INTERNAL_URL:-}"
+      PORTAL_JELLYFIN_TOKEN_SECRET_FILE: /run/secrets/portal-secret
+      PORTAL_JELLYFIN_TIMEOUT_SECONDS: "${JELLYFIN_TIMEOUT_SECONDS:-4.0}"
       PORTAL_OIDC_ISSUER: "${PORTAL_OIDC_ISSUER:-}"
       PORTAL_OIDC_CLIENT_ID: "${PORTAL_OIDC_CLIENT_ID:-}"
       PORTAL_OIDC_CLIENT_SECRET_FILE: /run/secrets/oidc-client-secret
@@ -158,7 +161,7 @@ services:
   media:
     <<: *hardening
     profiles: [media]
-    image: "${MEDIA_IMAGE:-fox-den-media:0.6.0}"
+    image: "${MEDIA_IMAGE:-fox-den-media:0.7.0}"
     build:
       context: ..
       dockerfile: apps/media/Dockerfile

@@ -102,7 +102,29 @@ def backup_sources(values: dict[str, str]) -> dict[str, Path]:
     return sources
 
 
-def readiness(values: dict[str, str], mode: str) -> dict[str, object]:
+EVIDENCE_GATES = {
+    "inventory_reviewed": "read-only production inventory reviewed",
+    "writers_stopped": "production writers stopped",
+    "final_backup_verified": "final backup verified",
+    "restore_rehearsal_passed": "isolated restore rehearsal passed",
+    "jellyfin_rehearsal_passed": "Jellyfin users, libraries, history, and playback validated",
+    "client_validation_passed": "browser and native-client validation passed",
+    "rollback_confirmed": "rollback rehearsal passed",
+}
+
+
+def load_evidence(path: Path | None) -> dict[str, bool]:
+    if path is None:
+        return {}
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict) or set(data) - set(EVIDENCE_GATES):
+        raise ConfigError("Evidence must be an object containing only documented migration gate names.")
+    if any(not isinstance(value, bool) for value in data.values()):
+        raise ConfigError("Every migration evidence value must be true or false.")
+    return data
+
+
+def readiness(values: dict[str, str], mode: str, evidence: dict[str, bool] | None = None) -> dict[str, object]:
     checks: list[dict[str, str]] = []
     try:
         validate(mode, values)
@@ -116,8 +138,12 @@ def readiness(values: dict[str, str], mode: str) -> dict[str, object]:
         "status": "pass" if not missing else "fail",
         "detail": "all configured paths exist" if not missing else "missing: " + ", ".join(missing),
     })
-    for name in ("production writers stopped", "final backup verified", "rollback rehearsal passed"):
-        checks.append({"name": name, "status": "manual-approval-required"})
+    supplied = evidence or {}
+    for key, name in EVIDENCE_GATES.items():
+        if key not in supplied:
+            checks.append({"name": name, "status": "manual-approval-required", "evidence_key": key})
+        else:
+            checks.append({"name": name, "status": "pass" if supplied[key] else "fail", "evidence_key": key})
     return {
         "schema": 1,
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -201,6 +227,8 @@ def main() -> int:
     ready.add_argument("--env", type=Path, required=True)
     ready.add_argument("--mode", choices=("music", "media", "jellyfin", "full-external", "full-managed"), required=True)
     ready.add_argument("--output", type=Path, required=True)
+    ready.add_argument("--evidence", type=Path,
+                       help="Operator-reviewed JSON booleans for the documented production gates")
     backup = sub.add_parser("backup")
     backup.add_argument("--env", type=Path, required=True)
     backup.add_argument("--destination", type=Path, required=True)
@@ -220,7 +248,7 @@ def main() -> int:
             args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
             print(f"Wrote read-only inventory to {args.output}")
         elif args.command == "readiness":
-            report = readiness(load_env(args.env.resolve()), args.mode)
+            report = readiness(load_env(args.env.resolve()), args.mode, load_evidence(args.evidence))
             args.output.parent.mkdir(parents=True, exist_ok=True)
             args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
             print(f"Wrote migration readiness report to {args.output}")

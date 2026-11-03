@@ -11,7 +11,7 @@ import time
 import uuid
 
 
-SCHEMA_VERSION = "1"
+SCHEMA_VERSION = "2"
 
 
 class PortalStore:
@@ -45,11 +45,18 @@ class PortalStore:
                 CREATE TABLE IF NOT EXISTS oidc_flows (
                     state_hash TEXT PRIMARY KEY, nonce TEXT NOT NULL, code_verifier TEXT NOT NULL,
                     return_to TEXT NOT NULL, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL);
+                CREATE TABLE IF NOT EXISTS jellyfin_links (
+                    user_id TEXT PRIMARY KEY, server_url TEXT NOT NULL, jellyfin_user_id TEXT NOT NULL,
+                    username TEXT NOT NULL, token_ciphertext BLOB NOT NULL, device_id TEXT NOT NULL,
+                    created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+                    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE);
             """)
             stored = db.execute("SELECT value FROM portal_metadata WHERE key='schema_version'").fetchone()
             if stored is None:
                 db.execute("INSERT INTO portal_metadata(key,value) VALUES('schema_version',?)", (SCHEMA_VERSION,))
                 db.execute("INSERT INTO portal_metadata(key,value) VALUES('first_started_at',?)", (str(int(time.time())),))
+            elif stored[0] == "1":
+                db.execute("UPDATE portal_metadata SET value=? WHERE key='schema_version'", (SCHEMA_VERSION,))
             elif stored[0] != SCHEMA_VERSION:
                 raise RuntimeError(f"Unsupported Portal database schema {stored[0]}.")
 
@@ -159,6 +166,28 @@ class PortalStore:
         if token:
             with self.connection() as db:
                 db.execute("DELETE FROM sessions WHERE token_hash=?", (_hash(token),))
+
+    def save_jellyfin_link(self, user_id: str, server_url: str, jellyfin_user_id: str,
+                           username: str, token_ciphertext: bytes, device_id: str) -> None:
+        now = int(time.time())
+        with self.connection() as db:
+            db.execute("""INSERT INTO jellyfin_links
+                (user_id,server_url,jellyfin_user_id,username,token_ciphertext,device_id,created_at,updated_at)
+                VALUES(?,?,?,?,?,?,?,?)
+                ON CONFLICT(user_id) DO UPDATE SET
+                  server_url=excluded.server_url,jellyfin_user_id=excluded.jellyfin_user_id,
+                  username=excluded.username,token_ciphertext=excluded.token_ciphertext,
+                  device_id=excluded.device_id,updated_at=excluded.updated_at""",
+                       (user_id, server_url, jellyfin_user_id, username, token_ciphertext, device_id, now, now))
+
+    def jellyfin_link(self, user_id: str) -> dict | None:
+        with self.connection() as db:
+            row = db.execute("SELECT * FROM jellyfin_links WHERE user_id=?", (user_id,)).fetchone()
+            return dict(row) if row else None
+
+    def delete_jellyfin_link(self, user_id: str) -> None:
+        with self.connection() as db:
+            db.execute("DELETE FROM jellyfin_links WHERE user_id=?", (user_id,))
 
     def rate_limited(self, key: str) -> int:
         now = int(time.time())

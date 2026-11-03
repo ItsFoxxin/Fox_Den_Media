@@ -1,0 +1,9 @@
+{
+  "inventory_reviewed": false,
+  "writers_stopped": false,
+  "final_backup_verified": false,
+  "restore_rehearsal_passed": false,
+  "jellyfin_rehearsal_passed": false,
+  "client_validation_passed": false,
+  "rollback_confirmed": false
+}

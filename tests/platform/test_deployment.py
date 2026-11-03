@@ -24,6 +24,7 @@ def configured(tmp_path: Path, mode: str) -> dict[str, str]:
         "PORTAL_CONFIG_PATH": str(tmp_path / "portal"),
         "PORTAL_AUTH_MODE": "local",
         "JELLYFIN_PUBLIC_URL": "https://jellyfin.example.invalid",
+        "JELLYFIN_INTERNAL_URL": "http://jellyfin:8096",
         "JELLYFIN_PUID": "10001",
         "JELLYFIN_PGID": "10001",
         "JELLYFIN_MEDIA_CONTAINER_PATH": "/media",
@@ -78,7 +79,7 @@ def test_music_does_not_require_torrent_or_vpn_configuration(tmp_path: Path) -> 
 
 def test_existing_modes_do_not_require_jellyfin_configuration(tmp_path: Path) -> None:
     values = configured(tmp_path, "music")
-    for key in (*foxden.JELLYFIN_PATHS, "JELLYFIN_PUBLIC_URL", "JELLYFIN_PUID",
+    for key in (*foxden.JELLYFIN_PATHS, "JELLYFIN_PUBLIC_URL", "JELLYFIN_INTERNAL_URL", "JELLYFIN_PUID",
                 "JELLYFIN_PGID", "JELLYFIN_MEDIA_CONTAINER_PATH"):
         values.pop(key, None)
     foxden.validate("music", values)

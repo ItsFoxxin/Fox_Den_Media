@@ -8,7 +8,7 @@ the non-Music history from Media Downloader.
 This branch is a production-readiness candidate. It does not deploy to a NAS or
 modify existing application state.
 
-Current platform milestone: **0.6.0**.
+Current platform milestone: **0.7.0**.
 
 ![Fox Den Midnight Portal with optional Jellyfin entry](docs/foxden-midnight-portal-desktop.png)
 
@@ -31,7 +31,22 @@ prints the exact Compose command unless `--execute` is supplied.
 
 See [deployment](docs/deployment.md), [Jellyfin architecture](docs/jellyfin.md),
 [Jellyfin migration](docs/jellyfin-migration.md), [permissions](docs/permissions.md),
-and the [production-readiness assessment](docs/production-readiness.md).
+[Watch & Listen](docs/watch-listen.md), [identity integration](docs/authentik-jellyfin-auth.md),
+[mobile roadmap](docs/mobile-media-roadmap.md), and the
+[production-readiness assessment](docs/production-readiness.md).
+
+## Watch & Listen
+
+When an external or managed Jellyfin server is configured, `/watch/` provides
+real user-scoped movie, television, artist, album, song, library, search,
+recently-added, and continue-watching views. Users connect their own Jellyfin
+account; passwords are never stored and user tokens are encrypted in Portal
+storage. Acquisition and administration remain separate administrator-only
+capabilities.
+
+This release hands playback to Jellyfin Web rather than pretending embedded
+streaming is complete. The versioned `/api/watch/v1` adapter is the foundation
+for later browser playback and Android clients.
 
 ## Safety boundary
 

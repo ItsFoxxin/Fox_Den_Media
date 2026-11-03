@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "foxden-portal"
-version = "0.2.0"
-description = "Independent portal and authentication foundation for Fox Den Media"
+version = "0.3.0"
+description = "Portal, authentication, and Watch & Listen API for Fox Den Media"
 requires-python = ">=3.12"
 dependencies = [
   "argon2-cffi==25.1.0",

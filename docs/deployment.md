@@ -49,10 +49,18 @@ assertions after authentication.
 
 ## Jellyfin boundary
 
-The first migration keeps Jellyfin external. Set `JELLYFIN_URL` and place the
-API key in the generated `jellyfin-api-key` secret; only the Music worker sees
-that file. Leave the URL blank when refresh is not wanted. Existing libraries
-are bind-mounted at stable paths so a future managed Jellyfin phase will not
-require moving media. The optional managed profile is documented in
-[jellyfin.md](jellyfin.md); it must use copied state until the
-[Jellyfin migration runbook](jellyfin-migration.md) is approved.
+`JELLYFIN_URL` and the generated `jellyfin-api-key` secret remain the separate
+Music-worker library-refresh integration; only that worker sees the API key.
+Leave the URL blank when refresh is not wanted.
+
+Watch & Listen uses `JELLYFIN_PUBLIC_URL` for browser/native-client links and
+`JELLYFIN_INTERNAL_URL` for Portal's server-side adapter. Use
+`http://jellyfin:8096` for managed Jellyfin or a Portal-reachable address for
+an external server. It authenticates each person as their own Jellyfin user and
+never consumes the worker API key. The existing `portal-secret` encrypts those
+user tokens; changing it requires users to reconnect, so it must be backed up
+with Portal state.
+
+The optional managed profile is documented in [jellyfin.md](jellyfin.md). It
+must use copied state until the [Jellyfin migration runbook](jellyfin-migration.md)
+and machine-readable evidence gates pass.

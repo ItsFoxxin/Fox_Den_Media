@@ -1,5 +1,14 @@
 # Validation evidence
 
+## Watch & Listen 0.7.0 - 2026-11-03
+
+- Portal unit and integration tests include encrypted per-user Jellyfin token
+  persistence, v1-to-v2 database migration, user-scoped browsing/search,
+  artwork validation, credential failures, CSRF, and outage isolation.
+- Adapter endpoints were checked against the official Jellyfin 12.4 OpenAPI
+  document. Hosted CI and real production-like Jellyfin account validation are
+  separate release gates.
+
 ## Fox Den Midnight and optional Jellyfin 0.6.0 - 2026-11-01
 
 - Portal suite: **46 passed** locally on Windows, including local authentication,

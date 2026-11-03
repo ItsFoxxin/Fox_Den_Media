@@ -35,6 +35,8 @@ cannot complete that browser-only flow.
 |---|---:|---|
 | `JELLYFIN_IMAGE` | yes | Official image and pinned tag; default `jellyfin/jellyfin:12.4` |
 | `JELLYFIN_PUBLIC_URL` | yes | Client-facing URL and ingress hostname |
+| `JELLYFIN_INTERNAL_URL` | for Watch & Listen | Portal-reachable managed or external server URL; use `http://jellyfin:8096` for the managed profile |
+| `JELLYFIN_TIMEOUT_SECONDS` | no | Bounded server-side adapter timeout, default `4.0` |
 | `JELLYFIN_PUID`, `JELLYFIN_PGID` | yes | Container process UID/GID |
 | `JELLYFIN_CONFIG_PATH` | yes | Persistent database, configuration, plugins, and metadata |
 | `JELLYFIN_CACHE_PATH` | yes | Persistent cache/transcode working data |

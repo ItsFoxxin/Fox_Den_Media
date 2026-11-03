@@ -146,6 +146,7 @@ def validate(mode: str, values: dict[str, str], *, browser: bool = False, jellyf
         # and Movies/TV library roots. Its writable config/cache must not overlap.
         all_paths += jellyfin_paths[:2]
         _url(values, "JELLYFIN_PUBLIC_URL")
+        _url(values, "JELLYFIN_INTERNAL_URL")
         for key in ("JELLYFIN_PUID", "JELLYFIN_PGID"):
             if int(_required(values, key)) <= 0:
                 raise ConfigError(f"{key} must be a positive numeric ID.")
@@ -163,6 +164,9 @@ def validate(mode: str, values: dict[str, str], *, browser: bool = False, jellyf
                 raise ConfigError(f"{key} must be a non-negative group ID.")
     if values.get("JELLYFIN_URL", "").strip():
         _url(values, "JELLYFIN_URL")
+    if values.get("JELLYFIN_INTERNAL_URL", "").strip():
+        _url(values, "JELLYFIN_INTERNAL_URL")
+        _url(values, "JELLYFIN_PUBLIC_URL")
     if browser:
         all_paths += _paths(values, ("BROWSER_CONFIG_PATH",), create=create_paths)
         if "music" not in definition["modules"]:

@@ -1,4 +1,4 @@
-# 0.6.0 production readiness
+# 0.7.0 production readiness
 
 ## Implemented
 
@@ -8,6 +8,10 @@
 - Optional official Jellyfin container with persistent state, read-only media,
   dedicated-host ingress, WebSockets, resource controls, and isolated hardware override.
 - Existing external Jellyfin library-refresh integration remains intact.
+- User-scoped Watch & Listen browsing with encrypted token storage and a tested
+  Portal database migration from schema v1 to v2.
+- Explicit machine-readable production evidence gates; incomplete evidence
+  cannot produce a cutover-ready report.
 - Migration, rollback, authentication, permissions, and theme procedures.
 
 ## Tested in source/CI fixtures
@@ -28,6 +32,9 @@
 - verify the N100 `/dev/dri` path and group IDs;
 - validate native clients, playback, subtitles, seeking, and real transcodes;
 - review LDAP plugin compatibility before connecting Authentik/AD.
+- connect one disposable production-like Jellyfin user and verify that Watch &
+  Listen exposes only that user's assigned libraries;
+- confirm the dedicated public and container-reachable Jellyfin URLs.
 
 ## Not ready for automatic production cutover
 

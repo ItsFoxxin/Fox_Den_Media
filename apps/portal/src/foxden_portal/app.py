@@ -5,6 +5,7 @@ from pathlib import Path
 import hashlib
 import json
 import os
+import uuid
 from typing import Annotated
 
 from fastapi import FastAPI, Form, HTTPException, Request
@@ -18,8 +19,11 @@ from .auth import AuthError, AuthService, RateLimited
 from .config import ConfigError, Settings
 from .contracts import CONTRACT_VERSION, IDENTITY_HEADER
 from .database import PortalStore
+from .jellyfin import (JellyfinAdapter, JellyfinAuthenticationError, JellyfinError, JellyfinInputError,
+                       JellyfinUnavailable)
 from .modules import ModuleClient, ModuleRegistry
 from .oidc import OIDCClient, OIDCError, OIDCUnavailable
+from .watch import WatchSessionError, WatchSessionStore
 
 
 SESSION_COOKIE = "foxden_portal_session"
@@ -29,7 +33,8 @@ ROOT = Path(__file__).parent
 
 
 def create_app(settings: Settings | None = None, module_client: ModuleClient | None = None,
-               oidc_client: OIDCClient | None = None) -> FastAPI:
+               oidc_client: OIDCClient | None = None,
+               jellyfin_adapter: JellyfinAdapter | None = None) -> FastAPI:
     settings = settings or Settings.from_env()
     store = PortalStore(settings.database_path)
     auth = AuthService(settings, store)
@@ -51,6 +56,13 @@ def create_app(settings: Settings | None = None, module_client: ModuleClient | N
         service_assertion=service_assertion if signer else None,
     )
     registry = ModuleRegistry(settings.modules, client)
+    watch_store = WatchSessionStore(store, settings.jellyfin_token_secret) if settings.watch_enabled else None
+    jellyfin = jellyfin_adapter
+    if settings.watch_enabled and jellyfin is None:
+        jellyfin = JellyfinAdapter(
+            settings.jellyfin_internal_url or "", settings.jellyfin_public_url or "",
+            settings.jellyfin_timeout_seconds,
+        )
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -65,6 +77,8 @@ def create_app(settings: Settings | None = None, module_client: ModuleClient | N
     app.state.registry = registry
     app.state.oidc = oidc_client or OIDCClient(settings, store)
     app.state.identity_signer = signer
+    app.state.watch_store = watch_store
+    app.state.jellyfin = jellyfin
     templates = Jinja2Templates(directory=ROOT / "templates")
     app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
 
@@ -91,6 +105,8 @@ def create_app(settings: Settings | None = None, module_client: ModuleClient | N
             "version": __version__, "user": user,
             "navigation_modules": settings.modules if user and user["role"] == "admin" else (),
             "jellyfin_url": settings.jellyfin_public_url,
+            "watch_enabled": settings.watch_enabled,
+            "csrf": request.cookies.get(CSRF_COOKIE, ""),
             **(context or {}),
         }
         return templates.TemplateResponse(request=request, name=name, context=values, status_code=status_code)
@@ -105,6 +121,15 @@ def create_app(settings: Settings | None = None, module_client: ModuleClient | N
         if user["role"] != "admin":
             raise HTTPException(403, "Administrator access required.")
         return user
+
+    def watch_session(request: Request):
+        user = require_user(request)
+        if not settings.watch_enabled or not watch_store or not jellyfin:
+            raise HTTPException(404, "Watch & Listen is disabled.")
+        try:
+            return user, watch_store.load(user["user_id"], settings.jellyfin_internal_url or "")
+        except WatchSessionError as exc:
+            raise HTTPException(409, str(exc)) from None
 
     def form_csrf(request: Request, supplied: str) -> None:
         cookie = request.cookies.get(CSRF_COOKIE)
@@ -297,6 +322,208 @@ def create_app(settings: Settings | None = None, module_client: ModuleClient | N
             "modules": snapshots, "activity": registry.combined_activity(snapshots), "csrf": csrf,
             "is_admin": is_admin,
         })
+
+    @app.get("/watch/", response_class=HTMLResponse)
+    async def watch_home(request: Request):
+        user = require_user(request)
+        csrf = request.cookies.get(CSRF_COOKIE, "")
+        if not settings.watch_enabled or not watch_store or not jellyfin:
+            return render(request, "watch.html", {
+                "state": "disabled", "csrf": csrf, "home": None, "error": None,
+            })
+        try:
+            session = watch_store.load(user["user_id"], settings.jellyfin_internal_url or "")
+        except WatchSessionError as exc:
+            return render(request, "watch.html", {
+                "state": "reconnect", "csrf": csrf, "home": None, "error": str(exc),
+            }, 409)
+        if session is None:
+            return render(request, "watch.html", {
+                "state": "connect", "csrf": csrf, "home": None, "error": None,
+            })
+        try:
+            home = await jellyfin.home(session)
+        except JellyfinAuthenticationError as exc:
+            return render(request, "watch.html", {
+                "state": "reconnect", "csrf": csrf, "home": None, "error": str(exc),
+            }, 401)
+        except JellyfinUnavailable as exc:
+            return render(request, "watch.html", {
+                "state": "offline", "csrf": csrf, "home": None, "error": str(exc),
+            }, 503)
+        except JellyfinError as exc:
+            return render(request, "watch.html", {
+                "state": "error", "csrf": csrf, "home": None, "error": str(exc),
+            }, 502)
+        return render(request, "watch.html", {
+            "state": "ready", "csrf": csrf, "home": home, "error": None,
+        })
+
+    @app.post("/watch/connect", response_class=HTMLResponse)
+    async def watch_connect(request: Request, csrf: Annotated[str, Form()],
+                            username: Annotated[str, Form()], password: Annotated[str, Form()]):
+        user = require_user(request)
+        form_csrf(request, csrf)
+        if not settings.watch_enabled or not watch_store or not jellyfin:
+            raise HTTPException(404, "Watch & Listen is disabled.")
+        client = request.client.host if request.client else "unknown"
+        key = hashlib.sha256(f"jellyfin|{client}|{user['user_id']}".encode()).hexdigest()
+        retry_after = store.rate_limited(key)
+        if retry_after:
+            return render(request, "watch.html", {
+                "state": "connect", "csrf": csrf, "home": None,
+                "error": f"Too many attempts. Try again in {retry_after} seconds.",
+            }, 429)
+        try:
+            session = await jellyfin.authenticate(username.strip(), password, f"foxden-{uuid.uuid4()}")
+        except JellyfinAuthenticationError as exc:
+            store.record_failure(key, settings.login_max_attempts,
+                                 settings.login_window_seconds, settings.login_lock_seconds)
+            return render(request, "watch.html", {
+                "state": "connect", "csrf": csrf, "home": None, "error": str(exc),
+            }, 401)
+        except JellyfinError as exc:
+            return render(request, "watch.html", {
+                "state": "offline", "csrf": csrf, "home": None, "error": str(exc),
+            }, 503)
+        store.clear_failures(key)
+        watch_store.save(user["user_id"], settings.jellyfin_internal_url or "", session)
+        return RedirectResponse("/watch/", status_code=303)
+
+    @app.post("/watch/disconnect")
+    async def watch_disconnect(request: Request, csrf: Annotated[str, Form()]):
+        user = require_user(request)
+        form_csrf(request, csrf)
+        if settings.watch_enabled and watch_store and jellyfin:
+            try:
+                session = watch_store.load(user["user_id"], settings.jellyfin_internal_url or "")
+                if session:
+                    await jellyfin.logout(session)
+            except WatchSessionError:
+                pass
+            watch_store.delete(user["user_id"])
+        return RedirectResponse("/watch/", status_code=303)
+
+    @app.get("/watch/search", response_class=HTMLResponse)
+    async def watch_search(request: Request, q: str = ""):
+        _user, session = watch_session(request)
+        if session is None:
+            return RedirectResponse("/watch/", status_code=303)
+        try:
+            results = await jellyfin.search(session, q)
+        except JellyfinInputError as exc:
+            return render(request, "watch_search.html", {"query": q, "items": [], "error": str(exc)}, 400)
+        except JellyfinError as exc:
+            return render(request, "watch_search.html", {"query": q, "items": [], "error": str(exc)}, 502)
+        return render(request, "watch_search.html", {
+            "query": results["query"], "items": results["items"], "error": None,
+        })
+
+    @app.get("/watch/item/{item_id}", response_class=HTMLResponse)
+    async def watch_item(request: Request, item_id: str):
+        _user, session = watch_session(request)
+        if session is None:
+            return RedirectResponse("/watch/", status_code=303)
+        try:
+            result = await jellyfin.item(session, item_id)
+        except JellyfinInputError as exc:
+            return render(request, "error.html", {"message": str(exc)}, 400)
+        except JellyfinError as exc:
+            return render(request, "error.html", {"message": str(exc)}, 502)
+        return render(request, "watch_item.html", {"item": result["item"]})
+
+    @app.get("/watch/browse/{kind}", response_class=HTMLResponse)
+    async def watch_browse(request: Request, kind: str, start: int = 0):
+        _user, session = watch_session(request)
+        if session is None:
+            return RedirectResponse("/watch/", status_code=303)
+        try:
+            result = await jellyfin.browse(session, kind, start=start)
+        except JellyfinInputError as exc:
+            return render(request, "error.html", {"message": str(exc)}, 400)
+        except JellyfinError as exc:
+            return render(request, "error.html", {"message": str(exc)}, 502)
+        return render(request, "watch_browse.html", result)
+
+    @app.get("/api/watch/v1/session")
+    async def watch_api_session(request: Request):
+        user = require_user(request)
+        if not settings.watch_enabled or not watch_store:
+            return {"contract_version": "1.0", "state": "disabled", "connected": False}
+        try:
+            session = watch_store.load(user["user_id"], settings.jellyfin_internal_url or "")
+        except WatchSessionError:
+            return {"contract_version": "1.0", "state": "reconnect", "connected": False}
+        return {"contract_version": "1.0", "state": "ready" if session else "connect",
+                "connected": bool(session), "user": session.username if session else None}
+
+    @app.get("/api/watch/v1/home")
+    async def watch_api_home(request: Request):
+        _user, session = watch_session(request)
+        if session is None:
+            raise HTTPException(409, "Connect a Jellyfin account first.")
+        try:
+            return await jellyfin.home(session)
+        except JellyfinAuthenticationError as exc:
+            raise HTTPException(401, str(exc)) from None
+        except JellyfinUnavailable as exc:
+            raise HTTPException(503, str(exc)) from None
+        except JellyfinError as exc:
+            raise HTTPException(502, str(exc)) from None
+
+    @app.get("/api/watch/v1/search")
+    async def watch_api_search(request: Request, q: str = ""):
+        _user, session = watch_session(request)
+        if session is None:
+            raise HTTPException(409, "Connect a Jellyfin account first.")
+        try:
+            return await jellyfin.search(session, q)
+        except JellyfinInputError as exc:
+            raise HTTPException(400, str(exc)) from None
+        except JellyfinError as exc:
+            raise HTTPException(502, str(exc)) from None
+
+    @app.get("/api/watch/v1/browse/{kind}")
+    async def watch_api_browse(request: Request, kind: str, start: int = 0, limit: int = 60):
+        _user, session = watch_session(request)
+        if session is None:
+            raise HTTPException(409, "Connect a Jellyfin account first.")
+        try:
+            return await jellyfin.browse(session, kind, start=start, limit=limit)
+        except JellyfinInputError as exc:
+            raise HTTPException(400, str(exc)) from None
+        except JellyfinError as exc:
+            raise HTTPException(502, str(exc)) from None
+
+    @app.get("/api/watch/v1/items/{item_id}")
+    async def watch_api_item(request: Request, item_id: str):
+        _user, session = watch_session(request)
+        if session is None:
+            raise HTTPException(409, "Connect a Jellyfin account first.")
+        try:
+            return await jellyfin.item(session, item_id)
+        except JellyfinInputError as exc:
+            raise HTTPException(400, str(exc)) from None
+        except JellyfinError as exc:
+            raise HTTPException(502, str(exc)) from None
+
+    @app.get("/api/watch/v1/artwork/{item_id}")
+    async def watch_artwork(request: Request, item_id: str, width: int = 640):
+        _user, session = watch_session(request)
+        if session is None:
+            raise HTTPException(409, "Connect a Jellyfin account first.")
+        try:
+            content, content_type = await jellyfin.artwork(session, item_id, width)
+        except JellyfinInputError as exc:
+            raise HTTPException(400, str(exc)) from None
+        except JellyfinAuthenticationError as exc:
+            raise HTTPException(401, str(exc)) from None
+        except JellyfinUnavailable as exc:
+            raise HTTPException(503, str(exc)) from None
+        except JellyfinError as exc:
+            raise HTTPException(502, str(exc)) from None
+        return Response(content=content, media_type=content_type,
+                        headers={"Cache-Control": "private, max-age=300"})
 
     @app.get("/admin/users", response_class=HTMLResponse)
     def users_page(request: Request):

@@ -10,7 +10,7 @@
 {% if jellyfin_url %}
 <section class="media-server-card" aria-labelledby="jellyfin-title">
   <div><p class="eyebrow">Watch and listen</p><h2 id="jellyfin-title">Jellyfin media server</h2><p>Open your authorized libraries with your Jellyfin account. Playback and library permissions are managed by Jellyfin.</p></div>
-  <a class="module-link secondary" href="{{ jellyfin_url }}">Open Jellyfin</a>
+  <a class="module-link secondary" href="{% if watch_enabled %}/watch/{% else %}{{ jellyfin_url }}{% endif %}">{% if watch_enabled %}Open Watch &amp; Listen{% else %}Open Jellyfin{% endif %}</a>
 </section>
 {% endif %}
 

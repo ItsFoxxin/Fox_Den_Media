@@ -62,6 +62,23 @@ backup and old image. See Jellyfin's official [migration guidance](https://jelly
 8. Test direct play and a controlled hardware transcode.
 9. Keep the old container stopped but intact through the observation window.
 
+## Machine-readable go/no-go report
+
+The migration tool cannot infer human validation. Copy
+`deploy/examples/migration-evidence.example.json`, set a gate to `true` only
+after its evidence has been reviewed, and run:
+
+```bash
+python scripts/migration.py readiness --env production.env --mode jellyfin \
+  --evidence migration-evidence.json --output readiness.json
+```
+
+`ready_for_cutover` remains false when configuration or paths fail, a gate is
+false, or any gate is absent. The required gates cover inventory review, writer
+shutdown, final verified backup, isolated restore, Jellyfin state/playback,
+browser/native clients, and rollback. This report records approval evidence; it
+does not stop containers or authorize deployment.
+
 ## Rollback
 
 1. Stop the new service immediately; do not run both writers.

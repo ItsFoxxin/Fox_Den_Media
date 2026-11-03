@@ -14,8 +14,9 @@
     {% if user %}
     <nav aria-label="Platform">
       <a href="/">Overview</a>
+      {% if watch_enabled %}<a href="/watch/">Watch &amp; Listen</a>{% endif %}
       {% if user.role == 'admin' %}{% for module in navigation_modules if module.enabled %}<a href="{{ module.navigation_path }}">{{ module.name }}</a>{% endfor %}{% endif %}
-      {% if jellyfin_url %}<a href="{{ jellyfin_url }}">Jellyfin</a>{% endif %}
+      {% if jellyfin_url and not watch_enabled %}<a href="{{ jellyfin_url }}">Jellyfin</a>{% endif %}
       {% if user.role == 'admin' %}<a href="/admin/users">Accounts</a>{% endif %}
       <form action="/logout" method="post" class="inline"><input type="hidden" name="csrf" value="{{ csrf|default('') }}"><button class="link-button">Log out</button></form>
     </nav>
