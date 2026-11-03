@@ -253,7 +253,7 @@ def test_platform_summary_is_public_bounded_and_contains_no_records(settings):
         summary = response.json()
         assert summary['contract_version'] == '1.0'
         assert summary['module_id'] == 'media'
-        assert summary['module_version'] == '0.7.0'
+        assert summary['module_version'] == '0.8.0'
         assert summary['health']['status'] == 'healthy'
         assert {item['id'] for item in summary['capabilities']} == {
             'media.requests', 'media.library', 'media.acquisition', 'media.browser'}

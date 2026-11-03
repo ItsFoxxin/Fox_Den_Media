@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.8.0 - 2026-11-03
+
+### Added
+
+- Sanitized, read-only Docker/NAS inventory for containers, images and digests,
+  Compose projects, ports, networks, volumes, mounts, UID/GID, permissions,
+  capacity, health metadata, restart policy, proxy dependencies, and GPU maps.
+- Application-aware, writer-quiesced state archives with embedded and external
+  per-file SHA-256 manifests, safe-member validation, and verified isolated restore.
+- Disposable rehearsal preparation that restores copied state, assigns a unique
+  Compose project, uses synthetic media/torrent roots, and leaves network
+  credentials deliberately blocked pending separate staging authorization.
+- Provenance-bearing migration evidence schema, human-readable readiness report,
+  rollback rehearsal report, and a fail-closed `CUTOVER_READY` decision.
+- Read-only Intel N100 device/VA-API/QSV discovery that explicitly does not claim
+  successful hardware transcoding.
+- Product roadmap through 3.0.0 and production cutover/recovery documentation.
+
+### Boundary
+
+- CI and synthetic fixtures cannot satisfy the required NAS, real-client,
+  real-playback, VPN, Authentik, or operator-approval gates.
+- No production service, repository, routing, identity provider, or data was changed.
+
 ## 0.7.0 - 2026-11-03
 
 ### Added

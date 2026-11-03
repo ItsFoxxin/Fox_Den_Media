@@ -1,68 +1,52 @@
-# Existing deployment migration runbook
+# Production cutover runbook
 
-This runbook does not authorize a live cutover. Commands default to dry-run.
+This runbook is operator-reviewed and intentionally non-executable as a whole.
+Every state-changing step requires separate production approval. Use
+`production-migration-rehearsal.md` to generate the prerequisite evidence.
 
-## 1. Inventory
+## Preconditions
 
-Record image versions, container names, UID/GID, bind mounts, filesystem types,
-free space, reverse-proxy routes, and application versions. Generate a
-content-free path inventory:
+- Exact release commit, image tags and digests recorded.
+- Sanitized NAS inventory reviewed; mount ownership, free space, reverse proxy,
+  `/dev/dri`, qBittorrent/Gluetun, Jellyfin and Authentik dependencies known.
+- Initial consistent backup and isolated restore/rehearsal passed.
+- Final path map preserves existing large media/torrent payloads in place where
+  possible and preserves Jellyfin container media paths.
+- Rollback archive, prior images/Compose/environment and recovery operator are available.
+- Machine and human readiness reports say `CUTOVER_READY` for the exact commit.
 
-```bash
-python scripts/migration.py inventory --env production.env --output reports/inventory.json
-python scripts/migration.py readiness --env production.env --mode full-managed --output reports/readiness.json
-```
+## Cutover sequence
 
-Separately record qBittorrent categories, tags, save paths, incomplete paths,
-active seeding, and Gluetun's provider, endpoint, DNS, firewall, and port-forward
-behavior. Do not copy credentials into the report.
+1. Confirm the approved production inventory has not drifted.
+2. Confirm backup destination availability, ownership and free space.
+3. Verify the earlier consistent backup and copied-state rehearsal artifacts.
+4. Resolve every compatibility issue; do not waive failed critical evidence.
+5. Record final approval, operators, timestamps, release SHA and rollback trigger.
+6. Begin the maintenance window; disable acquisition/import submissions.
+7. Stop Music worker/web and Movies/TV writers, then Portal.
+8. Pause/stop qBittorrent and confirm resume data is flushed; stop Gluetun after it.
+9. Stop Jellyfin and confirm no process has its database/config open.
+10. Verify old and new stacks cannot simultaneously mount any writable database,
+    qBittorrent appdata, Jellyfin config, staging directory or final publish root.
+11. Capture and verify the final consistent backup and storage snapshot.
+12. Start the approved Fox Den ingress/Portal and enabled application modules.
+13. Validate local emergency login, Authentik if enabled, roles, signed identities,
+    module health, redirects, assets, uploads and WebSockets.
+14. Start Gluetun, validate tunnel/firewall/DNS/port-forward behavior, then start
+    qBittorrent and verify counts, paths, resume and seeding state.
+15. Start Jellyfin; validate users, plugins, libraries, history, artwork, search,
+    Watch & Listen and browser/TV/mobile playback.
+16. Switch production routing only after direct service validation.
+17. Observe logs, health, storage growth, queues, VPN and playback for the
+    approved stabilization period. Keep the previous deployment stopped but intact.
+18. Declare acceptance separately. Do not tag 1.0.0 merely because containers started.
 
-## 2. Backup rehearsal
+## Abort and rollback triggers
 
-Use copied synthetic state first. The backup command refuses execution without
-an explicit writer-stop confirmation:
+Rollback instead of improvising when authentication recovery is unavailable,
+database migration fails, Jellyfin loses users/history/libraries, qBittorrent
+resume/seeding diverges, VPN fail-closed behavior is uncertain, permissions cause
+writes under the wrong identity, or ingress cannot be restored quickly.
 
-```bash
-python scripts/migration.py backup --env rehearsal.env --destination /safe/backups
-python scripts/migration.py backup --env rehearsal.env --destination /safe/backups --writers-stopped --execute
-python scripts/migration.py verify /safe/backups/foxden-state-TIMESTAMP.tar.gz
-python scripts/migration.py restore-rehearsal /safe/backups/foxden-state-TIMESTAMP.tar.gz --destination /isolated/restore --execute
-```
-
-The archive includes Portal, Music, Movies/TV, qBittorrent, and Gluetun configuration roots
-that exist in the environment file, plus a SHA-256 sidecar. Media libraries and
-torrent payloads should normally be reused in place and protected by a separate
-storage snapshot rather than copied through this small-state archive.
-
-## 3. Staged validation
-
-1. Restore copied state into isolated paths.
-2. Keep production containers running while isolated testing uses only copied
-   databases/configuration and synthetic media.
-3. Verify Music schema startup, queue/history counts, single-recording imports,
-   album completeness, and Jellyfin refresh configuration.
-4. Verify qBittorrent torrent count, categories, tags, trackers, save paths,
-   fastresume state, and paused/active status without announcing real torrents.
-5. Confirm qBittorrent uses `network_mode: service:gluetun`, has no independent
-   port or network, and cannot egress while the VPN fixture is unhealthy.
-6. Test Portal login, module routing, permissions, restart persistence, and
-   unavailable-module behavior.
-
-## 4. Live cutover gate
-
-After separate approval: stop Music workers and qBittorrent first, confirm no
-writer remains, make a final consistent backup/storage snapshot, then start the
-new stack against the preserved paths. Never run old and new qBittorrent against
-the same appdata or torrent directory concurrently.
-
-## 5. Rollback
-
-Stop every new writer. Restore the verified configuration archive and storage
-snapshot, restore the prior ownership and bind mounts, then start the original
-Gluetun before the original qBittorrent. Start the original Music services only
-after its database is restored. Validate torrent counts, seeding paths, Music
-history, and Jellyfin access before reopening ingress.
-
-If an application performs an irreversible SQLite migration, rollback requires
-restoring the pre-cutover database; never point the old binary at the migrated
-database.
+The rollback procedure is in `recovery.md`. Never use a database modified by an
+incompatible newer application as an older-version recovery source.

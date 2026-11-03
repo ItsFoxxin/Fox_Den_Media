@@ -1,5 +1,18 @@
 # Validation evidence
 
+## Production migration rehearsal 0.8.0 - 2026-11-03
+
+- Disposable tests cover secret-redacted Docker inventory, content-free path
+  inventory, writer-stop enforcement, per-file backup manifests, corruption
+  rejection, empty-target restore, rollback, isolated rehearsal paths, N100
+  discovery boundaries, evidence provenance and fail-closed readiness.
+- The 0.8.0 feature branch must pass the existing hosted Music, Portal,
+  Movies/TV, Watch & Listen, Jellyfin, Compose, dependency audit, VPN fixture,
+  container integration and strict-gate jobs before review.
+- NAS layout, real application state, Authentik, torrents, VPN connectivity,
+  Jellyfin clients/playback and hardware transcoding remain pending operational
+  evidence. No mock or CI result is recorded as proof of those boundaries.
+
 ## Watch & Listen 0.7.0 - 2026-11-03
 
 - Portal unit and integration tests include encrypted per-user Jellyfin token

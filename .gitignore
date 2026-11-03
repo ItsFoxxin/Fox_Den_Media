@@ -20,5 +20,11 @@ work/
 deploy/integration/.runtime/
 deploy/.runtime/
 reports/
+private-reports/
+rehearsal.env
+migration-evidence.json
+*.tar.gz
+*.tar.gz.sha256
+*.tar.gz.manifest.json
 **/build/
 dist/

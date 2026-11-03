@@ -8,7 +8,7 @@ the non-Music history from Media Downloader.
 This branch is a production-readiness candidate. It does not deploy to a NAS or
 modify existing application state.
 
-Current platform milestone: **0.7.0**.
+Current platform milestone: **0.8.0**.
 
 ![Fox Den Midnight Portal with optional Jellyfin entry](docs/foxden-midnight-portal-desktop.png)
 
@@ -32,8 +32,13 @@ prints the exact Compose command unless `--execute` is supplied.
 See [deployment](docs/deployment.md), [Jellyfin architecture](docs/jellyfin.md),
 [Jellyfin migration](docs/jellyfin-migration.md), [permissions](docs/permissions.md),
 [Watch & Listen](docs/watch-listen.md), [identity integration](docs/authentik-jellyfin-auth.md),
-[mobile roadmap](docs/mobile-media-roadmap.md), and the
+[product roadmap](docs/ROADMAP_TO_3.0.0.md), [mobile roadmap](docs/mobile-media-roadmap.md), and the
 [production-readiness assessment](docs/production-readiness.md).
+
+For migration work, start with the [0.8.0 production rehearsal](docs/production-migration-rehearsal.md),
+[Ugreen NAS inventory checklist](docs/nas-inventory-checklist.md),
+[cutover runbook](docs/migration-runbook.md), [N100 hardware validation](docs/n100-hardware-validation.md),
+and [1.0.0 release checklist](docs/release-1.0-checklist.md).
 
 ## Watch & Listen
 
