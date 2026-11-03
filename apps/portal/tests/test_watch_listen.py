@@ -54,7 +54,10 @@ def transport(requests: list[httpx.Request], *, unavailable: bool = False):
             return httpx.Response(200, json={"Items": [ITEM, AUDIO]})
         if request.url.path == "/Items":
             kinds = request.url.params.get("includeItemTypes", "")
-            return httpx.Response(200, json={"Items": [AUDIO if "Audio" in kinds else ITEM]})
+            music_kinds = {"MusicArtist", "MusicAlbum", "Audio", "Playlist"}
+            return httpx.Response(200, json={
+                "Items": [AUDIO if music_kinds.intersection(kinds.split(",")) else ITEM],
+            })
         if request.url.path == "/Items/video-1":
             return httpx.Response(200, json={**ITEM, "Overview": "A safe synthetic movie.", "Genres": ["Cozy"]})
         if request.url.path == "/Items/video-1/Images/Primary":

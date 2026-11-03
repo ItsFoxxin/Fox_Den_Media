@@ -131,7 +131,7 @@ def create_app(settings: Settings | None = None, module_client: ModuleClient | N
         except WatchSessionError as exc:
             raise HTTPException(409, str(exc)) from None
 
-    def form_csrf(request: Request, supplied: str) -> None:
+    def form_csrf(request: Request, supplied: str | None) -> None:
         cookie = request.cookies.get(CSRF_COOKIE)
         if not cookie or not supplied or not secrets_equal(cookie, supplied):
             raise HTTPException(403, "CSRF validation failed.")
@@ -360,8 +360,8 @@ def create_app(settings: Settings | None = None, module_client: ModuleClient | N
         })
 
     @app.post("/watch/connect", response_class=HTMLResponse)
-    async def watch_connect(request: Request, csrf: Annotated[str, Form()],
-                            username: Annotated[str, Form()], password: Annotated[str, Form()]):
+    async def watch_connect(request: Request, username: Annotated[str, Form()],
+                            password: Annotated[str, Form()], csrf: Annotated[str | None, Form()] = None):
         user = require_user(request)
         form_csrf(request, csrf)
         if not settings.watch_enabled or not watch_store or not jellyfin:
@@ -391,7 +391,7 @@ def create_app(settings: Settings | None = None, module_client: ModuleClient | N
         return RedirectResponse("/watch/", status_code=303)
 
     @app.post("/watch/disconnect")
-    async def watch_disconnect(request: Request, csrf: Annotated[str, Form()]):
+    async def watch_disconnect(request: Request, csrf: Annotated[str | None, Form()] = None):
         user = require_user(request)
         form_csrf(request, csrf)
         if settings.watch_enabled and watch_store and jellyfin:
