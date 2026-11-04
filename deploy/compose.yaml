@@ -69,7 +69,7 @@ services:
 
   portal:
     <<: *hardening
-    image: "${PORTAL_IMAGE:-foxden-portal:0.9.0}"
+    image: "${PORTAL_IMAGE:-foxden-portal:0.9.1}"
     build:
       context: ../apps/portal
       args:
@@ -163,7 +163,7 @@ services:
     <<: *hardening
     user: "${MEDIA_PUID:-10001}:${MEDIA_PGID:-10001}"
     profiles: [media]
-    image: "${MEDIA_IMAGE:-fox-den-media:0.9.0}"
+    image: "${MEDIA_IMAGE:-fox-den-media:0.9.1}"
     build:
       context: ..
       dockerfile: apps/media/Dockerfile

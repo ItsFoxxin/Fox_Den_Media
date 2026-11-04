@@ -143,6 +143,24 @@ def test_failed_preparation_does_not_modify_live_library(settings, tmp_path: Pat
     assert not (settings.music_dir / "Artist" / "Album").exists()
 
 
+def test_preparation_refuses_symlinked_source(settings, tmp_path: Path) -> None:
+    settings.ensure_directories()
+    target = tmp_path / "outside.flac"
+    target.write_bytes(b"outside-audio")
+    source = tmp_path / "working.flac"
+    try:
+        source.symlink_to(target)
+    except OSError as exc:
+        pytest.skip(f"This test environment cannot create symlinks: {exc}")
+    digest = sha256_file(target)
+    track = PreparedTrack(source_path=source, relative_path="01.flac",
+                          source_sha256=digest, final_sha256=digest)
+    with pytest.raises(LibraryImportError, match="missing or unsafe"):
+        prepare_album(music_root=settings.music_dir, job_id="symlink-source",
+                      destination_relative_path="Artist/Album", tracks=[track], cover_jpeg=None)
+    assert not (settings.music_dir / "Artist" / "Album").exists()
+
+
 def test_preparation_tolerates_unsupported_chmod_on_regular_files(
     settings,
     tmp_path: Path,

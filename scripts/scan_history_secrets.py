@@ -16,7 +16,7 @@ PATTERNS = {
     "openai-key": re.compile(rb"\bsk-[A-Za-z0-9_-]{24,}\b"),
 }
 ASSIGNMENT = re.compile(
-    rb"(?mi)^\s*(?:WIREGUARD_PRIVATE_KEY|JELLYFIN_API_KEY|QBIT_PASSWORD|PORTAL_SECRET_KEY|PORTAL_BOOTSTRAP_SECRET|APP_TOKEN)\s*=\s*([^\r\n#]+)"
+    rb"(?mi)^\s*(?:WIREGUARD_PRIVATE_KEY|JELLYFIN_API_KEY|JELLYFIN_TOKEN_ENCRYPTION_KEY|QBIT_PASSWORD|PORTAL_SECRET_KEY|PORTAL_BOOTSTRAP_SECRET|PORTAL_OIDC_CLIENT_SECRET|FOX_DEN_INGRESS_AUTH_TOKEN|FOX_DEN_CSRF_SECRET|APP_TOKEN)\s*=\s*([^\r\n#]+)"
 )
 PLACEHOLDERS = {b"", b"ci-unused", b"unused", b"changeme", b"change_me", b"example", b"test", b"redacted"}
 

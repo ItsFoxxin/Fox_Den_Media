@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.9.1 - 2026-11-04
+
+- Updated Portal authentication to Authlib 1.9.4 and added OIDC/JWT security regressions.
+- Added Portal dependency auditing, Bandit, CodeQL, and expanded full-history secret scanning.
+- Bound Movies/TV staging validation and import to no-follow file descriptors on Linux.
+- Strengthened standalone cookie CSRF checks and restricted host-path status details to administrators.
+- Added adversarial authentication and staging race tests plus a release security assessment.
+
 ## 0.9.0 - 2026-11-03
 
 ### Added

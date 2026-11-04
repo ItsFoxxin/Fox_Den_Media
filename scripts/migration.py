@@ -20,7 +20,7 @@ from typing import Any, Callable
 
 from foxden import ConfigError, load_env, validate
 
-PLATFORM_VERSION = "0.9.0"
+PLATFORM_VERSION = "0.9.1"
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 SAFE_ID_ENV = {"PUID", "PGID", "UID", "GID", "TZ", "UMASK", "UMASK_SET"}
 

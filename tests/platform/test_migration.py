@@ -227,7 +227,7 @@ def test_readiness_stays_closed_until_every_evidence_gate_passes(tmp_path: Path)
         "test_name": key,
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "environment": "ci" if key == "hosted_ci_passed" else ("nas" if key in nas else "isolated-staging"),
-        "source_version": "0.9.0", "source_commit": commit, "artifact_id": f"artifact-{key}",
+        "source_version": "0.9.1", "source_commit": commit, "artifact_id": f"artifact-{key}",
         "result": "pass", "checksums": {"report": "c" * 64},
         "operator_approval_required": key == "cutover_approved",
         "operator_approved": key == "cutover_approved", "failure_details": None, "critical": True,

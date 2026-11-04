@@ -42,7 +42,8 @@ class Settings(BaseSettings):
     remote_browser_url: str | None = None
     database_url: str | None = None
 
-    web_host: str = "0.0.0.0"
+    # Container listener; Compose publishes only ingress and keeps this port private.
+    web_host: str = "0.0.0.0"  # nosec B104
     web_port: int = 8000
     web_workers: int = 1
     web_root_path: str = ""

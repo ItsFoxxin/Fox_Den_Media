@@ -2,9 +2,9 @@ name: Validate Fox Den Media monorepo
 
 on:
   push:
-    branches: [dev, main, 'feature/**']
+    branches: [dev, main, 'feature/**', 'security/**']
   pull_request:
-    branches: [dev, main, 'feature/**']
+    branches: [dev, main, 'feature/**', 'security/**']
   merge_group:
     types: [checks_requested]
   workflow_dispatch:
@@ -109,14 +109,38 @@ jobs:
         with: {persist-credentials: false}
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with: {python-version: '3.12'}
-      - run: python -m pip install pip-audit==2.9.0
+      - run: python -m pip install pip-audit==2.10.1
       - run: |
           mkdir -p reports
-          python -m pip_audit -r apps/music/backend/requirements.txt --format json --output reports/music-audit.json
-          python -m pip_audit -r apps/media/requirements.txt --format json --output reports/media-audit.json
+          python -m pip_audit --strict -r apps/music/backend/requirements.txt --format json --output reports/music-audit.json
+          python -m pip_audit --strict -r apps/media/requirements.txt --format json --output reports/media-audit.json
+          python -m pip_audit --strict apps/portal --format json --output reports/portal-audit.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with: {name: dependency-audits, path: reports/, retention-days: 14}
+
+  sast:
+    name: Static analysis and secret scan
+    needs: validation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with: {persist-credentials: false, fetch-depth: 0}
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with: {python-version: '3.12'}
+      - run: python -m pip install bandit==1.9.4
+      - name: Bandit medium and high confidence findings
+        run: |
+          mkdir -p reports
+          python -m bandit -r apps/portal/src apps/media/app apps/music/backend/src \
+            --severity-level medium --confidence-level medium \
+            --format json --output reports/bandit.json
+      - name: Full-history secret scan
+        run: python scripts/scan_history_secrets.py
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with: {name: static-security-analysis, path: reports/, retention-days: 14}
 
   migration:
     name: Migration backup restore and rollback
@@ -165,7 +189,7 @@ jobs:
 
   containers:
     name: Consolidated container integration
-    needs: [music, applications, audit, migration, jellyfin]
+    needs: [music, applications, audit, sast, migration, jellyfin]
     runs-on: ubuntu-24.04
     timeout-minutes: 35
     steps:
@@ -186,7 +210,7 @@ jobs:
   gate:
     name: Monorepo strict gate
     if: always()
-    needs: [validation, music, applications, audit, migration, jellyfin, containers]
+    needs: [validation, music, applications, audit, sast, migration, jellyfin, containers]
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:

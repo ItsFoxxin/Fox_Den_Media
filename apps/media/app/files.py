@@ -1,4 +1,5 @@
 import ctypes
+from contextlib import contextmanager
 import errno
 import hashlib
 import json
@@ -52,13 +53,61 @@ def contained(root, relative, *, existing=True):
     return current
 
 
-def signature(path):
-    st = path.stat()
+def _signature_from_stat(st, name):
     if not stat.S_ISREG(st.st_mode):
         raise ValueError("Only regular files are accepted.")
     if st.st_size == 0:
-        raise ValueError("Empty file: " + path.name)
-    return {"size": st.st_size, "mtime_ns": st.st_mtime_ns, "inode": st.st_ino}
+        raise ValueError("Empty file: " + name)
+    return {"size": st.st_size, "mtime_ns": st.st_mtime_ns,
+            "inode": st.st_ino, "device": st.st_dev}
+
+
+def signature(path):
+    return _signature_from_stat(path.stat(), path.name)
+
+
+@contextmanager
+def open_staged_regular(root, relative, expected=None):
+    """Open one staging file without following path components on POSIX.
+
+    Validation and import operate on this descriptor rather than reopening a
+    previously checked pathname.  The Windows fallback rechecks the opened
+    handle identity before and after use; production containers run on Linux.
+    """
+    parts = relative_parts(relative)
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    directory = getattr(os, "O_DIRECTORY", 0)
+    descriptors = []
+    try:
+        if os.name == "posix" and nofollow:
+            root_fd = os.open(root, flags | directory | nofollow)
+            descriptors.append(root_fd)
+            parent_fd = root_fd
+            for part in parts[:-1]:
+                parent_fd = os.open(part, flags | directory | nofollow, dir_fd=parent_fd)
+                descriptors.append(parent_fd)
+            fd = os.open(parts[-1], flags | nofollow, dir_fd=parent_fd)
+        else:
+            path = contained(root, relative)
+            fd = os.open(path, flags)
+        descriptors.append(fd)
+        current = _signature_from_stat(os.fstat(fd), parts[-1])
+        if expected is not None and current != expected:
+            raise ValueError("File changed since it was checked: " + relative)
+        yield fd, current
+        if _signature_from_stat(os.fstat(fd), parts[-1]) != current:
+            raise ValueError("File changed while it was being read: " + relative)
+    except OSError as exc:
+        if exc.errno in {errno.ELOOP, errno.ENOTDIR}:
+            raise ValueError("Symlinks and junctions are not allowed: " + relative) from None
+        raise
+    finally:
+        for descriptor in reversed(descriptors):
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
 
 
 def digest(path):
@@ -66,6 +115,15 @@ def digest(path):
     with path.open("rb") as f:
         for chunk in iter(lambda: f.read(1024 * 1024), b""):
             h.update(chunk)
+    return h.hexdigest()
+
+
+def digest_descriptor(fd):
+    h = hashlib.sha256()
+    os.lseek(fd, 0, os.SEEK_SET)
+    while chunk := os.read(fd, 1024 * 1024):
+        h.update(chunk)
+    os.lseek(fd, 0, os.SEEK_SET)
     return h.hexdigest()
 
 
@@ -89,10 +147,15 @@ def inventory(settings, source):
     return result
 
 
-def probe(path, settings):
+def probe(path, settings, *, descriptor=None):
+    input_path = str(path)
+    run_options = {}
+    if descriptor is not None and os.name == "posix":
+        input_path = f"/proc/self/fd/{descriptor}"
+        run_options["pass_fds"] = (descriptor,)
     try:
-        proc = subprocess.run([settings.ffprobe, "-v", "error", "-protocol_whitelist", "file", "-format_whitelist", DEMUXERS, "-show_format", "-show_streams", "-of", "json", str(path)],
-                              capture_output=True, text=True, timeout=90, encoding="utf-8", errors="replace")
+        proc = subprocess.run([settings.ffprobe, "-v", "error", "-protocol_whitelist", "file", "-format_whitelist", DEMUXERS, "-show_format", "-show_streams", "-of", "json", input_path],
+                              capture_output=True, text=True, timeout=90, encoding="utf-8", errors="replace", **run_options)
     except FileNotFoundError:
         raise ValueError("ffprobe is required. Install FFmpeg or set FFPROBE_PATH.") from None
     if proc.returncode:
@@ -106,9 +169,9 @@ def probe(path, settings):
         try:
             # Capture only a bounded tail on disk; full decoding can run for hours.
             with __import__("tempfile").TemporaryFile() as log:
-                proc = subprocess.run([settings.ffmpeg, "-nostdin", "-v", "error", "-xerror", "-protocol_whitelist", "file", "-format_whitelist", DEMUXERS, "-i", str(path),
+                proc = subprocess.run([settings.ffmpeg, "-nostdin", "-v", "error", "-xerror", "-protocol_whitelist", "file", "-format_whitelist", DEMUXERS, "-i", input_path,
                                        "-map", "0:v?", "-map", "0:a?", "-f", "null", "-"],
-                                      stdout=subprocess.DEVNULL, stderr=log, timeout=settings.decode_timeout)
+                                      stdout=subprocess.DEVNULL, stderr=log, timeout=settings.decode_timeout, **run_options)
                 if proc.returncode:
                     log.seek(max(0, log.tell() - 500))
                     raise ValueError("Full media decode failed: " + log.read().decode("utf-8", "replace"))
@@ -146,13 +209,15 @@ def validate(settings, qbit, payload):
     time.sleep(settings.settle_seconds)
     for entry in selected:
         path = contained(settings.staging, entry["path"])
-        if signature(path) != entry["snapshot"]:
-            raise ValueError("File is still changing: " + entry["path"])
-        entry["sha256"] = digest(path)
-        entry["output"] = Path(entry["path"]).relative_to(common).as_posix()
-        entry["media"] = probe(path, settings) if path.suffix.lower() in MEDIA else None
-        if signature(path) != entry["snapshot"]:
-            raise ValueError("File changed during validation: " + entry["path"])
+        try:
+            with open_staged_regular(settings.staging, entry["path"], entry["snapshot"]) as (fd, _):
+                entry["sha256"] = digest_descriptor(fd)
+                entry["output"] = Path(entry["path"]).relative_to(common).as_posix()
+                entry["media"] = probe(path, settings, descriptor=fd) if path.suffix.lower() in MEDIA else None
+        except ValueError as exc:
+            if "changed since" in str(exc):
+                raise ValueError("File is still changing: " + entry["path"]) from None
+            raise
     warnings = []
     if not payload.get("torrent_hash"):
         warnings.append("Untracked staging files: torrent completeness has not been checked.")
@@ -217,16 +282,22 @@ def import_files(settings, store, qbit, payload, job_id):
     published = False
     try:
         for entry in report["files"]:
-            source = contained(settings.staging, entry["path"])
-            if signature(source) != entry["snapshot"]:
-                raise ValueError("Source changed since validation. Validate again: " + entry["path"])
+            if not entry.get("sha256"):
+                raise ValueError("Validation report has no checksum. Validate again: " + entry["path"])
             copied = contained(temporary, entry["output"], existing=False)
             copied.parent.mkdir(parents=True, exist_ok=True)
-            with source.open("rb") as src, copied.open("xb") as dst:
-                shutil.copyfileobj(src, dst, length=1024 * 1024)
-                dst.flush()
-                os.fsync(dst.fileno())
-            if signature(source) != entry["snapshot"] or digest(copied) != entry["sha256"]:
+            copied_hash = hashlib.sha256()
+            try:
+                with open_staged_regular(settings.staging, entry["path"], entry["snapshot"]) as (fd, _), copied.open("xb") as dst:
+                    os.lseek(fd, 0, os.SEEK_SET)
+                    while chunk := os.read(fd, 1024 * 1024):
+                        copied_hash.update(chunk)
+                        dst.write(chunk)
+                    dst.flush()
+                    os.fsync(dst.fileno())
+            except ValueError:
+                raise ValueError("Source changed since validation. Validate again: " + entry["path"]) from None
+            if copied_hash.hexdigest() != entry["sha256"] or digest(copied) != entry["sha256"]:
                 raise ValueError("Source changed or copy verification failed: " + entry["path"])
             manifest["files"].append({"path": entry["output"], "size": entry["snapshot"]["size"], "sha256": entry["sha256"], "media": entry["media"]})
         receipt = temporary / ".foxden-receipt.json"

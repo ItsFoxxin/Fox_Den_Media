@@ -8,7 +8,7 @@ the non-Music history from Media Downloader.
 This branch is a production-readiness candidate. It does not deploy to a NAS or
 modify existing application state.
 
-Current platform milestone: **0.9.0**.
+Current platform milestone: **0.9.1** security hardening.
 
 ![Fox Den Midnight Portal with optional Jellyfin entry](docs/foxden-midnight-portal-desktop.png)
 
@@ -37,6 +37,7 @@ See [deployment](docs/deployment.md), [Jellyfin architecture](docs/jellyfin.md),
 
 For migration work, start with the [0.9.0 production compatibility report](docs/production-compatibility-0.9.md),
 [0.9.0 release checklist](docs/release-0.9-checklist.md),
+[0.9.1 security review](docs/security-0.9.1.md),
 [0.8.0 production rehearsal](docs/production-migration-rehearsal.md),
 [Ugreen NAS inventory checklist](docs/nas-inventory-checklist.md),
 [qBittorrent recovery](docs/qbittorrent-recovery.md), [Gluetun validation](docs/gluetun-validation.md),

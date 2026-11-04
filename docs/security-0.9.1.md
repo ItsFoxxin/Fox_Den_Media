@@ -1,0 +1,40 @@
+# Fox Den Media 0.9.1 security review
+
+Date: 2026-11-04
+
+Reviewed base: `1f11e9061ee722081e8b61197037d0e7bd4e42f7`
+
+Scope: application code, authentication contracts, staging/import paths, ingress, Compose isolation, dependencies, subprocesses, outbound requests, secrets, and CI controls.
+
+This review used isolated fixtures and source inspection. It did not connect to the NAS, Authentik, Jellyfin, qBittorrent, trackers, Gluetun, VPN credentials, or production media. A passing 0.9.1 security gate does not replace the copied-state NAS rehearsal required before production cutover.
+
+## Findings and disposition
+
+| Severity | Classification | Area | Evidence | Disposition and regression coverage |
+| --- | --- | --- | --- | --- |
+| High | Confirmed vulnerability | Portal/Authlib | Portal pinned Authlib 1.6.5, affected by CVE-2026-28802 and CVE-2026-96760. Review also identified later Authlib advisories fixed after 1.9.0. | Pinned provenance-backed Authlib 1.9.4. OIDC regressions cover signature, issuer, audience, expiry, nonce, state replay, unsupported algorithms, malformed tokens, empty JWS signature sets, and empty HMAC key rejection. Portal's accepted ID-token algorithms remain explicitly limited to RS256 and ES256. |
+| High | Confirmed control gap | Dependency auditing | CI audited Music and Movies/TV requirements but omitted Portal and its resolved transitive graph. | `pip-audit 2.10.1 --strict` now audits Music, Movies/TV, and the Portal project independently and fails on vulnerabilities or unresolved requirements. |
+| High | Confirmed potentially exploitable condition | Movies/TV staging and import | Path containment and symlink checks occurred before later pathname reopens by hashing, FFmpeg, and import copy. A writer able to mutate staging could race a checked file into a symlink. | Linux validation and import now walk staging components with `dir_fd`, `O_DIRECTORY`, and `O_NOFOLLOW`, bind checks to an open regular-file descriptor, pass that descriptor to FFmpeg through `/proc/self/fd`, and hash the same descriptor used for copying. Adversarial post-check symlink swaps must fail without publishing. Windows retains identity rechecks; production containers use Linux. |
+| Medium | Confirmed information exposure | Movies/TV status | Any authenticated integrated user could receive absolute staging/media paths and the qBittorrent download root. | Host path fields are now returned only to administrators. Restricted-user regression coverage verifies omission. |
+| Medium | Defense-in-depth weakness | Standalone Movies/TV cookie writes | SameSite=Strict and a custom request header blocked ordinary form CSRF, but cookie-authenticated state changes did not also validate Origin. No session forgery was found because cookies are HMAC signed with a minimum-length secret. | Non-safe cookie requests now require both the custom header and exact expected Origin. Tests cover missing/wrong Origin, missing header, tampered cookies, valid same-origin writes, logout, and bearer-token compatibility. |
+| Medium | Confirmed outbound-request hardening gap | Music healthcheck | A trusted environment variable could redirect the unauthenticated health probe to an arbitrary URL. Container-environment control already implies operator access, so no remote exploit was established. | Health probes are restricted to local HTTP hosts and reject credentials, non-HTTP schemes, and nonlocal targets. Regression tests cover link-local metadata, remote HTTPS, file URLs, and embedded credentials. |
+| Medium | Defense-in-depth weakness | Browser WebSocket session lifetime | Portal authorization occurred at the noVNC WebSocket handshake, but an established connection could remain active for 24 hours after session revocation. | The browser route now fails closed on Portal-auth errors and bounds idle WebSocket lifetime to one hour. Immediate revocation of already-established WebSockets remains a documented limitation. |
+| Informational | Reviewed; controls effective | Internal identity and roles | Ingress strips client Fox Den and Authentik identity headers. Portal alone signs short-lived Ed25519 audience-bound assertions. Modules verify issuer, audience, algorithm, key ID, token use, scopes, roles, expiry, signature, and replay ID. Service activity uses a separate service identity. | Existing forgery, cross-module replay, expiry, role, service-scope, session-revocation, and header-stripping tests remain in the strict gate. Direct module ports are private in managed Compose. |
+| Informational | Reviewed; controls effective | Docker and VPN isolation | Only ingress is public by default and binds to loopback. Application networks are internal. Application containers are non-root, read-only, capability-dropped, and use `no-new-privileges`. qBittorrent shares Gluetun's network namespace, has no independent ports/network, and waits for Gluetun health. Jellyfin is deliberately outside the VPN. | Existing Compose and synthetic fail-closed VPN tests remain required. Real VPN egress, NAS firewall, UID/GID, and device permissions remain operational validation gates. Firefox upstream constraints prevent the same read-only/capability profile as first-party services. |
+| Informational | Reviewed; no malicious behavior found | Execution and outbound traffic | No `shell=True`, `os.system`, dynamic `eval`/`exec`, or unsafe pickle use was found. Media probes use argument arrays plus protocol/format allowlists. Expected outbound integrations are OIDC discovery/token/JWKS, MusicBrainz/Cover Art/AcoustID, Jellyfin, and qBittorrent, each configured by environment. | Bandit medium/high-confidence scan is blocking. CodeQL analyzes Python and JavaScript with `security-extended`. Unexpected future findings fail review gates. |
+| Informational | Residual supply-chain risk | Containers and dependencies | Python direct dependencies are pinned and resolved graphs are audited. GitHub Actions use immutable commit SHAs. qBittorrent is digest-pinned, while several configurable third-party container defaults remain tag-based. | Record deployed image digests in migration evidence and freeze approved digests for the release candidate. Do not treat a tag-only pull as production approval. |
+| Informational | Reviewed; controls expanded | Credentials and logs | Full reachable Git history is scanned without printing secret values. Authentication errors are generic and tokens/assertions are not returned. | Secret assignment detection now includes OIDC client secrets, ingress auth, CSRF secrets, and Jellyfin token-encryption keys. Production log/config review remains required because CI cannot inspect live systems. |
+
+## CI security gates
+
+- Complete resolved dependency audit for every Python application service.
+- Bandit medium/high-severity and medium/high-confidence blocking scan.
+- Full-history secret scanning, including sensitive filenames and assignments.
+- CodeQL Python and JavaScript `security-extended` analysis.
+- Existing authentication, identity assertion, ingress, Compose, VPN, migration, container, Portal, Music, Movies/TV, and Watch & Listen regressions.
+
+Generated JSON audit and Bandit reports are uploaded as short-lived CI artifacts. They must never contain credentials or production configuration.
+
+## Release recommendation
+
+0.9.1 is suitable for isolated release-candidate and copied-state rehearsal only after every hosted CI job passes and the draft PR is reviewed. It is not authorization to deploy, merge, rename repositories, modify production, or declare 1.0.0 production-ready. The copied-state NAS migration rehearsal, actual image digest freeze, real reverse-proxy/Auth/OIDC validation, VPN egress test, filesystem-permission validation, and rollback exercise remain separate mandatory gates.

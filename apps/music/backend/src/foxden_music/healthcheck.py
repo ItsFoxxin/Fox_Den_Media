@@ -11,9 +11,11 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import NoReturn, Sequence
+from urllib.parse import urlsplit
 
 
-DEFAULT_HEARTBEAT_PATH = Path("/tmp/foxden-music-worker-heartbeat.json")
+# This fixed path lives in the container's private tmpfs and is atomically replaced.
+DEFAULT_HEARTBEAT_PATH = Path("/tmp/foxden-music-worker-heartbeat.json")  # nosec B108
 MAX_SECRET_BYTES = 64 * 1024
 SUPPORTED_FILE_SECRETS = ("CSRF_SECRET", "JELLYFIN_API_KEY")
 
@@ -83,9 +85,14 @@ def check_worker_heartbeat() -> None:
 
 def check_web() -> None:
     url = os.environ.get("HEALTHCHECK_WEB_URL", "http://127.0.0.1:8000/health")
+    parsed = urlsplit(url)
+    if (parsed.scheme != "http" or parsed.hostname not in {"127.0.0.1", "localhost", "::1"}
+            or parsed.username or parsed.password or parsed.fragment):
+        raise HealthcheckError("HEALTHCHECK_WEB_URL must be a local HTTP URL")
     request = urllib.request.Request(url, headers={"User-Agent": "FoxDenMusic-Healthcheck/1"})
     try:
-        with urllib.request.urlopen(request, timeout=3) as response:
+        # The destination was restricted to the local container above.
+        with urllib.request.urlopen(request, timeout=3) as response:  # nosec B310
             if response.status != 200:
                 raise HealthcheckError(f"web health endpoint returned HTTP {response.status}")
             response.read(4096)

@@ -608,5 +608,6 @@ def html_escape(value: str) -> str:
 
 def run() -> None:
     import uvicorn
-    uvicorn.run("foxden_portal.app:create_app", factory=True, host="0.0.0.0", port=8020,
+    # Container listener; Compose publishes only ingress and keeps this port private.
+    uvicorn.run("foxden_portal.app:create_app", factory=True, host="0.0.0.0", port=8020,  # nosec B104
                 workers=1, proxy_headers=False)

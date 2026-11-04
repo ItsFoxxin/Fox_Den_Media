@@ -1,11 +1,14 @@
 import asyncio
 import base64
 import hashlib
+import importlib.metadata
 import json
 import time
 from urllib.parse import parse_qs, urlsplit
 
-from authlib.jose import JsonWebKey, JsonWebToken
+from authlib.jose import JsonWebKey, JsonWebSignature, JsonWebToken
+from authlib.jose.errors import BadSignatureError
+import pytest
 import httpx
 
 from foxden_portal.database import PortalStore
@@ -98,3 +101,22 @@ def test_wrong_signature_expired_token_and_nonce_are_rejected(tmp_path):
             pass
         else:
             raise AssertionError("Invalid ID token was accepted")
+
+
+def test_patched_authlib_rejects_empty_signature_sets_and_empty_hmac_keys():
+    assert importlib.metadata.version("Authlib") == "1.9.4"
+    with pytest.raises(BadSignatureError):
+        JsonWebSignature().deserialize_json({"payload": "e30", "signatures": []}, b"secret")
+    with pytest.raises(ValueError, match="must not be empty"):
+        JsonWebToken(["HS256"]).encode({"alg": "HS256"}, {"sub": "subject"}, b"")
+
+
+@pytest.mark.parametrize("token", [
+    "not-a-token",
+    "eyJhbGciOiJub25lIn0.eyJzdWIiOiJzdWJqZWN0In0.",
+    "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJzdWJqZWN0In0.invalid",
+])
+def test_oidc_rejects_malformed_none_and_hmac_tokens(tmp_path, token):
+    configured, _store, _key, document, _holder, client = protocol_fixture(tmp_path)
+    with pytest.raises(OIDCError):
+        asyncio.run(client.validate_id_token(token, document, "nonce"))

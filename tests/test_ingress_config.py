@@ -50,7 +50,7 @@ def test_ingress_strips_identity_headers_and_preserves_transport_controls():
     assert CONFIG.count('__PORTAL_INGRESS_AUTH_SECRET__') == 3
     assert "proxy_set_header X-FoxDen-Identity $foxden_music_identity;" in CONFIG
     assert "proxy_set_header X-FoxDen-Identity $foxden_media_identity;" in CONFIG
-    assert CONFIG.count("error_page 500 = @auth_unavailable;") == 2
+    assert CONFIG.count("error_page 500 = @auth_unavailable;") == 3
     assert CONFIG.count("proxy_connect_timeout 2s;") == 3
     assert CONFIG.count("proxy_read_timeout 2s;") == 3
     assert CONFIG.count("proxy_send_timeout 2s;") == 3
@@ -59,3 +59,13 @@ def test_ingress_strips_identity_headers_and_preserves_transport_controls():
     assert "proxy_set_header Connection $connection_upgrade;" in CONFIG
     assert CONFIG.count("proxy_set_header X-Forwarded-Proto $scheme;") == 5
     assert CONFIG.count("proxy_set_header X-Forwarded-Host $http_host;") == 5
+
+
+def test_server_browser_websocket_fails_closed_and_has_bounded_session_lifetime():
+    block = CONFIG.split("location /server-browser/ {", 1)[1].split("\n        }", 1)[0]
+    assert "auth_request /_foxden_portal_auth;" in block
+    assert "error_page 500 = @auth_unavailable;" in block
+    assert "proxy_set_header Upgrade $http_upgrade;" in block
+    assert "proxy_set_header X-FoxDen-Identity \"\";" in block
+    assert "proxy_read_timeout 3600s;" in block
+    assert "86400s" not in block
