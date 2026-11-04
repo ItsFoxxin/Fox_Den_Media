@@ -123,7 +123,7 @@ class Store:
         columns = ",".join(f"{key}=?" for key in updates)
         with self.connect() as c:
             # Column names come only from the closed allowlist above; values remain bound.
-            c.execute(f"UPDATE media_requests SET {columns} WHERE id=?",  # nosec B608
+            c.execute(f"UPDATE media_requests SET {columns} WHERE id=?",  # nosec B608 - allowlisted columns
                       (*updates.values(), ident))
         return self.media_request(ident)
 
