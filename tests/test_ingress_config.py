@@ -61,11 +61,14 @@ def test_ingress_strips_identity_headers_and_preserves_transport_controls():
     assert CONFIG.count("proxy_set_header X-Forwarded-Host $http_host;") == 5
 
 
-def test_server_browser_websocket_fails_closed_and_has_bounded_session_lifetime():
+def test_server_browser_websocket_fails_closed_and_documents_idle_timeout_limit():
     block = CONFIG.split("location /server-browser/ {", 1)[1].split("\n        }", 1)[0]
     assert "auth_request /_foxden_portal_auth;" in block
     assert "error_page 500 = @auth_unavailable;" in block
     assert "proxy_set_header Upgrade $http_upgrade;" in block
     assert "proxy_set_header X-FoxDen-Identity \"\";" in block
+    assert "inactivity timeouts" in block
+    assert "not a hard" in block
+    assert "active socket can outlive session revocation" in block
     assert "proxy_read_timeout 3600s;" in block
     assert "86400s" not in block

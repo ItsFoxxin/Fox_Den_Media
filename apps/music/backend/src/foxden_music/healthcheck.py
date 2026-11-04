@@ -24,6 +24,18 @@ class HealthcheckError(RuntimeError):
     """A concise, non-sensitive health or runtime configuration failure."""
 
 
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Reject redirects so a local health response cannot trigger outbound I/O."""
+
+    def redirect_request(self, request, file_pointer, code, message, headers, new_url):
+        return None
+
+
+def _local_health_opener() -> urllib.request.OpenerDirector:
+    # An explicit empty proxy map prevents urllib from loading HTTP(S)_PROXY.
+    return urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirectHandler())
+
+
 def _heartbeat_path() -> Path:
     return Path(os.environ.get("WORKER_HEARTBEAT_PATH", str(DEFAULT_HEARTBEAT_PATH)))
 
@@ -91,8 +103,9 @@ def check_web() -> None:
         raise HealthcheckError("HEALTHCHECK_WEB_URL must be a local HTTP URL")
     request = urllib.request.Request(url, headers={"User-Agent": "FoxDenMusic-Healthcheck/1"})
     try:
-        # The destination was restricted to the local container above.
-        with urllib.request.urlopen(request, timeout=3) as response:  # nosec B310
+        # The destination is local, redirects are rejected, and environment
+        # proxies are disabled by the dedicated opener.
+        with _local_health_opener().open(request, timeout=3) as response:  # nosec B310
             if response.status != 200:
                 raise HealthcheckError(f"web health endpoint returned HTTP {response.status}")
             response.read(4096)
