@@ -1,5 +1,10 @@
 # Fox Den Midnight (DenKit v0.1)
 
+The post-migration mascot and atmosphere direction is documented separately in
+[`MEDIA_BRANDING_SPEC.md`](MEDIA_BRANDING_SPEC.md). That specification is a
+planning artifact only; its placements are deferred until the 0.9.0 migration
+rehearsal is complete.
+
 The user-approved headphone fox is the shared mascot. This milestone uses it on
 the Portal entry experience and Jellyfin browser login, while keeping the Music
 and Movies/TV operational workspaces deliberately restrained. The original PNG
