@@ -43,6 +43,16 @@ def test_application_containers_are_non_root_read_only_and_identity_is_asymmetri
         assert "public.json" in mounts and "private.pem" not in mounts
 
 
+def test_volume_initializer_prevents_concurrent_music_config_copy_up_race():
+    initializer = COMPOSE["services"]["volume-init"]
+    command = " ".join(initializer["command"])
+    assert "mkdir -p /music-config/cache" in command
+    assert initializer["network_mode"] == "none"
+    for service_name in ("music", "music-worker"):
+        assert COMPOSE["services"][service_name]["depends_on"]["volume-init"] == {
+            "condition": "service_completed_successfully"}
+
+
 def test_generated_runtime_state_is_ignored_and_production_compose_is_not_overridden():
     assert "deploy/integration/.runtime/" in (ROOT / ".gitignore").read_text(encoding="utf-8")
     assert COMPOSE_PATH.name == "compose.yaml"
