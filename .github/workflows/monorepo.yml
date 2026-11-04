@@ -46,6 +46,7 @@ jobs:
           docker compose --env-file deploy/examples/full-managed.env.example -f deploy/compose.yaml --profile music --profile media --profile managed --profile browser config --quiet
           docker compose --env-file deploy/examples/jellyfin.env.example -f deploy/compose.yaml --profile jellyfin config --quiet
           docker compose --env-file deploy/examples/full-managed.env.example -f deploy/compose.yaml --profile music --profile media --profile managed --profile jellyfin config --quiet
+          docker compose --env-file deploy/examples/ugreen-rehearsal.env.example -f deploy/compose.yaml -f deploy/compose.jellyfin-hwaccel.yaml --profile music --profile media --profile managed --profile browser --profile jellyfin config --quiet
 
   music:
     name: Music regressions and real audio

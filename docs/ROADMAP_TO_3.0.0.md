@@ -2,9 +2,9 @@
 
 **Status:** Proposed product roadmap<br>
 **Last updated:** 2026-11-03<br>
-**Current validated development candidate:** `0.7.0`, `Music_Downloader` PR #6 (`760dd7c`); hosted CI passed, but no production migration has been performed.<br>
+**Current development candidate:** `0.9.0`, stacked on the hosted-CI-validated 0.8.0 commit `7513ec5`; no production migration has been performed.<br>
 **Target canonical repository:** `ItsFoxxin/FoxDen_Media` (currently developed in the `ItsFoxxin/Music_Downloader` lineage).<br>
-**Roadmap owner:** Fox Den
+**Roadmap owner:** Fox Den<br>
 **Rule:** A release milestone is not a deployment authorization. Production data access, migration, and cutover require separate explicit approval.
 
 ## Vision
@@ -58,6 +58,12 @@ Release points between major milestones are **planning placeholders** and may be
 
 **Implementation scope**
 
+- Convert the verified Ugreen NAS inventory into explicit compatibility checks,
+  copied-state templates and a risk-ranked blocker register.
+- Preserve Jellyfin 10.11, Music 2.3.4 state, external Radio, and Gluetun 3.41.1
+  for the first rehearsal; make upgrades separate evidence gates.
+- Recover the orphaned qBittorrent metadata/resume pair offline and locate its
+  payload before starting any qBittorrent process.
 - Review and land the approved stacked monorepo PRs in correct dependency order after strict CI and history checks.
 - Freeze product scope; allow only release-blocking security, correctness, migration or reliability fixes.
 - Rehearse final deployment on a production-like target with the actual planned Compose modes, host paths, reverse-proxy hostname, TLS, secrets and Jellyfin plugin versions.

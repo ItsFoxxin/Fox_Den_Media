@@ -128,6 +128,13 @@ def validate(mode: str, values: dict[str, str], *, browser: bool = False, jellyf
         value = int(_required(values, key))
         if value <= 0 or (key == "FOXDEN_PORT" and value > 65535):
             raise ConfigError(f"{key} is outside its valid range.")
+    for key in ("MUSIC_PUID", "MUSIC_PGID", "MEDIA_PUID", "MEDIA_PGID", "QBIT_PUID", "QBIT_PGID"):
+        if values.get(key, "").strip():
+            try:
+                if int(values[key]) <= 0:
+                    raise ValueError
+            except ValueError as exc:
+                raise ConfigError(f"{key} must be a positive numeric ID.") from exc
     all_paths = _paths(values, CORE_PATHS, create=create_paths)
     if "music" in definition["modules"]:
         all_paths += _paths(values, MUSIC_PATHS, create=create_paths)
@@ -138,6 +145,10 @@ def validate(mode: str, values: dict[str, str], *, browser: bool = False, jellyf
         all_paths += _paths(values, MANAGED_PATHS, create=create_paths)
         for key in ("WIREGUARD_ADDRESSES", "WIREGUARD_PUBLIC_KEY", "WIREGUARD_ENDPOINT_IP"):
             _required(values, key)
+        if values.get("HEALTH_SMALL_CHECK_TYPE", "").strip():
+            raise ConfigError(
+                "HEALTH_SMALL_CHECK_TYPE is not accepted by the reviewed Gluetun v3.41.1 migration baseline; "
+                "validate a newer pinned image in isolation before using that option.")
     elif "media" in definition["modules"]:
         _url(values, "QBIT_URL")
     if jellyfin:

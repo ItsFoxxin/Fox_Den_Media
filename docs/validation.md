@@ -1,5 +1,15 @@
 # Validation evidence
 
+## Production migration readiness 0.9.0 - 2026-11-03
+
+- Sanitized NAS evidence confirms Docker 29.6.2, actual container/mount topology,
+  numeric ownership, storage capacity, Gluetun HTTPS egress and N100 device groups.
+- It does not prove qBittorrent payload recovery, VPN tunnel-loss containment,
+  application schema compatibility, Jellyfin playback/clients, or hardware transcoding.
+- CI covers inventory completeness failures, bencoded qBittorrent pair inspection,
+  immutable SQLite discovery, independent service identities, Compose isolation,
+  backup/restore/rollback and the existing application regression suites.
+
 ## Production migration rehearsal 0.8.0 - 2026-11-03
 
 - Disposable tests cover secret-redacted Docker inventory, content-free path

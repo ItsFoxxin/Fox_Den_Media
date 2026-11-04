@@ -26,6 +26,7 @@ or stop anything:
 ```bash
 python scripts/migration.py host-inventory \
   --env production.env \
+  --expected-mode full-managed \
   --output private-reports/host-inventory.json
 python scripts/migration.py hardware-inventory \
   --output private-reports/n100-hardware.json

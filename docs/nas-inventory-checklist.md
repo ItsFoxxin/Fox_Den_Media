@@ -23,10 +23,14 @@ Run the sanitized collector only after reviewing its output destination:
 
 ```bash
 python scripts/migration.py host-inventory \
+  --env production-paths.env \
+  --expected-mode full-managed \
   --output private-reports/nas-host-inventory.json
 ```
 
-The collector reads Docker metadata and host capacity only. It omits container
+The command fails if required storage roles are absent. Use `--allow-partial`
+only to capture an explicitly incomplete diagnostic report. The collector reads
+Docker metadata and host capacity only. It omits container
 environment values, health-check commands, label values, credentials, private
 keys, tokens and application database contents.
 

@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.9.0 - 2026-11-03
+
+### Added
+
+- NAS-evidence-driven compatibility controls for the Ugreen N100 deployment,
+  including independent Music, Media, qBittorrent and Jellyfin numeric identities.
+- Fail-closed inventory completeness checks so Docker metadata cannot be mistaken
+  for a complete application-storage inventory.
+- Offline qBittorrent `.torrent`/`.fastresume` pair discovery with bencode
+  validation, checksums and stored path/category/tag reporting.
+- Immutable, read-only SQLite structure discovery for copied Music and Jellyfin
+  state; application schema compatibility still requires isolated execution.
+- A production compatibility report, risk-ranked blocker register, exact
+  read-only follow-up checks and a Ugreen copied-state rehearsal template.
+
+### Preserved boundaries
+
+- Jellyfin 10.11 and Gluetun 3.41.1 are pinned for the first copied-state
+  rehearsal; upgrades remain separate compatibility decisions.
+- No NAS service, production state, VPN setting, route, identity provider or
+  repository protection was changed.
+
 ## 0.8.0 - 2026-11-03
 
 ### Added

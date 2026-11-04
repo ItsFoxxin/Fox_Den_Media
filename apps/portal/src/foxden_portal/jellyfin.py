@@ -54,7 +54,7 @@ class JellyfinAdapter:
     def authorization(device_id: str, token: str | None = None) -> str:
         values = [
             'Client="Fox Den Media"', 'Device="Portal"',
-            f'DeviceId="{device_id}"', 'Version="0.8.0"',
+            f'DeviceId="{device_id}"', 'Version="0.9.0"',
         ]
         if token:
             values.append(f'Token="{token}"')

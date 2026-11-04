@@ -34,12 +34,13 @@ x-music-environment: &music-environment
 
 x-music-service: &music-service
   <<: *hardening
+  user: "${MUSIC_PUID:-10001}:${MUSIC_PGID:-10001}"
   image: "${MUSIC_IMAGE:-foxden-music:2.5.1-monorepo}"
   build:
     context: ../apps/music/backend
     args:
-      APP_UID: "${FOXDEN_PUID:-10001}"
-      APP_GID: "${FOXDEN_PGID:-10001}"
+      APP_UID: "${MUSIC_PUID:-10001}"
+      APP_GID: "${MUSIC_PGID:-10001}"
   profiles: [music]
   environment: *music-environment
 
@@ -68,7 +69,7 @@ services:
 
   portal:
     <<: *hardening
-    image: "${PORTAL_IMAGE:-foxden-portal:0.8.0}"
+    image: "${PORTAL_IMAGE:-foxden-portal:0.9.0}"
     build:
       context: ../apps/portal
       args:
@@ -160,14 +161,15 @@ services:
 
   media:
     <<: *hardening
+    user: "${MEDIA_PUID:-10001}:${MEDIA_PGID:-10001}"
     profiles: [media]
-    image: "${MEDIA_IMAGE:-fox-den-media:0.8.0}"
+    image: "${MEDIA_IMAGE:-fox-den-media:0.9.0}"
     build:
       context: ..
       dockerfile: apps/media/Dockerfile
       args:
-        APP_UID: "${FOXDEN_PUID:-10001}"
-        APP_GID: "${FOXDEN_PGID:-10001}"
+        APP_UID: "${MEDIA_PUID:-10001}"
+        APP_GID: "${MEDIA_PGID:-10001}"
     environment:
       CONFIG_DIR: /config
       STAGING_DIR: /downloads
@@ -273,6 +275,9 @@ services:
       FIREWALL_INPUT_PORTS: "8080"
       DOT: "off"
       DNS_ADDRESS: "${VPN_DNS_ADDRESS:-1.1.1.1}"
+      HEALTH_TARGET_ADDRESSES: "${GLUETUN_HEALTH_TARGET_ADDRESSES:-cloudflare.com:443,github.com:443}"
+      HEALTH_ICMP_TARGET_IPS: "${GLUETUN_HEALTH_ICMP_TARGET_IPS:-1.1.1.1,8.8.8.8}"
+      HEALTH_RESTART_VPN: "on"
     healthcheck:
       test: [CMD, /gluetun-entrypoint, healthcheck]
       interval: 15s
@@ -291,8 +296,8 @@ services:
     restart: unless-stopped
     security_opt: [no-new-privileges:true]
     environment:
-      PUID: "${FOXDEN_PUID:-10001}"
-      PGID: "${FOXDEN_PGID:-10001}"
+      PUID: "${QBIT_PUID:-10001}"
+      PGID: "${QBIT_PGID:-10001}"
       TZ: "${TZ:-UTC}"
       UMASK: "002"
       WEBUI_PORT: "8080"

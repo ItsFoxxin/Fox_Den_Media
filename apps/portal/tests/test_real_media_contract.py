@@ -16,5 +16,5 @@ def test_real_movies_tv_summary_satisfies_portal_contract(tmp_path):
         summary = ModuleSummary.model_validate(client.get("/api/platform/v1/summary").json())
         assert summary.module_id == "media"
         assert summary.health.status == "healthy"
-        assert summary.module_version == "0.8.0"
+        assert summary.module_version == "0.9.0"
         assert summary.activity == []

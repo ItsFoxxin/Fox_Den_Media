@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import sqlite3
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12,8 +14,10 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from foxden import ConfigError
-from migration import (EVIDENCE_GATES, create_backup, docker_inventory, hardware_inventory,
-                       inventory, load_evidence, prepare_rehearsal, readiness, restore_rehearsal,
+from migration import (EVIDENCE_GATES, MODE_INVENTORY_ROLES, create_backup,
+                       discover_qbittorrent_state, discover_sqlite_state, docker_inventory,
+                       hardware_inventory, inventory, load_evidence, prepare_rehearsal,
+                       readiness, require_complete_inventory, restore_rehearsal,
                        rollback_rehearsal, verify_backup)
 
 
@@ -33,6 +37,82 @@ def test_inventory_is_read_only_and_excludes_contents(tmp_path: Path) -> None:
     assert report["read_only"] is True
     assert {entry["role"] for entry in report["entries"]} == {"music-config", "qbittorrent-config"}
     assert "synthetic-sqlite-state" not in str(report)
+
+
+def test_inventory_fails_closed_when_required_roles_are_missing(tmp_path: Path) -> None:
+    partial = inventory(fixture_values(tmp_path), MODE_INVENTORY_ROLES["full-managed"])
+    assert partial["complete"] is False
+    assert "qbittorrent-config" not in partial["missing_required_roles"]
+    assert "portal-config" in partial["missing_required_roles"]
+    with pytest.raises(ConfigError, match="incomplete production inventory"):
+        require_complete_inventory(partial)
+
+    blank = inventory({}, MODE_INVENTORY_ROLES["music"])
+    assert blank["entries"] == []
+    assert any("Docker metadata alone" in warning for warning in blank["warnings"])
+
+
+def _bencode(value) -> bytes:
+    if isinstance(value, int):
+        return b"i" + str(value).encode() + b"e"
+    if isinstance(value, bytes):
+        return str(len(value)).encode() + b":" + value
+    if isinstance(value, list):
+        return b"l" + b"".join(_bencode(item) for item in value) + b"e"
+    if isinstance(value, dict):
+        return b"d" + b"".join(_bencode(key) + _bencode(value[key]) for key in sorted(value)) + b"e"
+    raise TypeError(value)
+
+
+def test_qbittorrent_discovery_validates_pairs_without_network(tmp_path: Path) -> None:
+    config = tmp_path / "copied-qbit"
+    backup = config / "qBittorrent" / "BT_backup"
+    backup.mkdir(parents=True)
+    torrent_data = _bencode({
+        b"announce": b"https://tracker.invalid/announce",
+        b"info": {b"length": 7, b"name": b"fixture.bin", b"piece length": 16384, b"pieces": b"x" * 20},
+    })
+    info_data = _bencode({b"length": 7, b"name": b"fixture.bin", b"piece length": 16384, b"pieces": b"x" * 20})
+    torrent_hash = hashlib.sha1(info_data).hexdigest()
+    (backup / f"{torrent_hash}.torrent").write_bytes(torrent_data)
+    (backup / f"{torrent_hash}.fastresume").write_bytes(_bencode({
+        b"save_path": b"/old/downloads/fixture", b"qBt-category": b"movies", b"seed_mode": 1,
+    }))
+
+    report = discover_qbittorrent_state(config)
+    assert report["offline"] is True
+    assert report["pair_count"] == 1
+    assert report["complete_pairs"] is True
+    assert report["records"][0]["fastresume_bencode_valid"] is True
+    assert report["records"][0]["torrent_bencode_valid"] is True
+    assert report["records"][0]["hash_matches_filename"] is True
+    assert report["records"][0]["resume_metadata"]["save_path"] == "/old/downloads/fixture"
+    assert report["records"][0]["absolute_paths"] == ["/old/downloads/fixture"]
+
+
+def test_qbittorrent_discovery_rejects_unpaired_or_invalid_state(tmp_path: Path) -> None:
+    backup = tmp_path / "qbit" / "BT_backup"
+    backup.mkdir(parents=True)
+    (backup / ("b" * 40 + ".torrent")).write_bytes(b"not-bencode")
+    report = discover_qbittorrent_state(tmp_path / "qbit")
+    assert report["complete_pairs"] is False
+    assert report["records"][0]["paired"] is False
+
+
+def test_sqlite_discovery_is_read_only_and_reports_structure(tmp_path: Path) -> None:
+    state = tmp_path / "copied-state"
+    state.mkdir()
+    database = state / "application.db"
+    with sqlite3.connect(database) as connection:
+        connection.execute("PRAGMA user_version=23")
+        connection.execute("CREATE TABLE jobs (id INTEGER PRIMARY KEY, title TEXT)")
+    before = database.stat().st_mtime_ns
+    report = discover_sqlite_state(state)
+    assert report["immutable"] is True
+    assert report["structurally_readable"] is True
+    assert report["databases"][0]["user_version"] == 23
+    assert report["databases"][0]["tables"] == ["jobs"]
+    assert database.stat().st_mtime_ns == before
 
 
 def test_backup_requires_writer_stop_confirmation(tmp_path: Path) -> None:
@@ -147,7 +227,7 @@ def test_readiness_stays_closed_until_every_evidence_gate_passes(tmp_path: Path)
         "test_name": key,
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "environment": "ci" if key == "hosted_ci_passed" else ("nas" if key in nas else "isolated-staging"),
-        "source_version": "0.8.0", "source_commit": commit, "artifact_id": f"artifact-{key}",
+        "source_version": "0.9.0", "source_commit": commit, "artifact_id": f"artifact-{key}",
         "result": "pass", "checksums": {"report": "c" * 64},
         "operator_approval_required": key == "cutover_approved",
         "operator_approved": key == "cutover_approved", "failure_details": None, "critical": True,

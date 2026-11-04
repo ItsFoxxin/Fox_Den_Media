@@ -115,6 +115,24 @@ def test_managed_mode_requires_vpn_configuration(tmp_path: Path) -> None:
         foxden.validate("full-managed", values)
 
 
+def test_service_specific_numeric_ids_are_independent_and_validated(tmp_path: Path) -> None:
+    values = configured(tmp_path, "full-managed")
+    values.update(MUSIC_PUID="1000005", MUSIC_PGID="1000004", MEDIA_PUID="10001",
+                  MEDIA_PGID="10001", QBIT_PUID="1000", QBIT_PGID="1000")
+    foxden.validate("full-managed", values)
+    values["MUSIC_PUID"] = "not-a-number"
+    with pytest.raises(foxden.ConfigError, match="MUSIC_PUID"):
+        foxden.validate("full-managed", values)
+
+
+def test_unreviewed_gluetun_small_check_override_is_rejected(tmp_path: Path) -> None:
+    values = configured(tmp_path, "full-managed")
+    values["GLUETUN_IMAGE"] = "qmcgaw/gluetun:v3.41.1"
+    values["HEALTH_SMALL_CHECK_TYPE"] = "dns"
+    with pytest.raises(foxden.ConfigError, match="not accepted"):
+        foxden.validate("full-managed", values)
+
+
 def test_latest_image_tags_are_rejected(tmp_path: Path) -> None:
     values = configured(tmp_path, "full-managed")
     values["QBIT_IMAGE"] = "lscr.io/linuxserver/qbittorrent:latest"
@@ -210,3 +228,13 @@ def test_managed_compose_forces_qbittorrent_through_gluetun() -> None:
     assert "outbound: {}" in compose
     gluetun = compose.split("  gluetun:", 1)[1].split("  qbittorrent:", 1)[0]
     assert "networks: [platform, outbound]" in gluetun
+    assert "HEALTH_SMALL_CHECK_TYPE" not in gluetun
+    assert 'HEALTH_TARGET_ADDRESSES: "${GLUETUN_HEALTH_TARGET_ADDRESSES' in gluetun
+
+
+def test_compose_supports_distinct_service_identities() -> None:
+    compose = (ROOT / "deploy" / "compose.yaml").read_text(encoding="utf-8")
+    assert 'user: "${MUSIC_PUID:-10001}:${MUSIC_PGID:-10001}"' in compose
+    assert 'user: "${MEDIA_PUID:-10001}:${MEDIA_PGID:-10001}"' in compose
+    assert 'PUID: "${QBIT_PUID:-10001}"' in compose
+    assert 'PGID: "${QBIT_PGID:-10001}"' in compose

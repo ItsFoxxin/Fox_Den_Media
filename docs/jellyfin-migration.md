@@ -1,7 +1,8 @@
 # Existing Jellyfin migration and rollback
 
-This is a runbook, not authorization to change the NAS. No production Jellyfin
-state was inspected or migrated while preparing it.
+This is a runbook, not authorization to change the NAS. The sanitized 2026-11-03
+inventory confirmed Jellyfin 10.11, UID/GID `1004:100`, `/config`, `/cache`,
+read-only `/media`, and no GPU mapping. Database contents were not inspected or migrated.
 
 ## Read-only inventory
 
@@ -70,7 +71,7 @@ record with timestamped, checksummed evidence for the exact release commit:
 
 ```bash
 python scripts/migration.py readiness --env production.env --mode jellyfin \
-  --source-version 0.8.0 --source-commit EXACT_APPROVED_SHA \
+  --source-version 0.9.0 --source-commit EXACT_APPROVED_SHA \
   --evidence migration-evidence.json --output readiness.json \
   --human-output readiness.md
 ```

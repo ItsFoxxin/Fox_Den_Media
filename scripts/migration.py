@@ -9,17 +9,18 @@ import json
 import os
 import re
 import shutil
+import sqlite3
 import stat
 import subprocess
 import sys
 import tarfile
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Callable
 
 from foxden import ConfigError, load_env, validate
 
-PLATFORM_VERSION = "0.8.0"
+PLATFORM_VERSION = "0.9.0"
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 SAFE_ID_ENV = {"PUID", "PGID", "UID", "GID", "TZ", "UMASK", "UMASK_SET"}
 
@@ -45,6 +46,19 @@ BACKUP_ROLES = {
     "gluetun-config", "jellyfin-config", "jellyfin-cache",
 }
 LARGE_DATA_ROLES = {"music-library", "media-library", "torrent-data", "jellyfin-media"}
+
+MODE_INVENTORY_ROLES = {
+    "music": {"foxden-secrets", "portal-config", "music-config", "music-staging",
+              "music-downloads", "music-library"},
+    "media": {"foxden-secrets", "portal-config", "media-config", "media-library",
+              "torrent-data"},
+    "jellyfin": {"foxden-secrets", "portal-config", "jellyfin-config", "jellyfin-cache",
+                 "jellyfin-media"},
+    "full-external": {"foxden-secrets", "portal-config", "music-config", "music-staging",
+                      "music-downloads", "music-library", "media-config", "media-library",
+                      "torrent-data"},
+    "full-managed": set(PATH_ROLES) - {"jellyfin-config", "jellyfin-cache", "jellyfin-media"},
+}
 
 GATE_DEFINITIONS = {
     "hosted_ci_passed": ("hosted CI passed for the exact release commit", {"ci"}),
@@ -112,19 +126,232 @@ def _path_entry(role: str, variable: str, path: Path) -> dict[str, Any]:
     return entry
 
 
-def inventory(values: dict[str, str]) -> dict[str, Any]:
+def inventory(values: dict[str, str], required_roles: set[str] | None = None) -> dict[str, Any]:
     entries = []
     for role, key in PATH_ROLES.items():
         raw = values.get(key, "").strip()
         if raw:
             entries.append(_path_entry(role, key, Path(raw).expanduser()))
+    configured = {item["role"] for item in entries}
+    required = required_roles or set()
+    missing_required = sorted(required - configured)
+    warnings = []
+    if not entries:
+        warnings.append("No application storage paths were configured; Docker metadata alone is not migration inventory.")
+    if missing_required:
+        warnings.append("Required storage roles are absent: " + ", ".join(missing_required))
     return {
         "schema": 2, "generated_at": _utc(), "read_only": True, "entries": entries,
+        "configured_roles": sorted(configured), "missing_required_roles": missing_required,
+        "complete": bool(entries) and not missing_required, "warnings": warnings,
         "notes": [
             "Secret contents, authentication databases, tokens, and VPN keys were not inspected.",
             "Container state and SQLite consistency require the sanitized host inventory and quiesce gate.",
         ],
     }
+
+
+def require_complete_inventory(report: dict[str, Any]) -> None:
+    if not report.get("complete"):
+        details = "; ".join(report.get("warnings") or ["inventory is incomplete"])
+        raise ConfigError(f"Refusing incomplete production inventory: {details}")
+
+
+class _BencodeReader:
+    """Small bounded decoder for offline qBittorrent recovery inspection."""
+
+    def __init__(self, data: bytes):
+        if len(data) > 64 * 1024 * 1024:
+            raise ConfigError("Bencoded recovery file exceeds the 64 MiB inspection limit.")
+        self.data = data
+        self.position = 0
+
+    def parse(self, depth: int = 0) -> Any:
+        if depth > 64 or self.position >= len(self.data):
+            raise ConfigError("Bencoded recovery data is malformed or too deeply nested.")
+        marker = self.data[self.position:self.position + 1]
+        if marker == b"i":
+            self.position += 1
+            end = self.data.find(b"e", self.position)
+            if end < 0:
+                raise ConfigError("Bencoded integer is unterminated.")
+            raw = self.data[self.position:end]
+            if not re.fullmatch(rb"-?(?:0|[1-9][0-9]*)", raw):
+                raise ConfigError("Bencoded integer is invalid.")
+            self.position = end + 1
+            return int(raw)
+        if marker in {b"l", b"d"}:
+            self.position += 1
+            if marker == b"l":
+                output = []
+                while self.data[self.position:self.position + 1] != b"e":
+                    output.append(self.parse(depth + 1))
+                self.position += 1
+                return output
+            output = {}
+            while self.data[self.position:self.position + 1] != b"e":
+                key = self.parse(depth + 1)
+                if not isinstance(key, bytes):
+                    raise ConfigError("Bencoded dictionary key is not bytes.")
+                if key in output:
+                    raise ConfigError("Bencoded dictionary contains a duplicate key.")
+                output[key] = self.parse(depth + 1)
+            self.position += 1
+            return output
+        if marker.isdigit():
+            colon = self.data.find(b":", self.position)
+            if colon < 0:
+                raise ConfigError("Bencoded byte string length is missing.")
+            raw_length = self.data[self.position:colon]
+            if not raw_length.isdigit() or (len(raw_length) > 1 and raw_length.startswith(b"0")):
+                raise ConfigError("Bencoded byte string length is invalid.")
+            length = int(raw_length)
+            start, end = colon + 1, colon + 1 + length
+            if end > len(self.data):
+                raise ConfigError("Bencoded byte string is truncated.")
+            self.position = end
+            return self.data[start:end]
+        raise ConfigError("Bencoded recovery data contains an unsupported marker.")
+
+    def complete(self) -> Any:
+        value = self.parse()
+        if self.position != len(self.data):
+            raise ConfigError("Bencoded recovery data contains trailing bytes.")
+        return value
+
+
+def _decode_recovery_value(value: Any) -> str | None:
+    if not isinstance(value, bytes) or len(value) > 4096:
+        return None
+    return value.decode("utf-8", errors="replace")
+
+
+def _encode_bencode(value: Any) -> bytes:
+    if isinstance(value, int):
+        return b"i" + str(value).encode("ascii") + b"e"
+    if isinstance(value, bytes):
+        return str(len(value)).encode("ascii") + b":" + value
+    if isinstance(value, list):
+        return b"l" + b"".join(_encode_bencode(item) for item in value) + b"e"
+    if isinstance(value, dict):
+        return b"d" + b"".join(_encode_bencode(key) + _encode_bencode(value[key])
+                                for key in sorted(value)) + b"e"
+    raise ConfigError("Decoded recovery data cannot be canonically re-encoded.")
+
+
+def _resume_metadata(value: Any) -> dict[str, Any]:
+    wanted = {b"save_path", b"qBt-savePath", b"qBt-tempPath", b"qBt-contentPath",
+              b"qBt-category", b"qBt-tags"}
+    found: dict[str, Any] = {}
+
+    def visit(item: Any) -> None:
+        if isinstance(item, dict):
+            for key, child in item.items():
+                if key in wanted:
+                    decoded = _decode_recovery_value(child)
+                    if decoded is not None:
+                        found[key.decode("ascii")] = decoded
+                visit(child)
+        elif isinstance(item, list):
+            for child in item:
+                visit(child)
+
+    visit(value)
+    return found
+
+
+def _read_bencoded(path: Path) -> Any:
+    if path.stat().st_size > 64 * 1024 * 1024:
+        raise ConfigError("Bencoded recovery file exceeds the 64 MiB inspection limit.")
+    return _BencodeReader(path.read_bytes()).complete()
+
+
+def discover_qbittorrent_state(config_root: Path) -> dict[str, Any]:
+    """Inspect copied qBittorrent state without starting qBittorrent or using the network."""
+    config_root = config_root.expanduser().resolve()
+    candidates = [config_root / "qBittorrent" / "BT_backup", config_root / "BT_backup"]
+    backup_root = next((path for path in candidates if path.is_dir()), None)
+    if backup_root is None:
+        raise ConfigError("qBittorrent BT_backup was not found under the supplied copied config root.")
+    torrents = {path.stem: path for path in backup_root.glob("*.torrent") if path.is_file()}
+    resumes = {path.stem: path for path in backup_root.glob("*.fastresume") if path.is_file()}
+    records = []
+    for torrent_hash in sorted(set(torrents) | set(resumes)):
+        torrent, resume = torrents.get(torrent_hash), resumes.get(torrent_hash)
+        record: dict[str, Any] = {
+            "torrent_hash": torrent_hash, "torrent_present": torrent is not None,
+            "fastresume_present": resume is not None, "paired": torrent is not None and resume is not None,
+        }
+        if torrent:
+            record["torrent_sha256"] = _sha256(torrent)
+            try:
+                decoded_torrent = _read_bencoded(torrent)
+                record["torrent_bencode_valid"] = isinstance(decoded_torrent, dict) and b"info" in decoded_torrent
+                if record["torrent_bencode_valid"]:
+                    encoded_info = _encode_bencode(decoded_torrent[b"info"])
+                    algorithm = "sha1" if len(torrent_hash) == 40 else "sha256" if len(torrent_hash) == 64 else None
+                    if algorithm:
+                        computed = hashlib.new(algorithm, encoded_info).hexdigest()
+                        record["computed_info_hash"] = computed
+                        record["hash_matches_filename"] = computed.lower() == torrent_hash.lower()
+                    else:
+                        record["hash_matches_filename"] = False
+            except ConfigError as exc:
+                record["torrent_bencode_valid"] = False
+                record["torrent_error"] = str(exc)
+        if resume:
+            record["fastresume_sha256"] = _sha256(resume)
+            try:
+                decoded_resume = _read_bencoded(resume)
+                record["fastresume_bencode_valid"] = isinstance(decoded_resume, dict)
+                record["resume_metadata"] = _resume_metadata(decoded_resume)
+                record["absolute_paths"] = sorted({value for key, value in record["resume_metadata"].items()
+                                                   if "path" in key.lower() and
+                                                   (PurePosixPath(value).is_absolute() or
+                                                    re.match(r"^[A-Za-z]:[\\/]", value))})
+            except ConfigError as exc:
+                record["fastresume_bencode_valid"] = False
+                record["fastresume_error"] = str(exc)
+        records.append(record)
+    complete = bool(records) and all(item.get("paired") and item.get("torrent_bencode_valid")
+                                     and item.get("hash_matches_filename")
+                                     and item.get("fastresume_bencode_valid") for item in records)
+    return {
+        "schema": 1, "generated_at": _utc(), "read_only": True, "offline": True,
+        "config_root": str(config_root), "bt_backup": str(backup_root),
+        "torrent_files": len(torrents), "fastresume_files": len(resumes),
+        "pair_count": sum(1 for item in records if item["paired"]), "complete_pairs": complete,
+        "records": records,
+        "warning": "This proves structural readability only; payload presence, client-version compatibility, trackers, peers and seeding are not tested.",
+    }
+
+
+def discover_sqlite_state(state_root: Path) -> dict[str, Any]:
+    """Inspect SQLite files in a copied state tree using immutable read-only connections."""
+    state_root = state_root.expanduser().resolve()
+    if not state_root.is_dir():
+        raise ConfigError("Copied application state root does not exist.")
+    records = []
+    for path in sorted(state_root.rglob("*")):
+        if not path.is_file() or path.suffix.lower() not in {".db", ".sqlite", ".sqlite3"}:
+            continue
+        record: dict[str, Any] = {"path": path.relative_to(state_root).as_posix(),
+                                  "size": path.stat().st_size, "sha256": _sha256(path)}
+        try:
+            uri = f"file:{path.as_posix()}?mode=ro&immutable=1"
+            with sqlite3.connect(uri, uri=True) as connection:
+                record["quick_check"] = connection.execute("PRAGMA quick_check").fetchone()[0]
+                record["user_version"] = connection.execute("PRAGMA user_version").fetchone()[0]
+                record["tables"] = sorted(row[0] for row in connection.execute(
+                    "SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'"))
+        except sqlite3.Error as exc:
+            record["quick_check"] = "error"
+            record["error"] = str(exc)[:300]
+        records.append(record)
+    return {"schema": 1, "generated_at": _utc(), "read_only": True, "immutable": True,
+            "state_root": str(state_root), "databases": records,
+            "structurally_readable": bool(records) and all(item.get("quick_check") == "ok" for item in records),
+            "warning": "Structural SQLite readability is not application-schema compatibility; run the matching application against a disposable restored copy."}
 
 
 def _docker_json(command: list[str], runner: Callable[..., Any]) -> Any:
@@ -582,8 +809,19 @@ def main() -> int:
     host = sub.add_parser("host-inventory")
     host.add_argument("--env", type=Path, required=True)
     host.add_argument("--output", type=Path, required=True)
+    host.add_argument("--expected-mode", choices=tuple(sorted(MODE_INVENTORY_ROLES)), required=True)
+    host.add_argument("--allow-partial", action="store_true",
+                      help="write an explicitly incomplete report instead of failing on missing storage roles")
     hardware = sub.add_parser("hardware-inventory")
     hardware.add_argument("--output", type=Path, required=True)
+    qbit = sub.add_parser("qbit-discovery")
+    qbit.add_argument("--config-root", type=Path, required=True,
+                      help="copied qBittorrent appdata root; never point CI at live production state")
+    qbit.add_argument("--output", type=Path, required=True)
+    sqlite = sub.add_parser("sqlite-discovery")
+    sqlite.add_argument("--state-root", type=Path, required=True,
+                        help="copied Music or Jellyfin state root")
+    sqlite.add_argument("--output", type=Path, required=True)
     ready = sub.add_parser("readiness")
     ready.add_argument("--env", type=Path, required=True)
     ready.add_argument("--mode", choices=("music", "media", "jellyfin", "full-external", "full-managed"), required=True)
@@ -620,11 +858,17 @@ def main() -> int:
         if args.command == "inventory":
             _write_json(args.output, inventory(load_env(args.env.resolve())))
         elif args.command == "host-inventory":
-            report = inventory(load_env(args.env.resolve()))
+            report = inventory(load_env(args.env.resolve()), MODE_INVENTORY_ROLES[args.expected_mode])
             report["docker"] = docker_inventory()
             _write_json(args.output, report, private=True)
+            if not args.allow_partial:
+                require_complete_inventory(report)
         elif args.command == "hardware-inventory":
             _write_json(args.output, hardware_inventory())
+        elif args.command == "qbit-discovery":
+            _write_json(args.output, discover_qbittorrent_state(args.config_root), private=True)
+        elif args.command == "sqlite-discovery":
+            _write_json(args.output, discover_sqlite_state(args.state_root), private=True)
         elif args.command == "readiness":
             report = readiness(load_env(args.env.resolve()), args.mode, load_evidence(args.evidence),
                                source_version=args.source_version, source_commit=args.source_commit)

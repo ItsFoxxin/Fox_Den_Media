@@ -24,7 +24,9 @@ Every state-changing step requires separate production approval. Use
 5. Record final approval, operators, timestamps, release SHA and rollback trigger.
 6. Begin the maintenance window; disable acquisition/import submissions.
 7. Stop Music worker/web and Movies/TV writers, then Portal.
-8. Pause/stop qBittorrent and confirm resume data is flushed; stop Gluetun after it.
+8. Reconfirm no qBittorrent process/container exists. If that has changed, stop it
+   and confirm resume data is flushed before stopping Gluetun. Preserve the
+   discovered orphaned appdata without initializing it.
 9. Stop Jellyfin and confirm no process has its database/config open.
 10. Verify old and new stacks cannot simultaneously mount any writable database,
     qBittorrent appdata, Jellyfin config, staging directory or final publish root.
@@ -36,10 +38,12 @@ Every state-changing step requires separate production approval. Use
     qBittorrent and verify counts, paths, resume and seeding state.
 15. Start Jellyfin; validate users, plugins, libraries, history, artwork, search,
     Watch & Listen and browser/TV/mobile playback.
-16. Switch production routing only after direct service validation.
-17. Observe logs, health, storage growth, queues, VPN and playback for the
+16. Confirm Liquidsoap/Icecast still read the unchanged Music library and port
+    18080 remains available; Radio stays external for the initial migration.
+17. Switch production routing only after direct service validation.
+18. Observe logs, health, storage growth, queues, VPN and playback for the
     approved stabilization period. Keep the previous deployment stopped but intact.
-18. Declare acceptance separately. Do not tag 1.0.0 merely because containers started.
+19. Declare acceptance separately. Do not tag 1.0.0 merely because containers started.
 
 ## Abort and rollback triggers
 
