@@ -263,12 +263,13 @@ complete any login or CAPTCHA yourself, add your chosen result to qBittorrent, t
     def status(identity=Depends(auth)):
         usage = shutil.disk_usage(s.media)
         result = {"name": "Fox Den Media", "version": __version__, "demo": s.demo,
-                "qbit_configured": bool(s.qbit_url), "qbit_public_url": "" if s.demo else (s.qbit_public_url or s.qbit_url),
+                "qbit_configured": bool(s.qbit_url),
                 "free_bytes": usage.free, "total_bytes": usage.total, "full_decode": s.full_decode,
                 "ffprobe_available": shutil.which(s.ffprobe) is not None, "ffmpeg_available": shutil.which(s.ffmpeg) is not None}
         if "admin" in identity.get("roles", []):
             result.update({"staging": str(s.staging), "media": str(s.media),
-                           "qbit_download_root": s.qbit_download_root})
+                           "qbit_download_root": s.qbit_download_root,
+                           "qbit_public_url": "" if s.demo else (s.qbit_public_url or s.qbit_url)})
         return result
 
     @app.get("/api/torrents", dependencies=[Depends(auth)])

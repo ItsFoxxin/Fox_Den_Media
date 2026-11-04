@@ -46,6 +46,7 @@ def test_module_accepts_correct_user_and_rejects_cross_module_replay_and_forgery
         assert "staging" not in restricted_status.json()
         assert "media" not in restricted_status.json()
         assert "qbit_download_root" not in restricted_status.json()
+        assert "qbit_public_url" not in restricted_status.json()
         restricted_session = client.post("/api/session", headers={
             "X-FoxDen-Identity": token(signer), "Origin": "https://media.example",
         })
