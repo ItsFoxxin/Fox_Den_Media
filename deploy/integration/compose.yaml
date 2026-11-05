@@ -47,9 +47,10 @@ services:
     cap_drop: [ALL]
     cap_add: [CHOWN, DAC_OVERRIDE]
     security_opt: [no-new-privileges:true]
-    # Seed the shared config volume before the web and worker are created. If
-    # it is empty, concurrent Docker image copy-up can race on /config/cache.
-    command: [sh, -c, "mkdir -p /music-config/cache && chown -R 10001:10001 /portal /music-config /music-staging /music-library /music-downloads /media-config /media-staging /media-library"]
+    # Seed shared Music directories before the web and worker are created. If
+    # they are empty, concurrent image copy-up or temporary-upload creation can
+    # race while both containers start.
+    command: [sh, -c, "mkdir -p /music-config/cache /music-staging/.upload-tmp && chown -R 10001:10001 /portal /music-config /music-staging /music-library /music-downloads /media-config /media-staging /media-library"]
     volumes:
       - portal-config:/portal
       - music-config:/music-config
