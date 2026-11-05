@@ -125,11 +125,22 @@ def test_service_specific_numeric_ids_are_independent_and_validated(tmp_path: Pa
         foxden.validate("full-managed", values)
 
 
-def test_unreviewed_gluetun_small_check_override_is_rejected(tmp_path: Path) -> None:
+def test_gluetun_dns_small_check_is_supported_on_3411(tmp_path: Path) -> None:
     values = configured(tmp_path, "full-managed")
     values["GLUETUN_IMAGE"] = "qmcgaw/gluetun:v3.41.1"
+    values["GLUETUN_HEALTH_SMALL_CHECK_TYPE"] = "dns"
+    foxden.validate("full-managed", values)
+    values["GLUETUN_HEALTH_SMALL_CHECK_TYPE"] = "icmp"
+    foxden.validate("full-managed", values)
+    values["GLUETUN_HEALTH_SMALL_CHECK_TYPE"] = "tcp"
+    with pytest.raises(foxden.ConfigError, match="must be dns or icmp"):
+        foxden.validate("full-managed", values)
+
+
+def test_unprefixed_gluetun_small_check_is_rejected(tmp_path: Path) -> None:
+    values = configured(tmp_path, "full-managed")
     values["HEALTH_SMALL_CHECK_TYPE"] = "dns"
-    with pytest.raises(foxden.ConfigError, match="not accepted"):
+    with pytest.raises(foxden.ConfigError, match="Use GLUETUN_HEALTH_SMALL_CHECK_TYPE"):
         foxden.validate("full-managed", values)
 
 
@@ -228,7 +239,7 @@ def test_managed_compose_forces_qbittorrent_through_gluetun() -> None:
     assert "outbound: {}" in compose
     gluetun = compose.split("  gluetun:", 1)[1].split("  qbittorrent:", 1)[0]
     assert "networks: [platform, outbound]" in gluetun
-    assert "HEALTH_SMALL_CHECK_TYPE" not in gluetun
+    assert 'HEALTH_SMALL_CHECK_TYPE: "${GLUETUN_HEALTH_SMALL_CHECK_TYPE:-dns}"' in gluetun
     assert 'HEALTH_TARGET_ADDRESSES: "${GLUETUN_HEALTH_TARGET_ADDRESSES' in gluetun
 
 
