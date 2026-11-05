@@ -145,10 +145,11 @@ def validate(mode: str, values: dict[str, str], *, browser: bool = False, jellyf
         all_paths += _paths(values, MANAGED_PATHS, create=create_paths)
         for key in ("WIREGUARD_ADDRESSES", "WIREGUARD_PUBLIC_KEY", "WIREGUARD_ENDPOINT_IP"):
             _required(values, key)
+        small_check = values.get("GLUETUN_HEALTH_SMALL_CHECK_TYPE", "dns").strip().lower()
+        if small_check not in {"dns", "icmp"}:
+            raise ConfigError("GLUETUN_HEALTH_SMALL_CHECK_TYPE must be dns or icmp.")
         if values.get("HEALTH_SMALL_CHECK_TYPE", "").strip():
-            raise ConfigError(
-                "HEALTH_SMALL_CHECK_TYPE is not accepted by the reviewed Gluetun v3.41.1 migration baseline; "
-                "validate a newer pinned image in isolation before using that option.")
+            raise ConfigError("Use GLUETUN_HEALTH_SMALL_CHECK_TYPE for managed Compose, not HEALTH_SMALL_CHECK_TYPE.")
     elif "media" in definition["modules"]:
         _url(values, "QBIT_URL")
     if jellyfin:
