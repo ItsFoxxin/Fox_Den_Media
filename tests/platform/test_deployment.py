@@ -275,6 +275,17 @@ def test_media_dockerfile_normalizes_nas_source_file_permissions() -> None:
     assert dockerfile.index("RUN chmod -R a+rX /app") < dockerfile.index("USER foxden:foxden")
 
 
+def test_movies_tv_ci_uses_existing_ffmpeg_or_bounded_package_install() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "monorepo.yml").read_text(encoding="utf-8")
+    applications = workflow.split("  applications:", 1)[1].split("\n  audit:", 1)[0]
+    assert "command -v ffmpeg" in applications
+    assert "command -v ffprobe" in applications
+    assert "timeout 300s" in applications
+    assert "Acquire::Retries=3" in applications
+    assert "DPkg::Lock::Timeout=60" in applications
+    assert "sudo apt-get update && sudo apt-get install -y ffmpeg" not in applications
+
+
 def test_qbittorrent_s6_init_compatible_with_vpn_kill_switch() -> None:
     import yaml
 
