@@ -141,6 +141,9 @@ def import_file_secrets() -> None:
         secret = _read_secret(Path(file_value), variable)
         if secret:
             os.environ[variable] = secret
+            # Do not pass both VALUE and VALUE_FILE into Pydantic after importing.
+            # Preserve explicitly supplied conflicting settings so validation can reject them.
+            os.environ.pop(f"{variable}_FILE", None)
 
 
 def _apply_umask() -> None:

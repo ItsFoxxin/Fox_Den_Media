@@ -12,6 +12,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY apps/media/app/ ./app/
 COPY apps/portal/src/foxden_identity/ ./foxden_identity/
 COPY apps/media/VERSION ./VERSION
+# NAS source copies may have mode 0700; keep application code readable by the non-root runtime.
+RUN chmod -R a+rX /app
 USER foxden:foxden
 EXPOSE 8010
 CMD ["uvicorn", "app.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8010", "--workers", "1", "--no-proxy-headers"]

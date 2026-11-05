@@ -238,3 +238,41 @@ def test_compose_supports_distinct_service_identities() -> None:
     assert 'user: "${MEDIA_PUID:-10001}:${MEDIA_PGID:-10001}"' in compose
     assert 'PUID: "${QBIT_PUID:-10001}"' in compose
     assert 'PGID: "${QBIT_PGID:-10001}"' in compose
+
+
+
+def test_deployment_tmpfs_entries_are_single_mount_specifications() -> None:
+    import yaml
+
+    compose = yaml.safe_load((ROOT / "deploy" / "compose.yaml").read_text(encoding="utf-8"))
+    targets = (
+        (compose["x-hardening"], 256),
+        (compose["services"]["ingress"], 64),
+        (compose["services"]["jellyfin"], 512),
+    )
+    for service, size in targets:
+        entries = service["tmpfs"]
+        assert len(entries) == 1
+        assert entries[0].startswith("/tmp:rw,")
+        assert f"size={size}m" in entries[0]
+        assert "mode=1777" in entries[0]
+
+
+def test_media_dockerfile_normalizes_nas_source_file_permissions() -> None:
+    dockerfile = (ROOT / "apps" / "media" / "Dockerfile").read_text(encoding="utf-8")
+    assert dockerfile.index("COPY apps/media/VERSION ./VERSION") < dockerfile.index("RUN chmod -R a+rX /app")
+    assert dockerfile.index("RUN chmod -R a+rX /app") < dockerfile.index("USER foxden:foxden")
+
+
+def test_qbittorrent_s6_init_compatible_with_vpn_kill_switch() -> None:
+    import yaml
+
+    compose = yaml.safe_load((ROOT / "deploy" / "compose.yaml").read_text(encoding="utf-8"))
+    qbit = compose["services"]["qbittorrent"]
+    vpn = compose["services"]["gluetun"]
+    assert qbit["network_mode"] == "service:gluetun"
+    assert qbit["depends_on"]["gluetun"]["condition"] == "service_healthy"
+    assert "security_opt" not in qbit  # s6 privilege drop requires no_new_privileges to be unset
+    assert "ports" not in qbit
+    assert "NET_ADMIN" in vpn["cap_add"]
+    assert vpn["environment"]["FIREWALL"] == "on"

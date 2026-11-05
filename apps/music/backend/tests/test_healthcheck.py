@@ -103,3 +103,28 @@ def test_local_health_opener_disables_proxies_and_redirects(monkeypatch) -> None
     assert proxy.proxies == {}
     assert redirect.redirect_request(None, None, 302, "Found", {},
                                      "https://example.invalid/") is None
+
+
+
+def test_file_secret_import_removes_file_variable_after_success(monkeypatch, tmp_path) -> None:
+    secret = tmp_path / "csrf"
+    secret.write_text("x" * 40, encoding="utf-8")
+    monkeypatch.delenv("CSRF_SECRET", raising=False)
+    monkeypatch.setenv("CSRF_SECRET_FILE", str(secret))
+
+    healthcheck.import_file_secrets()
+
+    assert healthcheck.os.environ["CSRF_SECRET"] == "x" * 40
+    assert "CSRF_SECRET_FILE" not in healthcheck.os.environ
+
+
+def test_explicit_secret_conflict_is_not_silently_overridden(monkeypatch, tmp_path) -> None:
+    secret = tmp_path / "csrf"
+    secret.write_text("file-value", encoding="utf-8")
+    monkeypatch.setenv("CSRF_SECRET", "explicit-value")
+    monkeypatch.setenv("CSRF_SECRET_FILE", str(secret))
+
+    healthcheck.import_file_secrets()
+
+    assert healthcheck.os.environ["CSRF_SECRET"] == "explicit-value"
+    assert healthcheck.os.environ["CSRF_SECRET_FILE"] == str(secret)
