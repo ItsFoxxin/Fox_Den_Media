@@ -352,6 +352,10 @@ def _recording_result(
         confidence=confidence,
         reasons=reasons,
     )
+    if selected_release_id and not unique_match:
+        raise RequestResolutionError(
+            "Selected release does not contain exactly one instance of the requested recording"
+        )
     if not unique_match:
         ambiguous = True
         reasons = reasons + ("Requested recording was not unique in the selected edition",)
