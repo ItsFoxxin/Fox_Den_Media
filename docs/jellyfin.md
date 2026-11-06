@@ -8,7 +8,9 @@ service.
 
 The defaults follow the official [container documentation](https://jellyfin.org/docs/general/installation/container/):
 separate persistent `/config` and `/cache`, a configurable non-root UID/GID,
-read-only media, the image's built-in health check, and a pinned minor image tag.
+read-only media, and a versioned image tag. The current `jellyfin` service in
+`deploy/compose.yaml` does **not** declare a Docker health check; perform
+explicit web/native-client readiness checks in an isolated rehearsal.
 
 ## Routing decision: dedicated hostname
 

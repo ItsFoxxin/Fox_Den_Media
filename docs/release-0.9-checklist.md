@@ -1,5 +1,10 @@
 # Fox Den Media 0.9.0 release-candidate checklist
 
+> **Historical 0.9.0 milestone checklist.** Current source is 0.9.1; the
+> repository is already consolidated. These unchecked boxes preserve the
+> original rehearsal gates, not new PR/rename tasks. See the
+> [current 1.0.0 checklist](release-1.0-checklist.md) for release acceptance.
+
 ## Repository evidence
 
 - [ ] Exact 0.9.0 commit recorded and all hosted jobs pass without waivers.

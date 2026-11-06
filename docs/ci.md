@@ -1,51 +1,57 @@
-# Versioning and CI layers
+# Development workflow, CI and release metadata
 
-`VERSION` contains the unified app's `MAJOR.MINOR.PATCH` release number. The API
-and dashboard read it, and Docker copies it into the image. CI requires the media
-image tag, README, and dated changelog entry to match. The bundled Music component
-retains its separate version.
+**Current branches:** `main` is the default/stable branch and `dev` is integration. Both are protected. Work in short-lived branches; open PRs into `dev` for review, then use a separately reviewed promotion PR from `dev` to `main`. This documentation task does not change protections, workflows or branch history.
 
-| Layer | Push/PR to dev | PR/push to master or main |
-| --- | --- | --- |
-| Version metadata and JavaScript syntax | Required | Required |
-| Default/custom-port Compose topology and legacy compatibility | Required | Required |
-| Media and Music tests with real FFmpeg fixtures | Python 3.12 | Python 3.12 and 3.13 |
-| Dependency consistency (`pip check`) | Required | Required |
-| JUnit test reports | Uploaded | Uploaded; no unexpected skipped cases allowed |
-| Build media and Music images | Required | Required |
-| Official Jellyfin image: isolated health, web asset, non-root/read-only smoke | Required | Required |
-| Real container gateway, shared login/logout, API version, non-root users, read-only staging | Required | Required |
-| Container full decode, reviewed import, checksum audit, overwrite refusal, source retention, restart persistence | - | Required |
-| Version increase compared with stable target | - | Required |
-| Aggregate `CI gate` | Required | Required |
+**Code source of truth:** [monorepo workflow](../.github/workflows/monorepo.yml), [CodeQL workflow](../.github/workflows/codeql.yml), [release check](../scripts/check_release.py) and [secret-history scan](../scripts/scan_history_secrets.py). Previous descriptions of `master` and an old `CI gate` workflow are historical; the active aggregate job is named **Monorepo strict gate**.
 
-Stable checks run on pull requests **before merging**, based on the target branch,
-and again on pushes. Both stable names are covered because this repository currently
-uses `main` while the planned stable branch was called `master`. No stable branch
-is created or merged by CI. Use Actions -> Validate Fox Den Media -> Run workflow
-with `strict` enabled to exercise stable-level tests on `dev` ahead of promotion.
+## Active jobs
 
-Two Windows-only import-lock tests are explicitly allowed to skip on Linux;
-other skipped or expected-failure cases fail stable checks.
+| Job | What it verifies |
+| --- | --- |
+| Validation and deployment modes | Python compile, JS syntax, release metadata, history secret scan, platform tests and seven Compose rendering/profile combinations |
+| Music regressions and real audio | Python **3.12 and 3.13**, pinned FFmpeg/FFprobe fixture installer, Music tests and coverage threshold |
+| Portal and Movies TV | App/Portal/platform tests, published JUnit reports |
+| Dependency vulnerability audits | Strict `pip-audit` of Music, Movies/TV and Portal |
+| Static analysis and secret scan | Bandit medium/high with medium/high confidence, full-history secret scan |
+| Migration backup restore and rollback | Synthetic archive/restore/rollback tests and checksums |
+| Optional Jellyfin container | Disposable official-image smoke test |
+| Consolidated container integration | Disposable integrated stack and synthetic VPN fail-closed fixture |
+| **Monorepo strict gate** | Requires all prerequisite jobs to succeed |
+| CodeQL security analysis | Separate Python and JavaScript/TypeScript `security-extended` analysis |
 
-Each job has a time limit; superseded runs are cancelled. Failed or skipped layers
-fail the aggregate gate. Tests run on isolated temporary data and containers;
-cleanup runs even on failure. CI never uses production paths or private VPN keys.
-The Jellyfin smoke test uses disposable named volumes and synthetic read-only
-media; it never mounts production state. The container test intentionally excludes
-the real VPN, qBittorrent, and downloader browser. Their live connectivity,
-killswitch, browser interaction, and real seeding behavior remain deployment
-checks. CI does not deploy or merge code.
+The workflows trigger on PRs/pushes to `dev`, `main`, `feature/**` and `security/**`; the monorepo workflow also listens to `merge_group`. A docs-only branch itself is not a push trigger, but its PR targeting `dev` is. CodeQL has its **own** workflow/check, not an internal step of the monorepo gate. Always inspect all required GitHub checks before merging.
 
-## Release procedure
+CI runs on disposable GitHub runners with synthetic data; it does **not** deploy, replace NAS application state, exercise real VPN credentials or authorize a cutover. Review the [0.9.1 security assessment](security-0.9.1.md) and [production readiness](production-readiness.md) for limits.
 
-1. Update `VERSION`, the media image tag in `compose.yaml`, README, and changelog.
-2. Push to `dev`; require a green `CI gate` and review test reports.
-3. Run the strict manual workflow on `dev` if desired, then open a stable PR.
-4. Stable CI requires a version higher than the stable target and all strict checks.
-5. Merge only after review and separately authorized deployment verification.
+## Local contributor verification
 
-Configure a GitHub branch ruleset requiring **CI gate** and a pull request on the
-stable branch to enforce merge blocking. The workflow supplies the check; it does
-not itself enable repository branch protection. Repository settings have not been
-changed by this update. Direct administrative pushes can otherwise bypass PR review.
+From repository root in an isolated Python environment:
+
+```bash
+python -m compileall -q apps scripts tests
+python scripts/check_release.py
+python -m pytest tests/platform tests/test_integration_compose.py tests/test_ingress_config.py -q
+node --check apps/media/app/static/app.js
+node --check apps/music/backend/src/foxden_music/static/app.js
+```
+
+Install tests/dependencies as the workflow specifies before running broader suites. Tests involving Docker, network egress, real FFmpeg, secrets history or multiple Python interpreters require the matching installed tools. For profile rendering without starting containers:
+
+```bash
+docker compose --env-file deploy/examples/music.env.example -f deploy/compose.yaml --profile music config --quiet
+docker compose --env-file deploy/examples/full-managed.env.example -f deploy/compose.yaml --profile music --profile media --profile managed config --quiet
+```
+
+Do not commit generated reports, temporary secrets, real environment files or production paths.
+
+## Version and release process
+
+The root `VERSION` is currently `0.9.1`. [`scripts/check_release.py`](../scripts/check_release.py) verifies semantic version format, the Media image tag in Compose, bold README version, dated [changelog](../CHANGELOG.md), and Dockerfile version copy. For a stable promotion it can additionally compare `--base` against an earlier commit and enforce an increase; it can check JUnit report skip/failure policy with `--reports`. `apps/media/VERSION` remains part of the image build.
+
+1. Develop, test and review changes against `dev`.
+2. For an actual release proposal, update all required version metadata together, collect passing hosted checks and record approved image digests.
+3. Complete copied-state NAS, authentication, VPN, file-permission, client and rollback rehearsals.
+4. Request independent owner approval of the production cutover and a `dev` → `main` promotion.
+5. Only after successful production acceptance consider a 1.0.0 tag/release.
+
+There is no automatic production deployment in these GitHub workflows, and a repository version label is not proof of a published release. See [1.0.0 checklist](release-1.0-checklist.md).

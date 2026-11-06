@@ -1,5 +1,13 @@
 # Fox Den Music
 
+> **Historical standalone Music component instructions.** The Docker Compose,
+> CI gates, host paths and upgrade commands below describe the earlier
+> independently deployed Music application; they are **not** the current
+> Fox Den Media monorepo installation method. For current deployment use the
+> [root README](../../README.md), [modular deployment](../../docs/deployment.md),
+> [configuration](../../docs/configuration.md), and [current CI](../../docs/ci.md).
+> This component's versioned milestone notes remain for provenance.
+
 ## GitHub CI: development and release gates
 
 Pushes and PRs to `dev` run sequential validation, regression tests, wheel
@@ -92,10 +100,10 @@ The project continues to use one image and two ordinary processes:
 - `/music/.imports/<import-job-id>/album`: complete pre-publish album.
 - `/music/<Album Artist>/<Album> (<Year>)`: final library destination.
 
-See [docs/architecture.md](docs/architecture.md) for state, migration, scan, and
-failure details; [docs/container-security.md](docs/container-security.md) for
+See [backend architecture](backend/docs/architecture.md) for state, migration, scan, and
+failure details; [container security](backend/docs/container-security.md) for
 mount and runtime controls; and
-[docs/milestone-2-acquisition.md](docs/milestone-2-acquisition.md) for the exact
+[acquisition milestone](backend/docs/milestone-2-acquisition.md) for the exact
 manual acquisition boundary.
 
 ## Requirements
@@ -809,7 +817,7 @@ Jellyfin, restart, CSRF, and synthetic end-to-end tests remain in the full run.
 ## Stage 3
 
 The contained human-assisted browser design is in
-[docs/stage-3-contained-browser.md](docs/stage-3-contained-browser.md). It
+[contained-browser milestone](backend/docs/stage-3-contained-browser.md). It
 proposes a separate non-root browser sandbox with no `/music`, `/config`,
 secrets, or host socket; per-job write-only staging; an authenticated short-lived
 interactive view for manual CAPTCHA completion; a hashed handoff manifest;

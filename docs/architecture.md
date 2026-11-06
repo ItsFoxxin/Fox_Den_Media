@@ -1,72 +1,50 @@
-# Architecture
+# Architecture (current deployment model)
+
+This describes the **0.9.1** source in [`deploy/compose.yaml`](../deploy/compose.yaml) and [`infra/gateway/portal-ingress.conf`](../infra/gateway/portal-ingress.conf), not the older `deploy/legacy/` or standalone Music Compose variants. Refer to [configuration](configuration.md) for required host paths and secrets.
 
 ```text
-Browser -> gateway :8000 -> media :8010       /transfers/
-                       -> music web :8000   /
-                       -> download-browser  /server-browser/
-Jellyfin hostname -> gateway :8080 -> jellyfin :8096 (native Jellyfin auth)
+HTTPS client -> external TLS reverse proxy (optional)
+                              |
+                              v
+Host 127.0.0.1:8080 -> Nginx ingress :8080 [edge + platform]
+                            | -> Portal :8020 (unprofiled)
+                            | -> Music :8000 [music] -> Music worker [music]
+                            | -> Media :8010 [media]
+                            | -> Firefox :5800 [browser]
+Jellyfin hostname ----------| -> Jellyfin :8096 [jellyfin]
 
-media -> gluetun:8080 -> qBittorrent Web API (server-side credentials)
-qBittorrent -> Gluetun network namespace -> WireGuard VPN
-media -> read-only torrent staging -> isolated copy -> media/Movies or media/TV
-music web -> music SQLite/staging -> music worker -> music library
-jellyfin -> read-only media root; normal outbound network (never Gluetun)
+Media -> qBittorrent API -> qBittorrent [managed; namespace of Gluetun]
+                                |
+                    Gluetun [managed; WireGuard + firewall]
 ```
 
-The production-candidate gateway asks Portal for an administrator-qualified,
-audience-bound session before serving Music, Movies/TV, or the contained browser.
-Jellyfin uses a dedicated hostname and its own authentication for native-client
-compatibility. General Portal users cannot reach acquisition modules.
-Movie/TV jobs use a dedicated SQLite database in `MEDIA_CONFIG_PATH`, never the
-music database. One durable queue is consumed by one background thread in one
-media Uvicorn process. qBittorrent HTTP calls are serialized with a session lock.
+| Network | Purpose | Attachment |
+| --- | --- | --- |
+| `edge` | Host-facing ingress only | Nginx |
+| `platform` (`internal: true`) | Backend routing, Portal assertion verification | Nginx, Portal, app services, browser, Jellyfin, Gluetun |
+| `outbound` | Explicit upstream access for metadata, OIDC, providers | App services, browser, Jellyfin, Gluetun; **not** a separate qBittorrent interface |
 
-The main Compose file starts all seven services, including Gluetun and qBittorrent.
-qBittorrent waits for Gluetun's health check and shares its network namespace;
-only Gluetun publishes the Web UI port. qBittorrent mounts config and downloads,
-while Fox Den sees those downloads read-only and alone mounts the movie/TV library.
-`compose.vpn.yaml` is an empty compatibility shim for older launch commands.
+The unprofiled `ingress` and `portal` are always present. Only ingress publishes an application UI by default (host loopback `FOXDEN_BIND_IP:FOXDEN_PORT`). Gluetun additionally publishes a **loopback-bound** qBittorrent Web UI for managed mode. Music, Media, Jellyfin and Firefox use Docker `expose` only. Managed qBittorrent has `network_mode: service:gluetun` and is blocked on Gluetun health; it has **no** independent port/network definition.
 
-## State and import protocol
+## Trust boundaries
 
-Jobs move from `queued` to `running` to `succeeded` or `failed`. Process restarts
-mark running jobs `interrupted`; queued jobs remain queued. An interrupted import
-with a matching published receipt is reconciled and audited on restart. Other
-interrupted jobs are not automatically replayed.
+Nginx validates Portal sessions through a protected auth subrequest and removes client-supplied Fox Den/Authentik identity headers. Portal is the only holder of the Ed25519 private signing key. It issues short-lived audience-bound assertions; modules verify the published public keys, roles, scopes and request identity. General Portal accounts can link and browse their own Jellyfin libraries through Watch & Listen but do not gain acquisition access. Music, Media and Firefox routes require Portal administrator privileges. See [permissions](permissions.md), [identity key management](phase-1b/identity-key-management.md), and [security](security.md).
 
-Validation results contain source-relative filenames, stat signatures, hashes,
-media metadata/decode results, excluded files, and explicit caveats. Imports refer
-to a successful validation job, check the torrent again when linked, and reject
-source stat changes before copying. The copy must hash to the reviewed SHA-256.
+Jellyfin keeps its native login independently of Portal and Authentik. Its dedicated hostname is routed by ingress without browser-only forward auth so TVs/mobile clients continue to work. The worker's optional `JELLYFIN_URL` + API key for library refresh is **separate** from Portal's user-scoped Watch & Listen integration (`JELLYFIN_INTERNAL_URL`, `JELLYFIN_PUBLIC_URL`).
 
-Each import is assembled under `/media/.imports/<unique-job-id>`, including its
-receipt. Only after all files pass does it become `/media/Movies/<name>` or
-`/media/TV/<name>`. Windows uses its no-replace rename behavior; Linux requires
-`renameat2(RENAME_NOREPLACE)`. Unsupported kernels/filesystems fail closed.
+## Application state and paths
 
-Ordinary failures remove only that job's unpublished temporary directory. A crash
-can leave a hidden temporary directory for manual review. The source is never
-removed. Database insertion follows publication; the on-disk receipt supports
-reconciliation if the process dies in that interval.
+- Portal: `PORTAL_CONFIG_PATH` with Portal SQLite state; secrets and signing keys under `FOXDEN_SECRETS_DIR`.
+- Music web and worker: separate processes sharing `MUSIC_CONFIG_PATH` SQLite/config, staging and inbox; the worker alone writes `MUSIC_LIBRARY_PATH`.
+- Media: `MEDIA_CONFIG_PATH` SQLite and `MEDIA_LIBRARY_PATH`; `TORRENT_DATA_PATH` mounted **read-only** in the Media container at `/downloads`, while qBittorrent can write that root in managed mode.
+- qBittorrent: separate `QBIT_CONFIG_PATH`, shared Gluetun network namespace, media-visible torrent data.
+- Jellyfin: independent `JELLYFIN_CONFIG_PATH` and `JELLYFIN_CACHE_PATH`, read-only `JELLYFIN_MEDIA_PATH` mounted at `JELLYFIN_MEDIA_CONTAINER_PATH`.
+- Firefox: its own `BROWSER_CONFIG_PATH`, Music download inbox shared as required.
 
-## Mount mapping example
+Media import jobs validate source paths and content, then copy into a unique hidden `.imports` staging path under the destination library, validate checksums and publish without overwriting an existing name. An interrupted operation may need manual review; the source torrent payload remains intact. The application needs a compatible local filesystem for atomic no-replace publication. See [requests](requests.md) and [0.9.1 review](security-0.9.1.md).
 
-| View | Configured path |
-| --- | --- |
-| NAS host downloads | `TORRENT_STAGING_PATH=/srv/downloads` |
-| qBittorrent save root | `QBIT_DOWNLOAD_ROOT=/downloads` |
-| Fox Den read-only root | `/staging` |
-| qBittorrent file | `/downloads/finished/Movie/movie.mkv` |
-| Fox Den source | `/staging/finished/Movie/movie.mkv` |
-| Reviewed destination | `/media/Movies/Movie (2026)/movie.mkv` |
+The platform is **not** a hostile multi-tenant filesystem sandbox; only trusted operators should be able to mutate host storage roots. The browser image has different upstream hardening constraints than first-party app images.
 
-Sources outside the configured qBittorrent root, relative traversal, Windows
-device paths, symlinks/junctions, nonregular files, empty files, incomplete torrents,
-and case-conflicting names are rejected. The configured storage directories must
-be controlled by trusted administrators; this is not a hostile multi-tenant
-filesystem sandbox. Do not let untrusted users replace parent directories while
-imports run. Use a local filesystem with supported atomic rename behavior.
+## Evolution and evidence
 
-Movies/TV metadata identification, scanner refresh, torrent deletion, and source
-cleanup are separate future features. A checksum audit detects byte changes; it
-does not independently re-run a media decoder or compare against torrent piece hashes.
+Older phase documents and ADRs deliberately show earlier routes, stack names and plans. They are historical, not competing deployment instructions. **Current configuration is authoritative.** Unit/integration tests do not prove real NAS permissions, real VPN kill switch, Jellyfin plugin compatibility or production cutover. See [readiness](production-readiness.md).
