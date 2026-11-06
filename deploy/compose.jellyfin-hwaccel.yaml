@@ -1,0 +1,7 @@
+services:
+  jellyfin:
+    devices:
+      - "${JELLYFIN_DRI_DEVICE:?Set JELLYFIN_DRI_DEVICE after verifying the NAS render device}:${JELLYFIN_DRI_DEVICE:?Set JELLYFIN_DRI_DEVICE after verifying the NAS render device}"
+    group_add:
+      - "${JELLYFIN_RENDER_GID:?Set JELLYFIN_RENDER_GID to the host render group ID}"
+      - "${JELLYFIN_VIDEO_GID:?Set JELLYFIN_VIDEO_GID to the host video group ID}"

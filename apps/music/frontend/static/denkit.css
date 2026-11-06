@@ -1,0 +1,24 @@
+/* Fox Den Midnight / DenKit v0.1 — legacy standalone Music surface. */
+:root {
+  --den-midnight: #0b1423;
+  --den-slate: #25384b;
+  --den-mint: #97e7ca;
+  --den-coral: #f68d91;
+  --den-amber: #f5ad66;
+  --den-cream: #f7f5e9;
+  --den-raised: #142335;
+  --den-border: #36495d;
+  --den-muted: #afc0d1;
+  --den-critical: #ef5261;
+  --bg: var(--den-midnight); --panel: var(--den-raised); --panel2: var(--den-slate);
+  --text: var(--den-cream); --muted: var(--den-muted); --line: var(--den-border);
+  --orange: var(--den-coral); --amber: var(--den-amber); --green: var(--den-mint);
+  --red: var(--den-critical); --blue: var(--den-mint); --violet: var(--den-coral);
+}
+html { color-scheme: dark; scrollbar-color: var(--den-slate) var(--den-midnight); }
+body { background: var(--den-midnight); color: var(--den-cream); }
+:focus-visible { outline: 3px solid var(--den-mint); outline-offset: 3px; }
+.topbar { background: rgb(11 20 35 / 92%); }
+.panel, .stat-card, .album-card { background: var(--den-raised); border-color: var(--den-border); }
+.button.primary { background: var(--den-coral); border-color: var(--den-coral); color: var(--den-midnight); }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important; } }

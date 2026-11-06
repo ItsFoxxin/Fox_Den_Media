@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% from "watch_cards.html" import cards %}
+{% block title %}{{ kind|title }} · Watch & Listen{% endblock %}
+{% block content %}
+<section class="watch-title"><p class="eyebrow">Watch &amp; Listen</p><h1>{{ kind|title }}</h1><nav class="media-tabs" aria-label="Browse media"><a href="/watch/browse/movies">Movies</a><a href="/watch/browse/shows">TV shows</a><a href="/watch/browse/artists">Artists</a><a href="/watch/browse/albums">Albums</a><a href="/watch/browse/songs">Songs</a><a href="/watch/browse/playlists">Playlists</a></nav></section>
+<section class="watch-section">{{ cards(items, 'No authorized items were returned for this collection.') }}</section>
+{% if start > 0 or items|length == limit %}<nav class="pager" aria-label="Results pages">{% if start > 0 %}<a class="module-link secondary" href="?start={{ [0,start-limit]|max }}">Previous</a>{% endif %}{% if items|length == limit %}<a class="module-link" href="?start={{ start+limit }}">Next</a>{% endif %}</nav>{% endif %}
+{% endblock %}

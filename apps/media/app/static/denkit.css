@@ -1,0 +1,67 @@
+/* Fox Den Midnight / DenKit v0.1 — Movies & TV workspace theme. */
+:root {
+  --den-midnight: #0b1423;
+  --den-slate: #25384b;
+  --den-mint: #97e7ca;
+  --den-coral: #f68d91;
+  --den-amber: #f5ad66;
+  --den-cream: #f7f5e9;
+  --den-raised: #142335;
+  --den-border: #36495d;
+  --den-muted: #afc0d1;
+  --den-critical: #ef5261;
+  --bg: var(--den-midnight);
+  --panel: var(--den-raised);
+  --line: var(--den-border);
+  --muted: var(--den-muted);
+  --accent: var(--den-coral);
+  --mint: var(--den-mint);
+}
+
+html { color-scheme: dark; scrollbar-color: var(--den-slate) var(--den-midnight); }
+body { background: var(--den-midnight); color: var(--den-cream); }
+::selection { background: var(--den-coral); color: var(--den-midnight); }
+:focus-visible { outline: 3px solid var(--den-mint); outline-offset: 3px; }
+button, .button { background: var(--den-slate); border-color: var(--den-border); color: var(--den-cream); }
+button:hover, .button:hover { background: #304a61; border-color: var(--den-muted); }
+.primary { background: var(--den-coral); border-color: var(--den-coral); color: var(--den-midnight); }
+.primary:hover { background: #ffadb0; border-color: #ffadb0; }
+input, textarea, select { background: var(--den-midnight); color: var(--den-cream); border-color: var(--den-border); }
+input:focus, textarea:focus, select:focus { outline-color: var(--den-mint); }
+.skip:focus { background: var(--den-cream); color: var(--den-midnight); }
+.sidebar { background: var(--den-raised); }
+.fox-small { background: var(--den-slate); border-color: var(--den-border); }
+nav button, nav a { color: var(--den-muted); }
+nav button.active { background: var(--den-slate); color: var(--den-coral); }
+nav a:hover { background: var(--den-slate); color: var(--den-cream); }
+nav b { background: var(--den-slate); }
+.sidebar-note { color: var(--den-mint); }
+.pulse { background: var(--den-mint); }
+.badge { border-color: var(--den-border); color: var(--den-muted); }
+.badge.warn { color: var(--den-amber); border-color: var(--den-amber); }
+.badge.error { color: var(--den-critical); border-color: var(--den-critical); }
+.stats article { background: linear-gradient(125deg, var(--den-slate), var(--den-raised)); border-color: var(--den-border); }
+.stat-icon { background: var(--den-slate); color: var(--den-mint); }
+.stat-icon.peach, .stat-icon.violet { background: rgb(246 141 145 / 14%); color: var(--den-coral); }
+.stat-icon.mint { background: rgb(151 231 202 / 13%); color: var(--den-mint); }
+.workflow { background: rgb(151 231 202 / 7%); border-color: rgb(151 231 202 / 32%); }
+.workflow .tiny-label, .step > span { color: var(--den-mint); }
+.step > span { border-color: rgb(151 231 202 / 42%); }
+.step small, .workflow i { color: var(--den-muted); }
+.panel, .login-card { background: var(--den-raised); border-color: var(--den-border); }
+th { background: var(--den-midnight); }
+td { border-bottom-color: var(--den-border); }
+.progress, .progress::-webkit-progress-bar { background: var(--den-slate); }
+.progress, .progress::-webkit-progress-value { accent-color: var(--den-mint); }
+.notice { background: rgb(245 173 102 / 10%); border-color: var(--den-amber); color: var(--den-cream); }
+#toast { background: var(--den-slate); border-color: var(--den-amber); color: var(--den-cream); }
+.login { background: radial-gradient(ellipse at 65% 40%, rgb(151 231 202 / 10%), transparent 58%), var(--den-midnight); }
+.login #login-error, .job-error { color: var(--den-critical); }
+dialog { background: var(--den-raised); color: var(--den-cream); border-color: var(--den-border); }
+dialog::backdrop { background: rgb(5 10 18 / 82%); }
+.path, .expanded { background: var(--den-midnight); border-color: var(--den-border); color: var(--den-muted); }
+.settings dl, .file-list { border-color: var(--den-border); }
+*::-webkit-scrollbar { width: 11px; height: 11px; }
+*::-webkit-scrollbar-track { background: var(--den-midnight); }
+*::-webkit-scrollbar-thumb { background: var(--den-slate); border: 2px solid var(--den-midnight); border-radius: 999px; }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; } }

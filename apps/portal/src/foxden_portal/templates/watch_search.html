@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% from "watch_cards.html" import cards %}
+{% block title %}Search · Watch & Listen{% endblock %}
+{% block content %}
+<section class="watch-title"><p class="eyebrow">Watch &amp; Listen</p><h1>Search your media</h1><form action="/watch/search" method="get" role="search"><label class="sr-only" for="watch-search">Search</label><input id="watch-search" type="search" name="q" value="{{ query }}" required maxlength="200"><button>Search</button></form></section>
+{% if error %}<p class="alert critical" role="alert">{{ error }}</p>{% else %}<section class="watch-section"><h2>Results for “{{ query }}”</h2>{{ cards(items, 'No matching items were found in your authorized libraries.') }}</section>{% endif %}
+{% endblock %}
