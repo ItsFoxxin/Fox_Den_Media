@@ -40,8 +40,10 @@
       <p class="muted fine-print">The server browser opens directly on <code>{{ provider_url }}</code>. Its left-side three-dot panel contains the clipboard bridge for moving the copied URL into remote Firefox.</p>
       {% elif remote_browser_url %}
       <a class="button primary" href="{{ remote_browser_url }}" rel="external">Open downloader in server browser</a>
-      {% else %}
+      {% elif provider_url %}
       <a class="button primary" href="{{ provider_url }}" rel="external">{{ 'Open acquisition provider' if acquisition.query_text else 'Open SpotiDownloader' }}</a>
+      {% else %}
+      <div class="notice"><strong>Acquisition provider not configured.</strong> Set MUSIC_REQUEST_PROVIDER_URL to an approved HTTPS provider before using manual acquisition, or provide a completed audio file through the secure importer.</div>
       {% endif %}
     </section>
 
