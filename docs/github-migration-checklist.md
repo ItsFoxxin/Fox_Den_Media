@@ -1,5 +1,13 @@
 # GitHub repository migration checklist
 
+> **Historical record — superseded for current operations.** This checklist
+> records the approved *pre-consolidation* PR stack and repository rename plan.
+> The active repository is now `ItsFoxxin/Fox_Den_Media`, with `main` as
+> default/stable and `dev` as integration. Do not repeat the rename, PR merge
+> sequence, or legacy-repository archiving/deletion from this record. For current
+> release steps see [CI](ci.md) and [1.0.0 checklist](release-1.0-checklist.md).
+> Original decisions and source history below are intentionally preserved.
+
 No item in this checklist is authorized by the consolidation branch itself.
 
 ## Required stacked integration order

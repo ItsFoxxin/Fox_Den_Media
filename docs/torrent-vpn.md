@@ -1,103 +1,59 @@
-# Bundled qBittorrent and VPN
+# qBittorrent and Gluetun VPN isolation
 
-The main `compose.yaml` starts Gluetun and qBittorrent alongside Fox Den's five
-application services. No extra Compose file or profile is needed:
+**Current source: 0.9.1** [`deploy/compose.yaml`](../deploy/compose.yaml). The managed downloader is enabled only for `full-managed`, which selects `music`, `media` and `managed`. The `media` and `full-external` modes use a separately configured **external** qBittorrent server; neither starts this managed VPN/client. The old two-file `compose.vpn.yaml` instructions are superseded and are **not** present in the current monorepo.
 
-```sh
-docker compose -f compose.yaml config --quiet
-docker compose -f compose.yaml up -d --build
-docker compose -f compose.yaml logs --tail=100 gluetun qbittorrent media
+## Safety contract
+
+1. In managed mode, qBittorrent uses `network_mode: service:gluetun`. It has **no independent Docker network** or published port. Its startup depends on Gluetun being healthy.
+2. Gluetun owns the WireGuard interface, firewall, `NET_ADMIN` and `/dev/net/tun`; it publishes only the configured qBittorrent Web UI port (default **`127.0.0.1:8081` to container port `8080`**).
+3. Only qBittorrent writes `TORRENT_DATA_PATH` in the managed stack; Media sees this root **read-only** and publishes reviewed copies to `MEDIA_LIBRARY_PATH`.
+4. **Never** add a second network, turn off the Gluetun firewall, disable the VPN health dependency, open a direct outbound route, expose the Web UI publicly or start real torrent activity before the approved tunnel-loss test.
+
+This topology is verified by Compose/source and a synthetic VPN fixture, **not** by real managed-mode NAS VPN tests. The existing NAS's separate Gluetun DNS-health correction does not establish safe managed-mode deployment. See [Gluetun validation](gluetun-validation.md).
+
+## Configure managed mode
+
+```bash
+cp deploy/examples/full-managed.env.example .env
+# Replace example host paths, user/group IDs, unique test ports, public origin,
+# PORTAL_MODULES_JSON as supplied, MusicBrainz contact and WireGuard public metadata.
+python scripts/foxden.py init --env .env --create-paths
 ```
 
-`compose.vpn.yaml` remains an empty compatibility shim, so older two-file launch
-commands still work without duplicating services.
+Fill private `FOXDEN_SECRETS_DIR/wireguard-private-key` and `qbit-password` with **authorized test** values in a secure editor; `init` creates empty placeholders. Validate access to these files by their mapped container users and keep private file permissions at `0600`. The current relevant names are:
 
-## Configure before starting
-
-Copy `.env.example` to `.env` and set the application settings described in the
-main README, plus these VPN/client settings:
-
-| Setting | Value |
+| Field | Meaning |
 | --- | --- |
-| `WIREGUARD_PUBLIC_KEY` | Peer public key from your Proton WireGuard profile |
-| `WIREGUARD_ENDPOINT_IP` / `WIREGUARD_ENDPOINT_PORT` | Profile's IPv4 endpoint and port |
-| `WIREGUARD_ADDRESSES` | Interface address from that profile |
-| `WIREGUARD_PRIVATE_KEY_FILE` | Host file containing only the private key |
-| `GLUETUN_CONFIG_PATH` | Host Gluetun config directory |
-| `TORRENT_CONFIG_PATH` | Host qBittorrent appdata directory |
-| `TORRENT_STAGING_PATH` | Host download directory, mounted as `/downloads` in qBittorrent |
-| `QBIT_URL` | Keep `http://gluetun:8080` for the bundled client |
-| `QBIT_PUBLIC_URL` | Browser-reachable address, such as `http://your-server:8080` |
-| `QBIT_BIND_IP` | Server LAN IP, or loopback when using a reverse proxy |
-| `QBIT_WEB_PORT` | Web UI port on host and container; update both URLs when changing it |
-| `QBIT_USERNAME` / `QBIT_PASSWORD` | Existing qBittorrent Web UI credentials |
+| `QBIT_CONFIG_PATH` | Separate writable qBittorrent appdata / resume state |
+| `GLUETUN_CONFIG_PATH` | Separate Gluetun application state |
+| `TORRENT_DATA_PATH` | Torrent payload root, `/downloads` inside qBittorrent |
+| `QBIT_URL` | App-side API, normally default `http://gluetun:8080` |
+| `QBIT_BIND_IP`, `QBIT_WEB_PORT` | Host Web UI bind, default loopback port 8081 |
+| `QBIT_USERNAME` | qBittorrent Web UI account; password is in `qbit-password` |
+| `WIREGUARD_ADDRESSES`, `WIREGUARD_PUBLIC_KEY`, `WIREGUARD_ENDPOINT_IP`, `WIREGUARD_ENDPOINT_PORT` | WireGuard interface/peer metadata |
+| `GLUETUN_HEALTH_SMALL_CHECK_TYPE` | Valid values `dns` (default) or `icmp`; mapped to container `HEALTH_SMALL_CHECK_TYPE` |
+| `GLUETUN_HEALTH_TARGET_ADDRESSES`, `GLUETUN_HEALTH_ICMP_TARGET_IPS` | Health probe targets |
 
-Pre-create all bind directories and the key file; Compose intentionally refuses
-to create missing bind paths. Keep the real `.env`, private key, and appdata out
-of Git. The key is mounted only into Gluetun. This configuration uses the supplied
-Proton custom WireGuard layout with IPv4 routing.
+`WIREGUARD_PRIVATE_KEY_SECRETFILE=/run/secrets/wireguard-private-key`, `FIREWALL=on` and `HEALTH_RESTART_VPN=on` are set by Compose. Gluetun has `DOT=off` and a configured DNS address; verify whether these choices meet the approved network/privacy policy. **No** current `VPN_PORT_FORWARDING` or `WIREGUARD_PRIVATE_KEY_FILE` environment variable is used by the managed Compose interface. Avoid copying legacy `TORRENT_CONFIG_PATH`, `TORRENT_STAGING_PATH` or `QBIT_PASSWORD` settings from older source Compose files.
 
-## First qBittorrent login
+## Dry run and staging acceptance
 
-A fresh LinuxServer qBittorrent installation prints a temporary admin password in
-its container logs. Sign into its Web UI, set a permanent password, then put that
-same password in `.env` as `QBIT_PASSWORD`. Apply the app credential change:
-
-```sh
-docker compose -f compose.yaml up -d --force-recreate media
+```bash
+python scripts/foxden.py validate full-managed --env .env
+python scripts/foxden.py deploy full-managed --env .env
+# After explicit authorization and review only:
+python scripts/foxden.py deploy full-managed --env .env --execute
+docker compose --env-file .env -f deploy/compose.yaml --profile music --profile media --profile managed ps
 ```
 
-`QBIT_PASSWORD` lets Fox Den log in; it does not initialize or change qBittorrent's
-own password. Keep qBittorrent CSRF and host-header protection enabled. Configure
-its allowed hostname for `gluetun` and your public hostname if required. Use
-`/downloads` for completed files and optionally `/downloads/incomplete` for
-in-progress downloads. Keep `QBIT_DOWNLOAD_ROOT=/downloads`.
+The last two commands are **mutating** and must run only on an isolated test stack with separately approved credentials and copied/synthetic data. For first login, use the password set by qBittorrent (a fresh LinuxServer instance may emit a temporary administrator password in private container logs); set a permanent password and synchronize the `qbit-password` secret **without exposing it**. Do not weaken qBittorrent CSRF/host-header protections to make the API work.
 
-## Routing and port forwarding
+Acceptance: observe stable tunnel, DNS/HTTPS egress through the expected VPN public IP (different from host egress), correct Gluetun firewall/default-drop, qBittorrent API and client namespace, then **deliberately interrupt only the rehearsal VPN** and prove all client DNS/HTTP/peer egress fails closed. Restore tunnel and verify recovery. Test real port-forward synchronization only with an explicitly supported provider/approved method; a forwarded port displayed by Gluetun does not prove the client uses it.
 
-qBittorrent shares Gluetun's network namespace and waits for its image health
-check. It has no independent Docker network or published ports. Gluetun publishes
-only the Web UI port and allows that same port through its input firewall. qBittorrent
-mounts config and downloads; Fox Den mounts the same downloads read-only and
-handles reviewed copies into the separate media library.
+## Existing NAS migration
 
-Only Gluetun receives `NET_ADMIN` and `/dev/net/tun`. LinuxServer qBittorrent and
-the downloader browser have their own init/user models; the application's
-non-root/read-only claims apply to Fox Den web, worker, and media services.
+Do not repoint managed `QBIT_CONFIG_PATH` or `TORRENT_DATA_PATH` to a running production client. Inventory all torrents, `.torrent`/`.fastresume` pairs, save paths, client image/version and Gluetun peer configuration. Verify backups, copy state into distinct paths, test seeding/resume behavior, and complete a controlled cutover only after approval.
 
-`VPN_PORT_FORWARDING=off` is the fresh-install default. Outbound torrent connections
-can work without an incoming forwarded port. Enable forwarding only with a
-compatible Proton profile/server and after configuring the supplied localhost
-port-sync hooks. Those hooks require qBittorrent's localhost authentication bypass;
-do not enable bypass for arbitrary LAN subnets. A failed hook means the forwarded
-port was not synchronized. An existing `.env` value of `on` remains effective.
+For an unexpected leak or failed health test, stop the rehearsal client and follow [side-by-side migration](side-by-side-migration.md), [qBittorrent recovery](qbittorrent-recovery.md) and [recovery](recovery.md). **Never disable the kill switch for troubleshooting.**
 
-The original supplied files disagreed on IPv6 and the README's forwarding state.
-Those were source discrepancies, not current NAS observations. Review the actual
-VPN configuration before migrating.
-
-## Migrate an existing torrent stack
-
-1. Stop and back up the old stack, qBittorrent appdata, and WireGuard key.
-2. Point the new bind variables at the explicitly verified host paths. Preserve
-   the old `.env` and merge settings; do not overwrite it. Never run both stacks
-   against the same appdata or listening port.
-3. Set the internal URL and credentials, then start the main Compose stack.
-4. Verify live tunnel health, qBittorrent network namespace/public egress, private
-   Web UI authentication, and kill-switch behavior on the Linux Docker host.
-5. Validate and import a small completed torrent; confirm the source still seeds.
-
-After replacing Gluetun, recreate qBittorrent so it attaches to the current
-network namespace:
-
-```sh
-docker compose -f compose.yaml up -d --force-recreate gluetun
-docker compose -f compose.yaml up -d --force-recreate qbittorrent
-```
-
-No live VPN test or NAS migration was performed for this change. The application
-can remain accessible when the VPN is unavailable, but torrent connectivity
-requires a healthy tunnel.
-
-References: [Gluetun container routing](https://github.com/qdm12/gluetun-wiki/blob/main/setup/connect-a-container-to-gluetun.md),
-[LinuxServer qBittorrent](https://docs.linuxserver.io/images/docker-qbittorrent/).
+References: [Gluetun network namespace setup](https://github.com/qdm12/gluetun-wiki/blob/main/setup/connect-a-container-to-gluetun.md), [Gluetun healthcheck](https://github.com/qdm12/gluetun-wiki/blob/main/setup/options/healthcheck.md), [LinuxServer qBittorrent](https://docs.linuxserver.io/images/docker-qbittorrent/).

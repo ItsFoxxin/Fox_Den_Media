@@ -2,10 +2,15 @@
 
 **Status:** Proposed product roadmap<br>
 **Last updated:** 2026-11-03<br>
-**Current development candidate:** `0.9.0`, stacked on the hosted-CI-validated 0.8.0 commit `7513ec5`; no production migration has been performed.<br>
-**Target canonical repository:** `ItsFoxxin/FoxDen_Media` (currently developed in the `ItsFoxxin/Music_Downloader` lineage).<br>
+**Planning baseline:** `0.9.0` proposal at the time of writing, stacked on hosted-CI-validated 0.8.0 commit `7513ec5` (historical reference).<br>
+**Current repository/status note:** `ItsFoxxin/Fox_Den_Media`, source milestone `0.9.1`; `main` is default, `dev` is integration. Code was subsequently consolidated; production cutover remains blocked.<br>
 **Roadmap owner:** Fox Den<br>
 **Rule:** A release milestone is not a deployment authorization. Production data access, migration, and cutover require separate explicit approval.
+
+> The table below preserves the roadmap's original milestone/gate wording as
+> planning history. For current operational and release criteria use
+> [production readiness](production-readiness.md) and the
+> [1.0.0 acceptance checklist](release-1.0-checklist.md).
 
 ## Vision
 

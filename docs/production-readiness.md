@@ -39,7 +39,9 @@
 - copied production database/config restore and application compatibility;
 - real Authentik OIDC and local emergency recovery;
 - qBittorrent pair consistency, payload path, resume/seeding and staging VPN behavior;
-- Gluetun kill-switch behavior and explanation/remediation of the ICMP health failures;
+- managed-mode Gluetun real-tunnel/kill-switch validation; the **existing** NAS
+  Gluetun ICMP-health problem was corrected by DNS health probing on November 5,
+  but this does not prove the new managed-mode stack (see [validation](gluetun-validation.md));
 - real Jellyfin users, plugins/auth providers, libraries, history, artwork and clients;
 - browser/mobile/TV playback, subtitles, seeking and optional N100 hardware transcode;
 - final writer stop, consistent backup, routing switch and rollback rehearsal.
