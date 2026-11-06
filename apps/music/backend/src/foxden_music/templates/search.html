@@ -44,7 +44,7 @@
   {% for item in matches %}
     <article class="panel music-search-card">
       {% if item.artwork_url %}
-      <img class="music-search-art" src="{{ item.artwork_url }}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.hidden=true">
+      <img class="music-search-art" src="{{ item.artwork_url }}" alt="" loading="lazy" referrerpolicy="no-referrer">
       {% else %}
       <span class="music-search-art music-search-placeholder" aria-hidden="true">♫</span>
       {% endif %}
