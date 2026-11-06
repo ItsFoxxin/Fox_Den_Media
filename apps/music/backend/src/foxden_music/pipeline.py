@@ -1114,14 +1114,14 @@ def _tag_working_files(
     plans = _metadata_plans(settings, job, candidate)
     working_dir = _job_root(settings, job_id) / "working"
     _remove_generated_directory(_job_root(settings, job_id), working_dir)
-    working_dir.mkdir(mode=0o750)
+    working_dir.mkdir(mode=0o700)
     artwork, artwork_warning, artwork_source = _prepare_artwork(settings, plans, candidate)
     if artwork:
         with (working_dir / "cover.jpg").open("xb") as output:
             output.write(artwork)
             output.flush()
             os.fsync(output.fileno())
-        os.chmod(working_dir / "cover.jpg", 0o640)
+        os.chmod(working_dir / "cover.jpg", 0o600)
 
     updates: list[tuple[WorkingPlan, str, str]] = []
     for plan in plans:
@@ -1136,7 +1136,7 @@ def _tag_working_files(
         else:
             destination = working_dir / f"{plan.track_id:06d}{plan.extension}"
             _copy_verified_source(plan, destination)
-        os.chmod(destination, 0o640)
+        os.chmod(destination, 0o600)
         write_tags(destination, plan.metadata, artwork)
         final_hash = sha256_file(destination)
         updates.append((plan, destination.relative_to(_job_root(settings, job_id)).as_posix(), final_hash))

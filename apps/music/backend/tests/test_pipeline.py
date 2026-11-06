@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import json
+import stat
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -99,6 +100,9 @@ def test_synthetic_end_to_end_import_and_exact_duplicate_skip(
         final_path = settings.music_dir / Path(*library_track.final_relative_path.split("/"))
         assert final_path.is_file()
         assert final_path.name == "01 - MOUNTAINS.flac"
+        if os.name == "posix":
+            # Published media remains group-readable for the Jellyfin media group.
+            assert stat.S_IMODE(final_path.stat().st_mode) == 0o640
 
     second_id = "10000000-0000-0000-0000-000000000002"
     second_source = _queue_single_track(database, settings, job_id=second_id)
@@ -161,6 +165,11 @@ def test_music_request_persists_validation_and_stops_before_publish(
         assert evidence["quality_matches"] is True
         assert evidence["duplicates_clear"] is True
         assert not any(path for path in settings.music_dir.iterdir() if path.name != ".imports")
+
+    working_dir = settings.jobs_dir / job_id / "working"
+    if os.name == "posix":
+        assert stat.S_IMODE(working_dir.stat().st_mode) == 0o700
+        assert stat.S_IMODE((working_dir / "000001.flac").stat().st_mode) == 0o600
 
 
 def test_processing_failure_never_creates_final_album(settings, database, monkeypatch) -> None:

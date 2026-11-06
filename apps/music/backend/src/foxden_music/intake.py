@@ -171,13 +171,13 @@ def stage_inbox_file(relative_path: str, settings: Settings) -> tuple[str, Path,
         extension = Path(display_name).suffix.lower()
         job_id = str(uuid.uuid4())
         incoming_dir = settings.jobs_dir / job_id / "incoming"
-        incoming_dir.mkdir(mode=0o750, parents=True, exist_ok=False)
+        incoming_dir.mkdir(mode=0o700, parents=True, exist_ok=False)
         final_path = incoming_dir / f"source{extension}"
         if settings.download_inbox_move_files:
             shutil.move(str(source), str(final_path))
         else:
             shutil.copy2(source, final_path)
-        os.chmod(final_path, 0o640)
+        os.chmod(final_path, 0o600)
         return job_id, final_path, display_name
     except BaseException:
         if job_id is not None:
@@ -198,7 +198,7 @@ async def stage_upload(upload: UploadFile, settings: Settings) -> tuple[str, Pat
 
         job_id = str(uuid.uuid4())
         incoming_dir = settings.jobs_dir / job_id / "incoming"
-        incoming_dir.mkdir(mode=0o750, parents=True, exist_ok=False)
+        incoming_dir.mkdir(mode=0o700, parents=True, exist_ok=False)
         final_path = incoming_dir / f"source{extension}"
         partial_path = incoming_dir / f".{uuid.uuid4().hex}.part"
         total = 0
@@ -216,7 +216,7 @@ async def stage_upload(upload: UploadFile, settings: Settings) -> tuple[str, Pat
         if total == 0:
             raise IntakeError("The uploaded file was empty")
         os.rename(partial_path, final_path)
-        os.chmod(final_path, 0o640)
+        os.chmod(final_path, 0o600)
         return job_id, final_path, display_name
     except BaseException:
         if job_id is not None:
