@@ -1,0 +1,89 @@
+/* Fox Den Midnight for Jellyfin Web.
+ * Install through Dashboard > Branding with:
+ *   @import url('/foxden-theme.css');
+ * Jellyfin native clients remain unchanged.
+ */
+:root {
+  --den-midnight: #0b1423;
+  --den-raised: #142335;
+  --den-slate: #25384b;
+  --den-mint: #97e7ca;
+  --den-coral: #f68d91;
+  --den-amber: #f5ad66;
+  --den-cream: #f7f5e9;
+  --den-border: #36495d;
+  --den-muted: #afc0d1;
+  --den-critical: #ef5261;
+}
+
+html, body, .backgroundContainer, .dialog, .mainDrawer {
+  background-color: var(--den-midnight) !important;
+  color: var(--den-cream) !important;
+}
+
+.skinHeader, .mainDrawer, .paperList, .visualCardBox,
+.cardBox, .formDialogHeader, .formDialogFooter, .detailPagePrimaryContainer {
+  background-color: color-mix(in srgb, var(--den-raised) 94%, transparent) !important;
+  border-color: var(--den-border) !important;
+}
+
+.skinHeader { backdrop-filter: blur(14px); border-bottom: 1px solid var(--den-border); }
+.listItem:hover, .navMenuOption-selected, .emby-tab-button-active {
+  background-color: color-mix(in srgb, var(--den-coral) 18%, transparent) !important;
+}
+
+.button-submit, .raised.button-submit, .fab, .playstatebutton-icon-played,
+.itemProgressBarForeground, .mdl-slider-background-lower {
+  background: var(--den-coral) !important;
+  color: var(--den-midnight) !important;
+}
+
+.button-link, .emby-tab-button-active, .selectLabelFocused,
+.inputLabelFocused, .checkboxIcon-checked, a {
+  color: var(--den-mint) !important;
+}
+
+.secondary, .fieldDescription, .listItemBodyText, .cardText-secondary {
+  color: var(--den-muted) !important;
+}
+
+.emby-input, .emby-textarea, .emby-select, .cardBox, .paperList,
+.dialog, .toast, .actionSheet {
+  border: 1px solid var(--den-border) !important;
+  border-radius: .75rem !important;
+}
+
+.emby-input, .emby-textarea, .emby-select {
+  background: var(--den-raised) !important;
+  color: var(--den-cream) !important;
+}
+
+.emby-input:focus, .emby-textarea:focus, .emby-select:focus,
+button:focus-visible, a:focus-visible {
+  outline: 3px solid var(--den-mint) !important;
+  outline-offset: 3px !important;
+}
+
+.errorMessage, .validationError, .failure { color: var(--den-critical) !important; }
+.warning, .notification.warning { color: var(--den-amber) !important; }
+
+/* Branding is deliberately limited to the web login surface. */
+.standalonePage::before {
+  content: "";
+  position: fixed;
+  right: clamp(1rem, 6vw, 6rem);
+  bottom: 0;
+  width: min(32vw, 24rem);
+  aspect-ratio: 1;
+  background: url('/foxden-mascot.png') bottom right / contain no-repeat;
+  opacity: .18;
+  pointer-events: none;
+}
+
+@media (max-width: 50rem) {
+  .standalonePage::before { width: 13rem; opacity: .1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}

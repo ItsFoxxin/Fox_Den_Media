@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% from "watch_cards.html" import cards %}
+{% block title %}Watch & Listen · Fox Den Media{% endblock %}
+{% block content %}
+<section class="watch-hero">
+  <div><p class="eyebrow">Fox Den Midnight</p><h1>Watch &amp; Listen</h1><p>Your movies, shows, albums, and songs—authorized by your own Jellyfin account.</p></div>
+  <img src="{{ url_for('static', path='/fox-den-mascot.png') }}" alt="Fox Den fox mascot wearing headphones">
+</section>
+
+{% if state == 'disabled' %}
+<section class="panel watch-state"><p class="eyebrow">Not enabled</p><h2>Watch &amp; Listen is resting</h2><p>An administrator can connect an external or managed Jellyfin server. The rest of Fox Den remains available.</p></section>
+{% elif state in ['connect', 'reconnect'] %}
+<section class="panel connect-panel">
+  <div><p class="eyebrow">Private connection</p><h2>Connect your Jellyfin account</h2><p>Fox Den authenticates directly as you. Your password is sent only to your configured Jellyfin server and is never stored. The resulting user token is encrypted in Portal storage.</p></div>
+  {% if error %}<p class="alert critical" role="alert">{{ error }}</p>{% endif %}
+  <form method="post" action="/watch/connect" class="stacked-form">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label>Jellyfin username<input name="username" autocomplete="username" required maxlength="200"></label>
+    <label>Jellyfin password<input type="password" name="password" autocomplete="current-password" required maxlength="500"></label>
+    <button type="submit">Connect Jellyfin</button>
+  </form>
+</section>
+{% elif state in ['offline', 'error'] %}
+<section class="panel watch-state"><p class="eyebrow">Temporarily unavailable</p><h2>The den cannot reach Jellyfin</h2><p role="alert">{{ error }}</p><p>Your Portal, Music, and Movies/TV management services are unaffected.</p><a class="module-link" href="/watch/">Try again</a></section>
+{% else %}
+<section class="watch-toolbar" aria-label="Watch and Listen tools">
+  <form action="/watch/search" method="get" role="search"><label class="sr-only" for="watch-search">Search your media</label><input id="watch-search" type="search" name="q" placeholder="Search movies, shows, artists, albums…" required maxlength="200"><button>Search</button></form>
+  <div class="watch-account"><span>Connected as {{ home.user.name }}</span><a href="{{ jellyfin_url }}">Open Jellyfin</a><form method="post" action="/watch/disconnect"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="link-button">Disconnect</button></form></div>
+</section>
+<nav class="media-tabs" aria-label="Browse media"><a href="/watch/browse/movies">Movies</a><a href="/watch/browse/shows">TV shows</a><a href="/watch/browse/artists">Artists</a><a href="/watch/browse/albums">Albums</a><a href="/watch/browse/songs">Songs</a><a href="/watch/browse/playlists">Playlists</a></nav>
+
+<section class="watch-section"><div class="section-heading"><div><p class="eyebrow">Pick up where you left off</p><h2>Continue watching</h2></div></div>{{ cards(home.continue_watching, 'Nothing is currently in progress.') }}</section>
+<section class="watch-section"><div class="section-heading"><div><p class="eyebrow">Watch</p><h2>Recently added movies &amp; TV</h2></div></div>{{ cards(home.recent_video, 'No authorized video items were returned.') }}</section>
+<section class="watch-section"><div class="section-heading"><div><p class="eyebrow">Listen</p><h2>Recently added music</h2></div></div>{{ cards(home.recent_audio, 'No authorized music items were returned.') }}</section>
+<section class="watch-section"><div class="section-heading"><div><p class="eyebrow">Your access</p><h2>Libraries</h2></div></div>{{ cards(home.libraries, 'No Jellyfin libraries are assigned to this user.') }}</section>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,14 @@
+{% macro cards(items, empty_text) -%}
+{% if items %}
+<div class="media-grid">
+  {% for item in items %}
+  <article class="media-card">
+    <a href="{{ item.details_url }}" aria-label="View {{ item.name }} details">
+      <img src="{{ item.artwork_url }}?width=480" alt="" loading="lazy" width="320" height="480">
+      <div class="media-card-copy"><strong>{{ item.name }}</strong><span>{{ item.album_artist or (item.artists|join(', ')) or item.type }}{% if item.year %} · {{ item.year }}{% endif %}</span></div>
+    </a>
+  </article>
+  {% endfor %}
+</div>
+{% else %}<p class="muted">{{ empty_text }}</p>{% endif %}
+{%- endmacro %}

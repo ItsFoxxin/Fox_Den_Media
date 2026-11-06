@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}{{ item.name }} · Watch & Listen{% endblock %}
+{% block content %}
+<article class="media-detail">
+  <img src="{{ item.artwork_url }}?width=800" alt="Artwork for {{ item.name }}">
+  <div><p class="eyebrow">{{ item.type }}</p><h1>{{ item.name }}</h1><p class="media-byline">{{ item.album_artist or (item.artists|join(', ')) }}{% if item.year %} · {{ item.year }}{% endif %}</p>{% if item.overview %}<p>{{ item.overview }}</p>{% endif %}{% if item.genres %}<ul class="chips" aria-label="Genres">{% for genre in item.genres %}<li>{{ genre }}</li>{% endfor %}</ul>{% endif %}<a class="module-link" href="{{ item.jellyfin_url }}">Play in Jellyfin</a><p class="muted playback-note">Embedded Fox Den playback is intentionally deferred until streaming authorization and progress reporting are validated per user.</p></div>
+</article>
+{% if item.children %}<section class="watch-section"><p class="eyebrow">More</p><h2>{% if item.type in ['Series','Season'] %}Seasons &amp; episodes{% else %}Tracks &amp; items{% endif %}</h2><div class="media-grid">{% for child in item.children %}<article class="media-card"><a href="{{ child.details_url }}"><img src="{{ child.artwork_url }}?width=480" alt="" loading="lazy"><div class="media-card-copy"><strong>{{ child.name }}</strong><span>{{ child.type }}</span></div></a></article>{% endfor %}</div></section>{% endif %}
+{% endblock %}

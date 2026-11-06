@@ -1,0 +1,19 @@
+<span data-poll-terminal="{{ 'true' if poll_terminal else 'false' }}" hidden></span>
+{% set state = effective_state %}
+{% set order = {'REQUESTED': 1, 'RESOLVING': 2, 'WAITING_FOR_USER': 3, 'ACQUIRING': 3, 'WAITING_FOR_DOWNLOAD': 3, 'VALIDATING': 4, 'FILE_RECEIVED': 4, 'IMPORT_STARTED': 5, 'NEEDS_REVIEW': 5, 'IMPORTING': 5, 'COMPLETE': 6, 'REJECTED': 6, 'FAILED': 6, 'CANCELLED': 6} %}
+{% set current = order.get(state, 1) %}
+<ol class="trace-list">
+  {% for number, label in [(1, 'Requested'), (2, 'Resolving'), (3, 'Acquiring'), (4, 'Validating'), (5, 'Needs review / Importing'), (6, 'Complete')] %}
+  <li class="trace-stage {{ 'complete' if current > number else ('current' if current == number else '') }}">
+    <span aria-hidden="true">{{ number }}</span><div><strong>{{ label }}</strong><small>{% if current == number %}{{ state|replace('_', ' ') }}{% elif current > number %}Complete{% else %}Pending{% endif %}</small></div>
+  </li>
+  {% endfor %}
+</ol>
+{% if acquisition.required_action %}<div class="notice"><strong>User action:</strong> {{ acquisition.required_action }}</div>{% endif %}
+{% if state == 'CANCELLED' %}<p class="muted">This request was cancelled before handoff.</p>{% endif %}
+{% if acquisition.error_message %}<div class="form-error" role="alert"><strong>{{ state|replace('_', ' ')|title }}</strong><span>{{ acquisition.error_message }}</span></div>{% endif %}
+{% if timeline_events %}
+<details class="event-details"><summary>Full event timeline</summary><ol class="timeline">
+  {% for event in timeline_events %}<li class="event-{{ event.level|lower }}"><span class="timeline-dot"></span><div><strong>{{ event.message }}</strong><span>{{ event.created_at|datetime }} · {{ event.domain }} {{ event.state|replace('_', ' ') }}</span></div></li>{% endfor %}
+</ol></details>
+{% endif %}
