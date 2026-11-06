@@ -259,14 +259,14 @@ class SpotifyClient:
             return self._token
         secret = self.settings.resolved_spotify_client_secret
         if not self.settings.spotify_client_id or not secret:
-            raise WaitingForUser("Spotify API credentials are not configured; add them or attach a MusicBrainz link")
+            raise WaitingForUser("Spotify metadata needs configured, authorized API credentials. Instead, use Search to choose a track or album by name with MusicBrainz; no Spotify account is required.")
         response = self.client.post(
             "https://accounts.spotify.com/api/token",
             data={"grant_type": "client_credentials"},
             auth=(self.settings.spotify_client_id, secret),
         )
         if response.status_code != 200:
-            raise RequestResolutionError(f"Spotify token request failed (HTTP {response.status_code})")
+            raise RequestResolutionError(f"Spotify authentication unavailable (HTTP {response.status_code}). Check the app credentials, current API access permissions and Spotify developer quota settings.")
         self._token = str(response.json().get("access_token") or "")
         if not self._token:
             raise RequestResolutionError("Spotify token response did not contain an access token")
@@ -291,7 +291,7 @@ class SpotifyClient:
             headers={"Authorization": f"Bearer {self._access_token()}"},
         )
         if response.status_code != 200:
-            raise RequestResolutionError(f"Spotify metadata request failed (HTTP {response.status_code})")
+            raise RequestResolutionError(f"Spotify metadata unavailable (HTTP {response.status_code}). This app may lack access to the requested endpoint or its quota; try MusicBrainz name search.")
         payload = response.json()
         if not isinstance(payload, Mapping):
             raise RequestResolutionError("Spotify returned an unexpected response")
