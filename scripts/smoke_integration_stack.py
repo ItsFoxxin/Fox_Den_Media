@@ -87,6 +87,11 @@ def main() -> None:
     assert created.status == 303
     assert b"Your media den" in request(admin, base + "/").read()
 
+    # Deferred upstream DNS can lag container health briefly. Require both
+    # modules to become routable before exercising their application paths.
+    wait_for(admin, base + "/music/")
+    wait_for(admin, base + "/media/")
+
     # One Portal session enters both real modules with no module login.
     for path in ("/music/", "/music/static/styles.css", "/media/", "/media/assets/style.css"):
         response = request(admin, base + path)
@@ -146,7 +151,8 @@ def main() -> None:
     # Disposable SQLite and module state survive safe restarts.
     compose(env_path, "restart", "portal", "music", "music-worker", "media")
     wait_for(admin, base + "/")
-    assert request(admin, base + "/media/api/requests").status == 200
+    wait_for(admin, base + "/music/")
+    wait_for(admin, base + "/media/api/requests")
 
     logs = compose(env_path, "logs", "--no-color", capture=True)
     for secret_name in ("INTEGRATION_PORTAL_SECRET", "INTEGRATION_BOOTSTRAP_SECRET",

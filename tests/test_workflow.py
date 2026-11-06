@@ -1,4 +1,5 @@
 import os
+from html.parser import HTMLParser
 from pathlib import Path
 import shutil
 import subprocess
@@ -13,6 +14,20 @@ from app.files import audit, contained, digest, import_files, relative_parts, va
 from app.main import create_app
 from app.platform_summary import module_summary
 from app.worker import Worker
+
+
+class _PageAttributes(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.body_home = None
+        self.frame_home = None
+
+    def handle_starttag(self, tag, attrs):
+        attributes = dict(attrs)
+        if tag == "body":
+            self.body_home = attributes.get("data-home-url")
+        elif tag == "iframe":
+            self.frame_home = attributes.get("data-home-url")
 
 
 @pytest.fixture
@@ -91,7 +106,7 @@ def test_destination_conflict_preserves_existing(settings,movie):
 def test_copy_failure_cleans_only_unpublished_work(settings,movie,monkeypatch):
     store,row=review(settings,movie)
     def fail(*args,**kwargs): raise OSError('simulated disk failure')
-    monkeypatch.setattr('app.files.shutil.copyfileobj',fail)
+    monkeypatch.setattr('app.files.os.read',fail)
     job=approve(store,row)
     Worker(settings,store,None).run_one()
     assert store.job(job['id'])['status']=='failed'
@@ -134,6 +149,37 @@ def test_symlink_refused(settings,tmp_path):
     except OSError: pytest.skip('OS does not grant symlink creation to this account')
     with pytest.raises(ValueError,match='Symlinks'):
         contained(settings.staging,'link.mp4')
+
+
+def test_validation_rejects_symlink_swap_after_initial_check(settings, movie, tmp_path, monkeypatch):
+    outside = tmp_path / 'outside.mp4'
+    shutil.copy2(movie, outside)
+
+    def swap(_seconds):
+        movie.unlink()
+        try:
+            movie.symlink_to(outside)
+        except OSError:
+            pytest.skip('OS does not grant symlink creation to this account')
+
+    monkeypatch.setattr('app.files.time.sleep', swap)
+    with pytest.raises(ValueError, match='Symlink|changing|changed'):
+        validate(settings, None, {'source': movie.parent.name})
+
+
+def test_import_rejects_symlink_swap_after_validation(settings, movie, tmp_path):
+    store, row = review(settings, movie)
+    outside = tmp_path / 'outside.mp4'
+    shutil.copy2(movie, outside)
+    movie.unlink()
+    try:
+        movie.symlink_to(outside)
+    except OSError:
+        pytest.skip('OS does not grant symlink creation to this account')
+    job = approve(store, row)
+    Worker(settings, store, None).run_one()
+    assert store.job(job['id'])['status'] == 'failed'
+    assert not (settings.media / 'Movies' / '달빛 여행 (2026)').exists()
 
 
 def test_path_overlap_refused(tmp_path):
@@ -231,8 +277,27 @@ def test_shared_session_logout_and_csrf(settings):
         from app.version import __version__
         assert response.json()['version'] == __version__
         assert client.post('/api/logout').status_code==403
-        assert client.post('/api/logout',headers={'X-Foxden-Request':'1'}).status_code==200
+        assert client.post('/api/logout',headers={'X-Foxden-Request':'1'}).status_code==403
+        assert client.post('/api/logout',headers={'X-Foxden-Request':'1',
+                                                  'Origin':'http://testserver'}).status_code==200
         assert client.get('/api/session').status_code==401
+
+
+def test_standalone_cookie_requires_origin_and_custom_header_for_writes(settings):
+    with TestClient(create_app(settings, start_worker=False)) as client:
+        assert client.post('/api/session', headers={
+            'Authorization': 'Bearer ' + settings.token}).status_code == 200
+        payload = {'query': 'Example', 'media_type': 'Movie'}
+        assert client.post('/api/requests', json=payload,
+                           headers={'X-Foxden-Request': '1'}).status_code == 403
+        assert client.post('/api/requests', json=payload,
+                           headers={'Origin': 'http://testserver'}).status_code == 403
+        assert client.post('/api/requests', json=payload, headers={
+            'Origin': 'https://attacker.example',
+            'X-Foxden-Request': '1'}).status_code == 403
+        accepted = client.post('/api/requests', json=payload, headers={
+            'Origin': 'http://testserver', 'X-Foxden-Request': '1'})
+        assert accepted.status_code == 202
 
 
 def test_tampered_session_refused(settings):
@@ -253,7 +318,7 @@ def test_platform_summary_is_public_bounded_and_contains_no_records(settings):
         summary = response.json()
         assert summary['contract_version'] == '1.0'
         assert summary['module_id'] == 'media'
-        assert summary['module_version'] == '0.9.0'
+        assert summary['module_version'] == '0.9.1'
         assert summary['health']['status'] == 'healthy'
         assert {item['id'] for item in summary['capabilities']} == {
             'media.requests', 'media.library', 'media.acquisition', 'media.browser'}
@@ -361,7 +426,10 @@ def test_request_browser_handoff_is_authenticated_and_escaped(settings):
         assert '<script>alert(1)</script>' not in response.text
         assert '&lt;script&gt;alert(1)&lt;/script&gt;' in response.text
         assert 'src="/server-browser/"' in response.text
-        assert 'https://www.themoviedb.org/' in response.text
+        attributes = _PageAttributes()
+        attributes.feed(response.text)
+        assert attributes.body_home == settings.media_browser_home_url
+        assert attributes.frame_home == settings.media_browser_home_url
         assert client.get(f"/api/requests/{created['id']}",headers=headers).json()['id']==created['id']
         assert client.get('/assets/request-browser.js').status_code==200
         assert client.get('/assets/request-browser-bridge.js').status_code==200

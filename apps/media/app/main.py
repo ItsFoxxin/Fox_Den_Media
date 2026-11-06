@@ -148,8 +148,12 @@ def create_app(settings=None, *, start_worker=True, qbit=None):
             valid_time = 0 <= time.time() - int(issued) < 8 * 3600
             expected = hmac.new(s.token.encode(), f"{issued}.{nonce}".encode(), hashlib.sha256).hexdigest()
             if valid_time and hmac.compare_digest(signature, expected):
-                if request.method not in {"GET", "HEAD"} and request.headers.get("X-Foxden-Request") != "1":
-                    raise HTTPException(403, "Missing same-origin request header.")
+                if request.method not in {"GET", "HEAD", "OPTIONS"}:
+                    expected_origin = s.public_origin or str(request.base_url).rstrip("/")
+                    if request.headers.get("Origin", "").rstrip("/") != expected_origin:
+                        raise HTTPException(403, "Request origin validation failed.")
+                    if request.headers.get("X-Foxden-Request") != "1":
+                        raise HTTPException(403, "Missing same-origin request header.")
                 return {"roles": ["admin"], "token_use": "legacy"}
         except (ValueError, TypeError):
             pass
@@ -255,14 +259,18 @@ complete any login or CAPTCHA yourself, add your chosen result to qBittorrent, t
  title="Contained media browser" referrerpolicy="no-referrer"
  allow="fullscreen; clipboard-read; clipboard-write" allowfullscreen></iframe></body></html>""")
 
-    @app.get("/api/status", dependencies=[Depends(auth)])
-    def status():
+    @app.get("/api/status")
+    def status(identity=Depends(auth)):
         usage = shutil.disk_usage(s.media)
-        return {"name": "Fox Den Media", "version": __version__, "demo": s.demo,
-                "qbit_configured": bool(s.qbit_url), "qbit_public_url": "" if s.demo else (s.qbit_public_url or s.qbit_url),
-                "staging": str(s.staging), "media": str(s.media), "qbit_download_root": s.qbit_download_root,
+        result = {"name": "Fox Den Media", "version": __version__, "demo": s.demo,
+                "qbit_configured": bool(s.qbit_url),
                 "free_bytes": usage.free, "total_bytes": usage.total, "full_decode": s.full_decode,
                 "ffprobe_available": shutil.which(s.ffprobe) is not None, "ffmpeg_available": shutil.which(s.ffmpeg) is not None}
+        if "admin" in identity.get("roles", []):
+            result.update({"staging": str(s.staging), "media": str(s.media),
+                           "qbit_download_root": s.qbit_download_root,
+                           "qbit_public_url": "" if s.demo else (s.qbit_public_url or s.qbit_url)})
+        return result
 
     @app.get("/api/torrents", dependencies=[Depends(auth)])
     def torrents():

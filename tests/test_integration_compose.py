@@ -39,8 +39,48 @@ def test_application_containers_are_non_root_read_only_and_identity_is_asymmetri
     portal_mounts = "\n".join(COMPOSE["services"]["portal"]["volumes"])
     assert "private.pem" in portal_mounts
     for name in ("music", "music-worker", "media"):
-        mounts = "\n".join(COMPOSE["services"][name].get("volumes", COMPOSE["x-music-service"]["volumes"]))
+        mounts = "\n".join(
+            str(mount)
+            for mount in COMPOSE["services"][name].get(
+                "volumes", COMPOSE["x-music-service"]["volumes"]
+            )
+        )
         assert "public.json" in mounts and "private.pem" not in mounts
+
+
+def test_volume_initializer_prevents_concurrent_music_config_copy_up_race():
+    initializer = COMPOSE["services"]["volume-init"]
+    command = " ".join(initializer["command"])
+    assert "mkdir -p /music-config/cache" in command
+    assert "/music-staging/.upload-tmp" in command
+    config_mount = next(
+        mount for mount in COMPOSE["x-music-service"]["volumes"]
+        if isinstance(mount, dict) and mount.get("target") == "/config"
+    )
+    assert config_mount == {
+        "type": "volume",
+        "source": "music-config",
+        "target": "/config",
+        "volume": {"nocopy": True},
+    }
+    assert initializer["network_mode"] == "none"
+    for service_name in ("music", "music-worker"):
+        assert COMPOSE["services"][service_name]["depends_on"]["volume-init"] == {
+            "condition": "service_completed_successfully"}
+
+
+def test_smoke_runner_waits_for_deferred_modules_and_restart_recovery():
+    smoke = (ROOT / "scripts" / "smoke_integration_stack.py").read_text(encoding="utf-8")
+    initial = smoke.split("# One Portal session enters both real modules", 1)[0]
+    assert 'wait_for(admin, base + "/music/")' in initial
+    assert 'wait_for(admin, base + "/media/")' in initial
+
+    restarted = smoke.split(
+        'compose(env_path, "restart", "portal", "music", "music-worker", "media")', 1
+    )[1]
+    assert 'wait_for(admin, base + "/music/")' in restarted
+    assert 'wait_for(admin, base + "/media/api/requests")' in restarted
+    assert 'assert request(admin, base + "/media/api/requests").status == 200' not in restarted
 
 
 def test_generated_runtime_state_is_ignored_and_production_compose_is_not_overridden():

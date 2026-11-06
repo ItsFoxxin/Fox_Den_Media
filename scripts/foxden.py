@@ -9,6 +9,7 @@ import secrets
 import subprocess
 import sys
 import re
+import tempfile
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -35,6 +36,25 @@ MEDIA_SECRET_FILES = ("media-app-token", "qbit-password")
 
 class ConfigError(RuntimeError):
     pass
+
+
+def _write_private_text(path: Path, value: str, *, exclusive: bool = False) -> None:
+    """Create a private text file without a world-readable creation window."""
+    flags = os.O_WRONLY | os.O_CREAT | (os.O_EXCL if exclusive else os.O_TRUNC)
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    descriptor = os.open(path, flags, 0o600)
+    try:
+        if hasattr(os, "fchmod"):
+            os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8", closefd=True) as handle:
+            descriptor = -1
+            handle.write(value)
+            handle.flush()
+            os.fsync(handle.fileno())
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
 
 
 def load_env(path: Path) -> dict[str, str]:
@@ -145,10 +165,11 @@ def validate(mode: str, values: dict[str, str], *, browser: bool = False, jellyf
         all_paths += _paths(values, MANAGED_PATHS, create=create_paths)
         for key in ("WIREGUARD_ADDRESSES", "WIREGUARD_PUBLIC_KEY", "WIREGUARD_ENDPOINT_IP"):
             _required(values, key)
+        small_check = values.get("GLUETUN_HEALTH_SMALL_CHECK_TYPE", "dns").strip().lower()
+        if small_check not in {"dns", "icmp"}:
+            raise ConfigError("GLUETUN_HEALTH_SMALL_CHECK_TYPE must be dns or icmp.")
         if values.get("HEALTH_SMALL_CHECK_TYPE", "").strip():
-            raise ConfigError(
-                "HEALTH_SMALL_CHECK_TYPE is not accepted by the reviewed Gluetun v3.41.1 migration baseline; "
-                "validate a newer pinned image in isolation before using that option.")
+            raise ConfigError("Use GLUETUN_HEALTH_SMALL_CHECK_TYPE for managed Compose, not HEALTH_SMALL_CHECK_TYPE.")
     elif "media" in definition["modules"]:
         _url(values, "QBIT_URL")
     if jellyfin:
@@ -232,8 +253,11 @@ def initialize(values: dict[str, str], *, create_paths: bool) -> None:
     for name in ("portal-secret", "portal-bootstrap", "ingress-auth", "music-csrf", "media-app-token"):
         target = secret_dir / name
         if not target.exists():
-            target.write_text(secrets.token_urlsafe(48), encoding="utf-8")
-            os.chmod(target, 0o600)
+            try:
+                _write_private_text(target, secrets.token_urlsafe(48), exclusive=True)
+            except FileExistsError:
+                # Another initializer won the exclusive-create race. Preserve it.
+                pass
     sys.path.insert(0, str(ROOT / "apps" / "portal" / "src"))
     from foxden_identity import generate_key_files
     private = secret_dir / "identity-private.pem"
@@ -243,6 +267,8 @@ def initialize(values: dict[str, str], *, create_paths: bool) -> None:
     if not private.exists():
         generate_key_files(private, public, kid=values.get("PORTAL_IDENTITY_SIGNING_KID", "foxden-portal-1"))
         os.chmod(private, 0o600)
+        # This is a public verification key by design. It contains no private
+        # signing material and must be readable by independently running modules.
         os.chmod(public, 0o644)
     for optional in ("qbit-password", "wireguard-private-key", "jellyfin-api-key", "oidc-client-secret"):
         target = secret_dir / optional
@@ -282,10 +308,21 @@ def render_gateway(values: dict[str, str]) -> Path:
         raise ConfigError("Gateway template did not render the Jellyfin hostname.")
     runtime_dir.mkdir(parents=True, exist_ok=True)
     target = runtime_dir / "nginx.conf"
-    temporary = runtime_dir / ".nginx.conf.tmp"
-    temporary.write_text(rendered, encoding="utf-8")
-    os.chmod(temporary, 0o600)
-    temporary.replace(target)
+    descriptor, temporary_name = tempfile.mkstemp(prefix=".nginx.conf.", dir=runtime_dir, text=True)
+    temporary = Path(temporary_name)
+    try:
+        if hasattr(os, "fchmod"):
+            os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8", closefd=True) as handle:
+            descriptor = -1
+            handle.write(rendered)
+            handle.flush()
+            os.fsync(handle.fileno())
+        temporary.replace(target)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        temporary.unlink(missing_ok=True)
     return target
 
 

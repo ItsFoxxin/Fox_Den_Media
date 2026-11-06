@@ -11,15 +11,29 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import NoReturn, Sequence
+from urllib.parse import urlsplit
 
 
-DEFAULT_HEARTBEAT_PATH = Path("/tmp/foxden-music-worker-heartbeat.json")
+# This fixed path lives in the container's private tmpfs and is atomically replaced.
+DEFAULT_HEARTBEAT_PATH = Path("/tmp/foxden-music-worker-heartbeat.json")  # nosec B108
 MAX_SECRET_BYTES = 64 * 1024
 SUPPORTED_FILE_SECRETS = ("CSRF_SECRET", "JELLYFIN_API_KEY")
 
 
 class HealthcheckError(RuntimeError):
     """A concise, non-sensitive health or runtime configuration failure."""
+
+
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Reject redirects so a local health response cannot trigger outbound I/O."""
+
+    def redirect_request(self, request, file_pointer, code, message, headers, new_url):
+        return None
+
+
+def _local_health_opener() -> urllib.request.OpenerDirector:
+    # An explicit empty proxy map prevents urllib from loading HTTP(S)_PROXY.
+    return urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirectHandler())
 
 
 def _heartbeat_path() -> Path:
@@ -83,9 +97,15 @@ def check_worker_heartbeat() -> None:
 
 def check_web() -> None:
     url = os.environ.get("HEALTHCHECK_WEB_URL", "http://127.0.0.1:8000/health")
+    parsed = urlsplit(url)
+    if (parsed.scheme != "http" or parsed.hostname not in {"127.0.0.1", "localhost", "::1"}
+            or parsed.username or parsed.password or parsed.fragment):
+        raise HealthcheckError("HEALTHCHECK_WEB_URL must be a local HTTP URL")
     request = urllib.request.Request(url, headers={"User-Agent": "FoxDenMusic-Healthcheck/1"})
     try:
-        with urllib.request.urlopen(request, timeout=3) as response:
+        # The destination is local, redirects are rejected, and environment
+        # proxies are disabled by the dedicated opener.
+        with _local_health_opener().open(request, timeout=3) as response:  # nosec B310
             if response.status != 200:
                 raise HealthcheckError(f"web health endpoint returned HTTP {response.status}")
             response.read(4096)
@@ -121,6 +141,9 @@ def import_file_secrets() -> None:
         secret = _read_secret(Path(file_value), variable)
         if secret:
             os.environ[variable] = secret
+            # Do not pass both VALUE and VALUE_FILE into Pydantic after importing.
+            # Preserve explicitly supplied conflicting settings so validation can reject them.
+            os.environ.pop(f"{variable}_FILE", None)
 
 
 def _apply_umask() -> None:

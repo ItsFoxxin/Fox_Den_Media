@@ -2,13 +2,19 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 import re
 
 import httpx
 
 
 ITEM_ID = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+STATIC_API_PATHS = frozenset({
+    "/Items", "/Sessions/Logout", "/UserItems/Resume", "/Users/AuthenticateByName",
+    "/Users/Me", "/UserViews",
+})
+DYNAMIC_API_PATH = re.compile(r"^/Items/[A-Za-z0-9_-]{1,128}(?:/Images/Primary)?$")
+HTTP_METHODS = frozenset({"GET", "POST"})
 
 
 class JellyfinError(RuntimeError):
@@ -45,6 +51,10 @@ class JellyfinAdapter:
 
     def __init__(self, base_url: str, public_url: str, timeout: float = 4.0,
                  transport: httpx.AsyncBaseTransport | None = None):
+        parsed = urlsplit(base_url)
+        if (parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password
+                or parsed.query or parsed.fragment):
+            raise JellyfinInputError("The configured Jellyfin service URL is invalid.")
         self.base_url = base_url.rstrip("/")
         self.public_url = public_url.rstrip("/")
         self.timeout = timeout
@@ -54,7 +64,7 @@ class JellyfinAdapter:
     def authorization(device_id: str, token: str | None = None) -> str:
         values = [
             'Client="Fox Den Media"', 'Device="Portal"',
-            f'DeviceId="{device_id}"', 'Version="0.9.0"',
+            f'DeviceId="{device_id}"', 'Version="0.9.1"',
         ]
         if token:
             values.append(f'Token="{token}"')
@@ -222,13 +232,14 @@ class JellyfinAdapter:
 
     async def _request(self, method: str, path: str, *, session: JellyfinSession | None = None,
                        device_id: str | None = None, allow_auth_failure: bool = False, **kwargs) -> httpx.Response:
+        method, request_url = self._validated_request_target(method, path)
         active_device = session.device_id if session else (device_id or "foxden-portal")
         headers = {"Authorization": self.authorization(active_device, session.access_token if session else None),
                    "Accept": "application/json"}
         try:
-            async with httpx.AsyncClient(base_url=self.base_url, timeout=self.timeout,
-                                         follow_redirects=False, transport=self.transport) as client:
-                response = await client.request(method, path, headers=headers, **kwargs)
+            async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=False,
+                                         transport=self.transport, trust_env=False) as client:
+                response = await client.request(method, request_url, headers=headers, **kwargs)
         except httpx.RequestError:
             raise JellyfinUnavailable("Jellyfin is currently unavailable.") from None
         if response.status_code in {401, 403}:
@@ -243,6 +254,18 @@ class JellyfinAdapter:
         if len(response.content) > maximum:
             raise JellyfinError("Jellyfin returned a response larger than the allowed limit.")
         return response
+
+    def _validated_request_target(self, method: str, path: str) -> tuple[str, str]:
+        method = method.upper()
+        if method not in HTTP_METHODS:
+            raise JellyfinInputError("That Jellyfin request method is not supported.")
+        if path not in STATIC_API_PATHS and not DYNAMIC_API_PATH.fullmatch(path):
+            raise JellyfinInputError("That Jellyfin API path is not supported.")
+        # Build from the operator-controlled base and a strictly allowlisted
+        # relative API path. A caller cannot replace the configured origin with
+        # an absolute or scheme-relative URL.
+        request_url = self.base_url + path
+        return method, request_url
 
     @staticmethod
     def _json(response: httpx.Response) -> Any:

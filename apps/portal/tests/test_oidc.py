@@ -82,6 +82,21 @@ def test_oidc_provider_unavailable_does_not_break_local_login(tmp_path):
         assert client.get("/").status_code == 200
 
 
+def test_oidc_start_failure_does_not_expose_provider_exception_details(tmp_path):
+    class LeakyOIDC(FakeOIDC):
+        async def begin(self, return_to="/"):
+            raise OIDCUnavailable("internal-idp:9443 failed with client_secret=never-expose")
+
+    configured = settings(tmp_path, auth_mode="hybrid")
+    with TestClient(create_app(configured, oidc_client=LeakyOIDC())) as client:
+        bootstrap_admin(client)
+        response = client.get("/auth/oidc/login")
+        assert response.status_code == 503
+        assert "identity provider is currently unavailable" in response.text
+        assert "internal-idp" not in response.text
+        assert "client_secret" not in response.text
+
+
 def test_unauthorized_group_is_rejected(tmp_path):
     configured = settings(tmp_path, auth_mode="hybrid")
     with TestClient(create_app(configured, oidc_client=FakeOIDC("unauthorized"))) as client:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -125,11 +126,22 @@ def test_service_specific_numeric_ids_are_independent_and_validated(tmp_path: Pa
         foxden.validate("full-managed", values)
 
 
-def test_unreviewed_gluetun_small_check_override_is_rejected(tmp_path: Path) -> None:
+def test_gluetun_dns_small_check_is_supported_on_3411(tmp_path: Path) -> None:
     values = configured(tmp_path, "full-managed")
     values["GLUETUN_IMAGE"] = "qmcgaw/gluetun:v3.41.1"
+    values["GLUETUN_HEALTH_SMALL_CHECK_TYPE"] = "dns"
+    foxden.validate("full-managed", values)
+    values["GLUETUN_HEALTH_SMALL_CHECK_TYPE"] = "icmp"
+    foxden.validate("full-managed", values)
+    values["GLUETUN_HEALTH_SMALL_CHECK_TYPE"] = "tcp"
+    with pytest.raises(foxden.ConfigError, match="must be dns or icmp"):
+        foxden.validate("full-managed", values)
+
+
+def test_unprefixed_gluetun_small_check_is_rejected(tmp_path: Path) -> None:
+    values = configured(tmp_path, "full-managed")
     values["HEALTH_SMALL_CHECK_TYPE"] = "dns"
-    with pytest.raises(foxden.ConfigError, match="not accepted"):
+    with pytest.raises(foxden.ConfigError, match="Use GLUETUN_HEALTH_SMALL_CHECK_TYPE"):
         foxden.validate("full-managed", values)
 
 
@@ -202,6 +214,8 @@ def test_gateway_render_keeps_secret_out_of_return_value(tmp_path: Path) -> None
     assert target.name == "nginx.conf"
     assert secret in target.read_text(encoding="utf-8")
     assert secret not in str(target)
+    if os.name != "nt":
+        assert target.stat().st_mode & 0o077 == 0
 
 
 def test_initialization_generates_identity_and_does_not_overwrite_secrets(tmp_path: Path) -> None:
@@ -215,6 +229,9 @@ def test_initialization_generates_identity_and_does_not_overwrite_secrets(tmp_pa
     assert (secret_dir / "portal-secret").read_text(encoding="utf-8") == original
     assert "BEGIN PRIVATE KEY" in (secret_dir / "identity-private.pem").read_text(encoding="utf-8")
     assert json.loads((secret_dir / "identity-public.json").read_text(encoding="utf-8"))["keys"][0]["kty"] == "OKP"
+    if os.name != "nt":
+        for name in ("portal-secret", "portal-bootstrap", "ingress-auth", "music-csrf", "media-app-token"):
+            assert (secret_dir / name).stat().st_mode & 0o077 == 0
 
 
 def test_managed_compose_forces_qbittorrent_through_gluetun() -> None:
@@ -228,7 +245,7 @@ def test_managed_compose_forces_qbittorrent_through_gluetun() -> None:
     assert "outbound: {}" in compose
     gluetun = compose.split("  gluetun:", 1)[1].split("  qbittorrent:", 1)[0]
     assert "networks: [platform, outbound]" in gluetun
-    assert "HEALTH_SMALL_CHECK_TYPE" not in gluetun
+    assert 'HEALTH_SMALL_CHECK_TYPE: "${GLUETUN_HEALTH_SMALL_CHECK_TYPE:-dns}"' in gluetun
     assert 'HEALTH_TARGET_ADDRESSES: "${GLUETUN_HEALTH_TARGET_ADDRESSES' in gluetun
 
 
@@ -238,3 +255,52 @@ def test_compose_supports_distinct_service_identities() -> None:
     assert 'user: "${MEDIA_PUID:-10001}:${MEDIA_PGID:-10001}"' in compose
     assert 'PUID: "${QBIT_PUID:-10001}"' in compose
     assert 'PGID: "${QBIT_PGID:-10001}"' in compose
+
+
+
+def test_deployment_tmpfs_entries_are_single_mount_specifications() -> None:
+    import yaml
+
+    compose = yaml.safe_load((ROOT / "deploy" / "compose.yaml").read_text(encoding="utf-8"))
+    targets = (
+        (compose["x-hardening"], 256),
+        (compose["services"]["ingress"], 64),
+        (compose["services"]["jellyfin"], 512),
+    )
+    for service, size in targets:
+        entries = service["tmpfs"]
+        assert len(entries) == 1
+        assert entries[0].startswith("/tmp:rw,")
+        assert f"size={size}m" in entries[0]
+        assert "mode=1777" in entries[0]
+
+
+def test_media_dockerfile_normalizes_nas_source_file_permissions() -> None:
+    dockerfile = (ROOT / "apps" / "media" / "Dockerfile").read_text(encoding="utf-8")
+    assert dockerfile.index("COPY apps/media/VERSION ./VERSION") < dockerfile.index("RUN chmod -R a+rX /app")
+    assert dockerfile.index("RUN chmod -R a+rX /app") < dockerfile.index("USER foxden:foxden")
+
+
+def test_movies_tv_ci_uses_existing_ffmpeg_or_bounded_package_install() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "monorepo.yml").read_text(encoding="utf-8")
+    applications = workflow.split("  applications:", 1)[1].split("\n  audit:", 1)[0]
+    assert "command -v ffmpeg" in applications
+    assert "command -v ffprobe" in applications
+    assert "timeout 300s" in applications
+    assert "Acquire::Retries=3" in applications
+    assert "DPkg::Lock::Timeout=60" in applications
+    assert "sudo apt-get update && sudo apt-get install -y ffmpeg" not in applications
+
+
+def test_qbittorrent_s6_init_compatible_with_vpn_kill_switch() -> None:
+    import yaml
+
+    compose = yaml.safe_load((ROOT / "deploy" / "compose.yaml").read_text(encoding="utf-8"))
+    qbit = compose["services"]["qbittorrent"]
+    vpn = compose["services"]["gluetun"]
+    assert qbit["network_mode"] == "service:gluetun"
+    assert qbit["depends_on"]["gluetun"]["condition"] == "service_healthy"
+    assert "security_opt" not in qbit  # s6 privilege drop requires no_new_privileges to be unset
+    assert "ports" not in qbit
+    assert "NET_ADMIN" in vpn["cap_add"]
+    assert vpn["environment"]["FIREWALL"] == "on"

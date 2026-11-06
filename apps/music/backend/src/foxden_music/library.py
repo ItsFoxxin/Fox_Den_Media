@@ -115,6 +115,25 @@ def _fsync_file(handle: BinaryIO) -> None:
     os.fsync(handle.fileno())
 
 
+def _open_prepared_source(path: Path) -> BinaryIO:
+    """Open a prepared track without following a last-component symlink."""
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+        opened = os.fstat(descriptor)
+        named = os.lstat(path)
+        reparse = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+        if (not stat.S_ISREG(opened.st_mode) or not stat.S_ISREG(named.st_mode)
+                or getattr(named, "st_file_attributes", 0) & reparse
+                or not os.path.samestat(opened, named)):
+            raise LibraryImportError("A prepared audio source was missing or unsafe")
+        return os.fdopen(descriptor, "rb")
+    except BaseException:
+        if "descriptor" in locals():
+            os.close(descriptor)
+        raise
+
+
 def _chmod_regular_file_if_supported(path: Path, mode: int) -> None:
     """Apply a private mode unless the mounted filesystem lacks chmod.
 
@@ -280,15 +299,16 @@ def prepare_album(
         if collision_key in used_paths:
             raise LibraryImportError("Two tracks resolved to the same final filename")
         used_paths.add(collision_key)
-        if not item.source_path.is_file() or item.source_path.is_symlink():
-            raise LibraryImportError("A prepared audio source was missing or unsafe")
         destination = album_root / relative
         if not _is_within(album_root, destination):
             raise LibraryImportError("Generated track destination escaped the album build directory")
         destination.parent.mkdir(mode=0o750, parents=True, exist_ok=True)
-        with item.source_path.open("rb") as source, destination.open("xb") as output:
-            shutil.copyfileobj(source, output, length=1024 * 1024)
-            _fsync_file(output)
+        try:
+            with _open_prepared_source(item.source_path) as source, destination.open("xb") as output:
+                shutil.copyfileobj(source, output, length=1024 * 1024)
+                _fsync_file(output)
+        except (OSError, LibraryImportError) as exc:
+            raise LibraryImportError("A prepared audio source was missing or unsafe") from exc
         _chmod_regular_file_if_supported(destination, 0o640)
         if sha256_file(destination) != item.final_sha256:
             raise LibraryImportError("Prepared track changed while the album was assembled")

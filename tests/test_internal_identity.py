@@ -39,6 +39,14 @@ def test_module_accepts_correct_user_and_rejects_cross_module_replay_and_forgery
         assertion = token(signer, roles=["admin"])
         response = client.get("/api/status", headers={"X-FoxDen-Identity": assertion})
         assert response.status_code == 200
+        assert response.json()["staging"] == str(configured.staging)
+        restricted_status = client.get("/api/status", headers={
+            "X-FoxDen-Identity": token(signer)})
+        assert restricted_status.status_code == 200
+        assert "staging" not in restricted_status.json()
+        assert "media" not in restricted_status.json()
+        assert "qbit_download_root" not in restricted_status.json()
+        assert "qbit_public_url" not in restricted_status.json()
         restricted_session = client.post("/api/session", headers={
             "X-FoxDen-Identity": token(signer), "Origin": "https://media.example",
         })

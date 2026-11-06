@@ -260,10 +260,10 @@ def create_app(settings: Settings | None = None, module_client: ModuleClient | N
             raise HTTPException(404)
         try:
             target = await app.state.oidc.begin("/")
-        except OIDCUnavailable as exc:
-            return render_error_without_request(templates, str(exc), 503)
-        except OIDCError as exc:
-            return render_error_without_request(templates, str(exc), 400)
+        except OIDCUnavailable:
+            return render_error_without_request(templates, 503)
+        except OIDCError:
+            return render_error_without_request(templates, 400)
         return RedirectResponse(target, status_code=302)
 
     @app.get("/auth/oidc/callback")
@@ -595,8 +595,10 @@ def secrets_equal(left: str, right: str) -> bool:
     return secrets.compare_digest(left.encode(), right.encode())
 
 
-def render_error_without_request(_templates, message: str, status_code: int):
+def render_error_without_request(_templates, status_code: int):
     # OIDC begin has no request-specific data; keep failure output minimal and safe.
+    message = ("The identity provider is currently unavailable."
+               if status_code == 503 else "External login could not be started.")
     return HTMLResponse(f"<!doctype html><title>Fox Den Media</title><h1>Login unavailable</h1><p>{html_escape(message)}</p>",
                         status_code=status_code)
 
@@ -608,5 +610,6 @@ def html_escape(value: str) -> str:
 
 def run() -> None:
     import uvicorn
-    uvicorn.run("foxden_portal.app:create_app", factory=True, host="0.0.0.0", port=8020,
+    # Container listener; Compose publishes only ingress and keeps this port private.
+    uvicorn.run("foxden_portal.app:create_app", factory=True, host="0.0.0.0", port=8020,  # nosec B104
                 workers=1, proxy_headers=False)

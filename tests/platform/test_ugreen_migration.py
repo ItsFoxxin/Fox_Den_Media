@@ -46,7 +46,7 @@ def test_managed_networking_has_no_qbittorrent_bypass() -> None:
     assert "ports" not in qbit and "networks" not in qbit
     assert qbit["depends_on"]["gluetun"]["condition"] == "service_healthy"
     assert gluetun["environment"]["FIREWALL"] == "on"
-    assert "HEALTH_SMALL_CHECK_TYPE" not in gluetun["environment"]
+    assert gluetun["environment"]["HEALTH_SMALL_CHECK_TYPE"] == "${GLUETUN_HEALTH_SMALL_CHECK_TYPE:-dns}"
 
 
 def test_compatibility_report_records_verified_production_paths() -> None:
