@@ -5,7 +5,7 @@ import re
 import uuid
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 import httpx
 from sqlalchemy import select, update
@@ -38,6 +38,7 @@ class RequestReference:
     identifier: str
     artist: str | None = None
     title: str | None = None
+    selected_release_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,7 +97,19 @@ def parse_request_reference(
         if host == "musicbrainz.org" and len(parts) == 2 and parts[0] in {"recording", "release"}:
             identifier = str(uuid.UUID(parts[1]))
             kind = AcquisitionSourceType.RECORDING if parts[0] == "recording" else AcquisitionSourceType.RELEASE
-            return RequestReference(kind, f"https://musicbrainz.org/{parts[0]}/{identifier}", identifier)
+            selected_release_id = None
+            if parsed.query:
+                parameters = parse_qs(parsed.query, keep_blank_values=True)
+                if parts[0] != "recording" or set(parameters) != {"release"} or len(parameters["release"]) != 1:
+                    raise ValueError("Only a single release selector is supported for MusicBrainz recordings")
+                try:
+                    selected_release_id = str(uuid.UUID(parameters["release"][0]))
+                except ValueError as exc:
+                    raise ValueError("The selected MusicBrainz release identifier is invalid") from exc
+            canonical = f"https://musicbrainz.org/{parts[0]}/{identifier}"
+            if selected_release_id:
+                canonical += f"?release={selected_release_id}"
+            return RequestReference(kind, canonical, identifier, selected_release_id=selected_release_id)
         raise ValueError("Use a Spotify track/album/playlist or MusicBrainz recording/release link")
 
     normalized_type = request_type.strip().upper()
@@ -293,7 +306,8 @@ def _score(value: Any) -> float:
 
 
 def _recording_result(
-    recording: Mapping[str, Any], mb: MusicBrainzClient, preferred: str, reason: str
+    recording: Mapping[str, Any], mb: MusicBrainzClient, preferred: str, reason: str,
+    *, selected_release_id: str | None = None,
 ) -> ResolutionResult:
     release_ids = list(
         dict.fromkeys(
@@ -302,6 +316,8 @@ def _recording_result(
             if isinstance(item, Mapping) and item.get("id")
         )
     )
+    if selected_release_id and selected_release_id not in release_ids:
+        raise RequestResolutionError("Selected release does not belong to this MusicBrainz recording")
     if not release_ids:
         reasons = (reason, "Recording has no attached release edition")
         manifest = {
@@ -324,12 +340,14 @@ def _recording_result(
             "resolution": {"confidence": 80.0, "reasons": list(reasons)},
         }
         return ResolutionResult(manifest, 80.0, reasons, True, "Choose an exact release edition")
-    ambiguous = len(release_ids) > 1
+    ambiguous = selected_release_id is None and len(release_ids) > 1
     reasons = (reason,) + ((f"Recording appears on {len(release_ids)} editions",) if ambiguous else ())
-    confidence = 88.0 if ambiguous else 98.0
+    if selected_release_id:
+        reasons += ("Exact recording and release selected by user",)
+    confidence = 100.0 if selected_release_id else (88.0 if ambiguous else 98.0)
     manifest, unique_match = recording_manifest(
         recording,
-        mb.lookup_release(release_ids[0]),
+        mb.lookup_release(selected_release_id or release_ids[0]),
         preferred,
         confidence=confidence,
         reasons=reasons,
@@ -360,7 +378,11 @@ def resolve_reference(
         reasons = ("Exact MusicBrainz release link",)
         return ResolutionResult(release_manifest(mb.lookup_release(reference.identifier), preferred, confidence=100.0, reasons=reasons), 100.0, reasons)
     if reference.source_type is AcquisitionSourceType.RECORDING and reference.canonical_input.startswith("https://"):
-        return _recording_result(mb.lookup_recording(reference.identifier), mb, preferred, "Exact MusicBrainz recording link")
+        return _recording_result(
+            mb.lookup_recording(reference.identifier), mb, preferred,
+            "Exact MusicBrainz recording link",
+            selected_release_id=reference.selected_release_id,
+        )
     if reference.source_type is AcquisitionSourceType.ARTIST:
         rows = mb.search_artists(reference.artist or reference.identifier)
         confidence = _score(rows[0].get("score")) if rows else 0.0
