@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -58,6 +59,10 @@ class FakeMB:
             "releases": [{"id": RELEASE_ID, "title": "Den Songs", "date": "2024-10-15"}],
         }]
 
+    def search_releases(self, hints, *, limit=8):
+        assert hints.album == "Den Songs"
+        return [SimpleNamespace(score=93.0, payload=release_payload(), disambiguation=None)]
+
     def search_artists(self, name, *, limit=10):
         return [{"id": OTHER_RELEASE, "name": "Fox Artist", "score": 99}]
 
@@ -99,6 +104,18 @@ def test_song_search_returns_edition_bound_selection():
     )
 
 
+def test_album_title_search_does_not_require_an_artist_or_url():
+    matches = search_music(FakeMB(), mode="ALBUM", query="Den Songs")
+    assert len(matches) == 1
+    result = matches[0]
+    assert result["kind"] == "release"
+    assert result["artist"] == "Fox Artist"
+    assert result["track_count"] == 1
+    assert result["score"] == 93.0
+    assert result["ambiguous"]
+    assert result["reference"] == f"https://musicbrainz.org/release/{RELEASE_ID}"
+
+
 def test_artist_search_can_browse_releases():
     artists = search_music(FakeMB(), mode="ARTIST", query="Fox Artist")
     assert artists[0]["kind"] == "artist"
@@ -132,6 +149,20 @@ def test_selected_edition_is_validated_before_resolution(settings):
     )
     with pytest.raises(RequestResolutionError, match="does not belong"):
         resolve_reference(wrong, settings, FakeMB())
+
+
+def test_selected_edition_requires_exactly_one_matching_recording(settings):
+    class DuplicateRelease(FakeMB):
+        def lookup_release(self, release_id):
+            payload = release_payload()
+            payload["media"][0]["tracks"].append(dict(payload["media"][0]["tracks"][0]))
+            return payload
+
+    exact = parse_request_reference(
+        f"https://musicbrainz.org/recording/{RECORDING_ID}?release={RELEASE_ID}"
+    )
+    with pytest.raises(RequestResolutionError, match="exactly one instance"):
+        resolve_reference(exact, settings, DuplicateRelease())
 
 
 def test_read_only_search_and_csrf_submission(monkeypatch, settings, database):
