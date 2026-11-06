@@ -20,7 +20,28 @@ from .musicbrainz import AlbumHints, MusicBrainzClient, TrackHint
 from .providers import ProviderAdapterError, provider_adapter
 
 
-_PAIR = re.compile(r"^\s*(?P<artist>.+?)\s*(?:::|\s+-\s+)\s*(?P<title>.+?)\s*$")
+def _split_artist_title(raw: str) -> tuple[str, str] | None:
+    """Split user text in linear time without backtracking regexes."""
+    for index, char in enumerate(raw):
+        if raw.startswith("::", index):
+            if index == 0 or index + 2 >= len(raw):
+                continue
+            separator_width = 2
+        elif (
+            char == "-"
+            and 0 < index < len(raw) - 1
+            and raw[index - 1].isspace()
+            and raw[index + 1].isspace()
+        ):
+            separator_width = 1
+        else:
+            continue
+
+        return raw[:index].strip(), raw[index + separator_width:].strip()
+
+    return None
+
+
 _RISKY_EDITION_WORDS = ("live", "remaster", "deluxe", "clean", "explicit", "compilation")
 
 
@@ -80,9 +101,9 @@ def parse_request_reference(
     normalized_type = request_type.strip().upper()
     if normalized_type == "ARTIST":
         return RequestReference(AcquisitionSourceType.ARTIST, raw, raw, artist=raw)
-    pair = _PAIR.fullmatch(raw)
-    resolved_artist = (artist or (pair.group("artist") if pair else "")).strip()
-    title = (pair.group("title") if pair else raw).strip()
+    pair = _split_artist_title(raw)
+    resolved_artist = (artist or (pair[0] if pair else "")).strip()
+    title = pair[1] if pair else raw
     if normalized_type not in {"AUTO", "TRACK", "ALBUM", "RECORDING"}:
         raise ValueError("Request type must be auto, track, album, or artist")
     if not resolved_artist:

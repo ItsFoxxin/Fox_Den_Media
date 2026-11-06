@@ -107,6 +107,38 @@ def test_request_parser_accepts_names_spotify_and_musicbrainz() -> None:
 
 
 @pytest.mark.parametrize(
+    ("input_text", "expected_artist", "expected_title"),
+    [
+        ("Fox Artist::Night Run", "Fox Artist", "Night Run"),
+        ("Fox Artist :: Night Run", "Fox Artist", "Night Run"),
+        ("Fox Artist   -   Night Run", "Fox Artist", "Night Run"),
+        ("AC-DC - Thunderstruck", "AC-DC", "Thunderstruck"),
+        ("Fox Artist - Night Run - Live", "Fox Artist", "Night Run - Live"),
+    ],
+)
+def test_request_parser_splits_artist_title(
+    input_text: str, expected_artist: str, expected_title: str
+) -> None:
+    parsed = parse_request_reference(input_text)
+    assert parsed.artist == expected_artist
+    assert parsed.title == expected_title
+
+
+def test_request_parser_keeps_explicit_artist_override() -> None:
+    parsed = parse_request_reference("Fox Artist - Night Run", artist="Alternate Artist")
+    assert parsed.artist == "Alternate Artist"
+    assert parsed.title == "Night Run"
+
+
+def test_request_parser_rejects_adversarial_repeated_whitespace() -> None:
+    # Maximum accepted size; the previous backtracking regex took seconds.
+    malformed = "a" + (" " * 2_046) + "x"
+    assert len(malformed) == 2_048
+    with pytest.raises(ValueError, match="Use 'Artist - Title'"):
+        parse_request_reference(malformed)
+
+
+@pytest.mark.parametrize(
     "value",
     [
         "http://musicbrainz.org/release/" + RELEASE_ID,
