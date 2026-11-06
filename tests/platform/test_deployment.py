@@ -281,21 +281,28 @@ def test_media_dockerfile_normalizes_nas_source_file_permissions() -> None:
     assert dockerfile.index("RUN chmod -R a+rX /app") < dockerfile.index("USER foxden:foxden")
 
 
-def test_movies_tv_ci_uses_pinned_verified_ffmpeg_and_ffprobe() -> None:
+def test_music_and_media_ci_use_pinned_verified_ffmpeg_and_ffprobe() -> None:
     import re
 
     workflow = (ROOT / ".github" / "workflows" / "monorepo.yml").read_text(encoding="utf-8")
+    installer = (ROOT / "scripts" / "ci_install_ffmpeg.sh").read_text(encoding="utf-8")
+    music = workflow.split("  music:", 1)[1].split("\n  applications:", 1)[0]
     applications = workflow.split("  applications:", 1)[1].split("\n  audit:", 1)[0]
+    install_step = "run: bash scripts/ci_install_ffmpeg.sh"
+    assert install_step in music
+    assert install_step in applications
+    assert "Install verified FFmpeg and FFprobe test binaries" in music
     assert "Install verified FFmpeg and FFprobe test binaries" in applications
-    assert "FFMPEG_ARCHIVE_URL: https://github.com/BtbN/FFmpeg-Builds/releases/download/" in applications
-    assert re.search(r"FFMPEG_ARCHIVE_SHA256: [a-f0-9]{64}$", applications, re.MULTILINE)
-    assert "sha256sum --check -" in applications
-    assert "curl --fail --location --retry 2" in applications
-    assert "--connect-timeout 15 --max-time 240" in applications
-    assert 'install -m 0755 "$ffmpeg_bin" "$bin_dir/ffmpeg"' in applications
-    assert 'install -m 0755 "$ffprobe_bin" "$bin_dir/ffprobe"' in applications
-    assert '"$bin_dir" >> "$GITHUB_PATH"' in applications
-    assert "apt-get install" not in applications
+
+    assert "FFMPEG_ARCHIVE_URL='https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-" in installer
+    assert re.search(r"FFMPEG_ARCHIVE_SHA256='[a-f0-9]{64}'$", installer, re.MULTILINE)
+    assert "sha256sum --check -" in installer
+    assert "curl --fail --location --retry 2" in installer
+    assert "--connect-timeout 15 --max-time 240" in installer
+    assert 'install -m 0755 "$ffmpeg_bin" "$bin_dir/ffmpeg"' in installer
+    assert 'install -m 0755 "$ffprobe_bin" "$bin_dir/ffprobe"' in installer
+    assert '"$bin_dir" >> "$GITHUB_PATH"' in installer
+    assert "apt-get install" not in workflow
 
 
 def test_qbittorrent_s6_init_compatible_with_vpn_kill_switch() -> None:
