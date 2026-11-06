@@ -39,7 +39,12 @@ def test_application_containers_are_non_root_read_only_and_identity_is_asymmetri
     portal_mounts = "\n".join(COMPOSE["services"]["portal"]["volumes"])
     assert "private.pem" in portal_mounts
     for name in ("music", "music-worker", "media"):
-        mounts = "\n".join(COMPOSE["services"][name].get("volumes", COMPOSE["x-music-service"]["volumes"]))
+        mounts = "\n".join(
+            str(mount)
+            for mount in COMPOSE["services"][name].get(
+                "volumes", COMPOSE["x-music-service"]["volumes"]
+            )
+        )
         assert "public.json" in mounts and "private.pem" not in mounts
 
 
@@ -48,6 +53,16 @@ def test_volume_initializer_prevents_concurrent_music_config_copy_up_race():
     command = " ".join(initializer["command"])
     assert "mkdir -p /music-config/cache" in command
     assert "/music-staging/.upload-tmp" in command
+    config_mount = next(
+        mount for mount in COMPOSE["x-music-service"]["volumes"]
+        if isinstance(mount, dict) and mount.get("target") == "/config"
+    )
+    assert config_mount == {
+        "type": "volume",
+        "source": "music-config",
+        "target": "/config",
+        "volume": {"nocopy": True},
+    }
     assert initializer["network_mode"] == "none"
     for service_name in ("music", "music-worker"):
         assert COMPOSE["services"][service_name]["depends_on"]["volume-init"] == {

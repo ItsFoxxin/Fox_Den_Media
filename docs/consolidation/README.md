@@ -30,7 +30,9 @@ The four legacy changes are accounted for as follows:
   requests begin.
 - `fda2e30` is retained by creating both `/music-config/cache` and
   `/music-staging/.upload-tmp` in the single privileged volume initializer
-  before either non-root Music process starts.
+  before either non-root Music process starts. The Music config mount uses
+  `nocopy: true` so concurrent container creation cannot race Docker's automatic
+  image-to-volume copy-up before the initializer runs.
 - `af1a186` is retained by polling Music and Movies/TV after the restart rather
   than issuing a one-shot request during recovery.
 

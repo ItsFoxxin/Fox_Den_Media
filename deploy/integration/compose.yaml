@@ -32,7 +32,11 @@ x-music-service: &music-service
     - /tmp:rw,noexec,nosuid,nodev,size=128m,mode=1777
   networks: [platform]
   volumes:
-    - music-config:/config
+    - type: volume
+      source: music-config
+      target: /config
+      volume:
+        nocopy: true
     - music-staging:/staging
     - music-library:/music
     - music-downloads:/downloads
