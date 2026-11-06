@@ -79,6 +79,11 @@ def prepare(source: Path, port: int, music_commit: str = APPROVED_MUSIC_COMMIT) 
         RUNTIME / "portal-ingress.conf",
         template.replace("__PORTAL_INGRESS_AUTH_SECRET__", ingress_secret),
     )
+    # The integration ingress is deliberately non-root (101:101). Keep the
+    # rendered secret-bearing configuration at 0600 and transfer ownership
+    # before Compose creates the ingress container.
+    run("docker", "run", "--rm", "--user", "0", "-v", f"{RUNTIME.resolve()}:/keys",
+        portal_image, "chown", "101:101", "/keys/portal-ingress.conf")
     run("docker", "run", "--rm", "--user", "0", "-v", f"{RUNTIME.resolve()}:/keys",
         portal_image, "chown", "10001:10001", "/keys/private.pem", "/keys/ingress-auth")
     env = RUNTIME / "integration.env"

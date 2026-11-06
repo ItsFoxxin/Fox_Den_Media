@@ -42,3 +42,9 @@ def test_private_writer_refuses_symlink_target(tmp_path: Path) -> None:
     with pytest.raises(OSError):
         module.write_private_text(link, "replacement")
     assert destination.read_text(encoding="utf-8") == "preserve"
+
+
+def test_integration_runner_assigns_private_nginx_config_to_non_root_ingress() -> None:
+    runner = (ROOT / "scripts/integration_stack.py").read_text(encoding="utf-8")
+    assert 'portal_image, "chown", "101:101", "/keys/portal-ingress.conf"' in runner
+    assert 'user: "101:101"' in (ROOT / "deploy/integration/compose.yaml").read_text(encoding="utf-8")
