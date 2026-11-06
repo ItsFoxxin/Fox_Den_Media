@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 import subprocess
 
 import pytest
@@ -104,6 +105,35 @@ def test_request_parser_accepts_names_spotify_and_musicbrainz() -> None:
     release = parse_request_reference(f"https://musicbrainz.org/release/{RELEASE_ID}")
     assert release.source_type is AcquisitionSourceType.RELEASE
     assert release.identifier == RELEASE_ID
+
+
+@pytest.mark.parametrize(
+    ("value", "artist", "title"),
+    [
+        ("Fox Artist - Night Run", "Fox Artist", "Night Run"),
+        ("Fox Artist   -   Night Run", "Fox Artist", "Night Run"),
+        ("Fox Artist::Night Run", "Fox Artist", "Night Run"),
+        ("Fox Artist   ::   Night Run", "Fox Artist", "Night Run"),
+    ],
+)
+def test_request_parser_preserves_supported_name_separators(
+    value: str, artist: str, title: str
+) -> None:
+    reference = parse_request_reference(value)
+    assert reference.artist == artist
+    assert reference.title == title
+
+
+def test_request_parser_handles_pathological_whitespace_in_linear_time() -> None:
+    value = "a" + (" " * 2_046) + "b"
+
+    started = time.perf_counter()
+    for _ in range(5):
+        with pytest.raises(ValueError, match="Artist - Title"):
+            parse_request_reference(value)
+    elapsed = time.perf_counter() - started
+
+    assert elapsed < 0.5
 
 
 @pytest.mark.parametrize(
