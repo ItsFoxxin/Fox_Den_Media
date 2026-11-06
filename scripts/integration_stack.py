@@ -16,6 +16,22 @@ COMPOSE = ROOT / "deploy" / "integration" / "compose.yaml"
 APPROVED_MUSIC_COMMIT = "85904c45a79421cd4a1e00378c231bb08c1a03fc"
 
 
+def write_private_text(path: Path, value: str) -> None:
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    descriptor = os.open(path, flags, 0o600)
+    try:
+        if hasattr(os, "fchmod"):
+            os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8", closefd=True) as handle:
+            descriptor = -1
+            handle.write(value)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+
 def run(*args: str, cwd: Path = ROOT, capture: bool = False) -> str:
     result = subprocess.run(args, cwd=cwd, check=True, text=True,
                             stdout=subprocess.PIPE if capture else None)
@@ -57,10 +73,12 @@ def prepare(source: Path, port: int, music_commit: str = APPROVED_MUSIC_COMMIT) 
         portal_image, "foxden-identity-keygen", "--private", "/keys/private.pem",
         "--public", "/keys/public.json", "--kid", "integration-1")
     ingress_secret = secrets.token_urlsafe(48)
-    (RUNTIME / "ingress-auth").write_text(ingress_secret, encoding="utf-8")
+    write_private_text(RUNTIME / "ingress-auth", ingress_secret)
     template = (ROOT / "infra" / "gateway" / "portal-ingress.conf").read_text(encoding="utf-8")
-    (RUNTIME / "portal-ingress.conf").write_text(
-        template.replace("__PORTAL_INGRESS_AUTH_SECRET__", ingress_secret), encoding="utf-8")
+    write_private_text(
+        RUNTIME / "portal-ingress.conf",
+        template.replace("__PORTAL_INGRESS_AUTH_SECRET__", ingress_secret),
+    )
     run("docker", "run", "--rm", "--user", "0", "-v", f"{RUNTIME.resolve()}:/keys",
         portal_image, "chown", "10001:10001", "/keys/private.pem", "/keys/ingress-auth")
     env = RUNTIME / "integration.env"
@@ -73,9 +91,7 @@ def prepare(source: Path, port: int, music_commit: str = APPROVED_MUSIC_COMMIT) 
         "INTEGRATION_CSRF_SECRET": secrets.token_urlsafe(48),
         "INTEGRATION_MEDIA_TOKEN": secrets.token_urlsafe(48),
     }
-    env.write_text("".join(f"{key}={value}\n" for key, value in values.items()), encoding="utf-8")
-    if os.name != "nt":
-        env.chmod(0o600)
+    write_private_text(env, "".join(f"{key}={value}\n" for key, value in values.items()))
     print(f"Disposable stack prepared at http://127.0.0.1:{port}")
     print(f"Bootstrap secret is stored in ignored runtime file: {env}")
     return env

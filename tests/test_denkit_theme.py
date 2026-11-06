@@ -77,3 +77,9 @@ def test_jellyfin_theme_is_isolated_and_mascot_is_packaged() -> None:
     assert "@import url('/foxden-theme.css')" in css
     assert "prefers-reduced-motion" in css
     assert mascot.is_file() and mascot.stat().st_size > 100_000
+
+
+def test_media_navigation_uses_explicit_renderer_dispatch() -> None:
+    script = (ROOT / "apps/media/app/static/app.js").read_text(encoding="utf-8")
+    assert "switch(tab)" in script
+    assert "}[tab])()" not in script

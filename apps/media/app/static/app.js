@@ -119,7 +119,17 @@ function render(){
   $("demo-banner").hidden=!state.status.demo;
   const url=state.status.qbit_public_url;$("open-qbit").hidden=!url;if(url)$("open-qbit").href=url;
   $("stat-downloads").textContent=state.torrentError?"—":state.torrents.length;$("download-count").textContent=state.torrents.length;$("request-count").textContent=state.requests.filter(r=>r.status!=="complete").length;$("stat-review").textContent=ready().length;$("stat-library").textContent=state.library.length;$("stat-free").textContent=size(state.status.free_bytes);
-  $("content").innerHTML=({overview:torrentTable,requests:requestTable,downloads:torrentTable,staging:stagingTable,library:libraryTable,history:historyTable,settings:settingsPanel}[tab])();
+  let content;
+  switch(tab){
+    case "requests": content=requestTable(); break;
+    case "overview": case "downloads": content=torrentTable(); break;
+    case "staging": content=stagingTable(); break;
+    case "library": content=libraryTable(); break;
+    case "history": content=historyTable(); break;
+    case "settings": content=settingsPanel(); break;
+    default: content=torrentTable();
+  }
+  $("content").innerHTML=content;
   $("reviews").innerHTML=ready().length?ready().map(j=>`<div class="review-row"><div><b>${esc(label(j))}</b><p>${j.result.files.length} files · ${size(j.result.bytes)} · ${j.result.warnings.length?"Review notes included":"Validation complete"}</p></div><button class="mini" data-action="review" data-id="${j.id}">Review import →</button></div>`).join(""):empty("Nothing needs your approval yet","Validate a completed download to preview the files before import.","✓");
 }
 function openReview(id){

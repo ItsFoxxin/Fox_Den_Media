@@ -1,4 +1,5 @@
 import os
+from html.parser import HTMLParser
 from pathlib import Path
 import shutil
 import subprocess
@@ -13,6 +14,20 @@ from app.files import audit, contained, digest, import_files, relative_parts, va
 from app.main import create_app
 from app.platform_summary import module_summary
 from app.worker import Worker
+
+
+class _PageAttributes(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.body_home = None
+        self.frame_home = None
+
+    def handle_starttag(self, tag, attrs):
+        attributes = dict(attrs)
+        if tag == "body":
+            self.body_home = attributes.get("data-home-url")
+        elif tag == "iframe":
+            self.frame_home = attributes.get("data-home-url")
 
 
 @pytest.fixture
@@ -411,7 +426,10 @@ def test_request_browser_handoff_is_authenticated_and_escaped(settings):
         assert '<script>alert(1)</script>' not in response.text
         assert '&lt;script&gt;alert(1)&lt;/script&gt;' in response.text
         assert 'src="/server-browser/"' in response.text
-        assert 'https://www.themoviedb.org/' in response.text
+        attributes = _PageAttributes()
+        attributes.feed(response.text)
+        assert attributes.body_home == settings.media_browser_home_url
+        assert attributes.frame_home == settings.media_browser_home_url
         assert client.get(f"/api/requests/{created['id']}",headers=headers).json()['id']==created['id']
         assert client.get('/assets/request-browser.js').status_code==200
         assert client.get('/assets/request-browser-bridge.js').status_code==200

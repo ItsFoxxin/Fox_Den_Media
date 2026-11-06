@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -213,6 +214,8 @@ def test_gateway_render_keeps_secret_out_of_return_value(tmp_path: Path) -> None
     assert target.name == "nginx.conf"
     assert secret in target.read_text(encoding="utf-8")
     assert secret not in str(target)
+    if os.name != "nt":
+        assert target.stat().st_mode & 0o077 == 0
 
 
 def test_initialization_generates_identity_and_does_not_overwrite_secrets(tmp_path: Path) -> None:
@@ -226,6 +229,9 @@ def test_initialization_generates_identity_and_does_not_overwrite_secrets(tmp_pa
     assert (secret_dir / "portal-secret").read_text(encoding="utf-8") == original
     assert "BEGIN PRIVATE KEY" in (secret_dir / "identity-private.pem").read_text(encoding="utf-8")
     assert json.loads((secret_dir / "identity-public.json").read_text(encoding="utf-8"))["keys"][0]["kty"] == "OKP"
+    if os.name != "nt":
+        for name in ("portal-secret", "portal-bootstrap", "ingress-auth", "music-csrf", "media-app-token"):
+            assert (secret_dir / name).stat().st_mode & 0o077 == 0
 
 
 def test_managed_compose_forces_qbittorrent_through_gluetun() -> None:

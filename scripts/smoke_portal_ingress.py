@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import http.cookiejar
 import json
+import os
 from pathlib import Path
 import re
 import secrets
@@ -18,6 +19,22 @@ import urllib.request
 
 ROOT = Path(__file__).resolve().parent.parent
 PORTAL_IMAGE = "fox-den-portal:ingress-smoke"
+
+
+def write_private_text(path: Path, value: str) -> None:
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    descriptor = os.open(path, flags, 0o600)
+    try:
+        if hasattr(os, "fchmod"):
+            os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8", closefd=True) as handle:
+            descriptor = -1
+            handle.write(value)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
 
 
 def run(*args: str, capture: bool = False, check: bool = True) -> str:
@@ -50,13 +67,13 @@ def main() -> None:
     ingress_secret = secrets.token_urlsafe(40)
     key_dir = Path(tempfile.mkdtemp(prefix="foxden-identity-"))
     ingress_secret_file = key_dir / "ingress-auth"
-    ingress_secret_file.write_text(ingress_secret, encoding="utf-8")
+    write_private_text(ingress_secret_file, ingress_secret)
     rendered_ingress = key_dir / "portal-ingress.conf"
-    rendered_ingress.write_text(
+    write_private_text(
+        rendered_ingress,
         (ROOT / "infra" / "gateway" / "portal-ingress.conf").read_text(encoding="utf-8").replace(
             "__PORTAL_INGRESS_AUTH_SECRET__", ingress_secret
         ),
-        encoding="utf-8",
     )
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))

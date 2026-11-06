@@ -1,4 +1,5 @@
 from dataclasses import replace
+from html.parser import HTMLParser
 
 from fastapi.testclient import TestClient
 import httpx
@@ -8,6 +9,18 @@ from foxden_portal.config import ModuleConfig
 from foxden_portal.modules import ModuleClient
 
 from conftest import bootstrap_admin, module_summary, module_transport, settings
+
+
+class _LinkCollector(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.hrefs: list[str] = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "a":
+            attributes = dict(attrs)
+            if "href" in attributes:
+                self.hrefs.append(attributes["href"])
 
 
 def configured_modules(*ids: str):
@@ -107,7 +120,9 @@ def test_general_user_sees_jellyfin_but_not_admin_modules_or_activity(tmp_path):
         client.cookies.set("foxden_portal_session", token)
         client.cookies.set("foxden_portal_csrf", token_csrf)
         page = client.get("/")
-        assert "https://jellyfin.example.invalid" in page.text
+        links = _LinkCollector()
+        links.feed(page.text)
+        assert configured.jellyfin_public_url in links.hrefs
         assert "Media access only" in page.text
         assert "state-healthy" not in page.text and "Recent activity" not in page.text
         assert client.get("/api/platform/v1/status").status_code == 403

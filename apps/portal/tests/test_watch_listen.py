@@ -4,9 +4,10 @@ import sqlite3
 
 from fastapi.testclient import TestClient
 import httpx
+import pytest
 
 from foxden_portal.app import create_app
-from foxden_portal.jellyfin import JellyfinAdapter
+from foxden_portal.jellyfin import JellyfinAdapter, JellyfinInputError
 
 from conftest import bootstrap_admin, csrf, settings
 
@@ -171,6 +172,28 @@ def test_jellyfin_outage_is_isolated_and_redacted(tmp_path):
         assert failed.status_code == 503
         assert "secret internal host detail" not in failed.text
         assert client.get("/").status_code == 200
+
+
+def test_jellyfin_adapter_rejects_origin_override_and_unsupported_methods():
+    requests: list[httpx.Request] = []
+    adapter = JellyfinAdapter("http://jellyfin.test", "https://media.example.invalid",
+                               transport=transport(requests))
+    for path in ("https://attacker.invalid/", "//attacker.invalid/", "/../admin", "/Items/not valid"):
+        with pytest.raises(JellyfinInputError):
+            adapter._validated_request_target("GET", path)
+    with pytest.raises(JellyfinInputError):
+        adapter._validated_request_target("DELETE", "/Items")
+    assert requests == []
+
+
+def test_jellyfin_adapter_rejects_credentialed_or_ambiguous_base_urls():
+    for url in (
+        "https://user:password@jellyfin.invalid",
+        "https://jellyfin.invalid/?next=https://attacker.invalid",
+        "//jellyfin.invalid",
+    ):
+        with pytest.raises(JellyfinInputError):
+            JellyfinAdapter(url, "https://media.example.invalid")
 
 
 def test_v1_database_migrates_without_losing_accounts(tmp_path):
