@@ -105,7 +105,7 @@ _MUSICBRAINZ_RELEASE_ID = re.compile(
 )
 _SECURITY_HEADERS = {
     "Content-Security-Policy": (
-        "default-src 'self'; img-src 'self' data: https://coverartarchive.org https://*.archive.org; object-src 'none'; "
+        "default-src 'self'; img-src 'self' data: https://coverartarchive.org https://archive.org https://*.archive.org; object-src 'none'; "
         "base-uri 'self'; frame-ancestors 'none'; form-action 'self'"
     ),
     "X-Content-Type-Options": "nosniff",
