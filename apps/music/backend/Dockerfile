@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-FROM python:3.12.13-slim-bookworm
+FROM python:3.15.0-slim-bookworm
 
 ARG APP_UID=10001
 ARG APP_GID=10001
