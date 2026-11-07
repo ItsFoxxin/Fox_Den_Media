@@ -2,7 +2,7 @@
 
 **Fox Den Media** is a modular, self-hosted platform that brings a Portal, Music management, Movies/TV requests and imports, and optional Jellyfin and download services behind one Nginx ingress. Each application retains its own processes and state. The repository preserves the original Music lineage and imported unique Media history.
 
-Current source milestone: **0.9.2**. This is a security-hardened **copied-state rehearsal candidate**, **not a production-validated release**. Passing CI alone does not authorize a NAS migration, torrent cutover, or a 1.0.0 release. See [production readiness](docs/production-readiness.md).
+Current source milestone: **0.9.3**. This is a security-hardened **copied-state rehearsal candidate**, **not a production-validated release**. Passing CI alone does not authorize a NAS migration, torrent cutover, or a 1.0.0 release. See [production readiness](docs/production-readiness.md).
 
 ![Fox Den Midnight Portal with optional Jellyfin entry](docs/foxden-midnight-portal-desktop.png)
 

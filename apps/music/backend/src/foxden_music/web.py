@@ -1520,10 +1520,11 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
             headers={"Cache-Control": "no-store"},
             context=common_context(
                 request, acquisition=acquisition, browser_url="/server-browser/",
-                provider_url=(
-                    settings.music_request_provider_url
-                    if acquisition.query_text
-                    else settings.spotidownloader_url
+                # Browser Home targets the configured Firefox homepage, not the
+                # request's metadata provider (which may be unset or MusicBrainz).
+                home_url=(
+                    settings.browser_home_url
+                    or settings.spotidownloader_url
                 ),
             ),
         )

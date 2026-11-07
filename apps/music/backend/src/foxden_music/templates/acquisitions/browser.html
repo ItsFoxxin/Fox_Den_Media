@@ -22,8 +22,9 @@
   <div class="browser-help">
     <span data-browser-feedback role="status" aria-live="polite"></span>
     Leaving this view keeps downloads running. Back to request shows the latest import status.
+    If remote navigation fails, enter <code>{{ home_url }}</code> in the server Firefox address bar.
     <a href="{{ browser_url }}" target="_blank" rel="noopener noreferrer">Open separately if the view is blank</a>
   </div>
-  <iframe class="browser-frame" src="{{ browser_url }}" data-home-url="{{ provider_url }}" title="Server download browser" referrerpolicy="no-referrer" allow="fullscreen; clipboard-read; clipboard-write" allowfullscreen></iframe>
+  <iframe class="browser-frame" src="{{ browser_url }}" data-home-url="{{ home_url }}" title="Server download browser" referrerpolicy="no-referrer" allow="fullscreen; clipboard-read; clipboard-write" allowfullscreen></iframe>
 </body>
 </html>
