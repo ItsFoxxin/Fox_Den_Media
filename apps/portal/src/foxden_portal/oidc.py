@@ -22,6 +22,10 @@ class OIDCUnavailable(OIDCError):
     pass
 
 
+class OIDCAccessDenied(OIDCError):
+    """Verified provider identity is not in an allowed Portal group."""
+
+
 class OIDCClient:
     ALGORITHMS = ["RS256", "ES256"]
 
@@ -134,7 +138,7 @@ class OIDCClient:
         groups = [str(group) for group in raw_groups] if isinstance(raw_groups, list) else []
         allowed = set(self.settings.oidc_allowed_groups)
         if allowed and not allowed.intersection(groups):
-            raise OIDCError("This identity is not authorized for Fox Den Media.")
+            raise OIDCAccessDenied("This identity is not authorized for Fox Den Media.")
         role = "admin" if set(self.settings.oidc_admin_groups).intersection(groups) else "user"
         username = str(claims.get("preferred_username") or claims.get("email") or "oidc-user").split("@")[0]
         username = "".join(ch for ch in username.lower() if ch.isalnum() or ch in "._-")[:32] or "oidc-user"
