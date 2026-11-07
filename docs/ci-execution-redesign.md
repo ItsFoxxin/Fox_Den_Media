@@ -11,6 +11,170 @@
 > and active repository rulesets. Workflow code reviewed from `dev`;
 > proposed documentation lives only on `docs/ci-execution-design`.
 
+## Phase 3 — workflow event/trigger optimization (November 7, 2026)
+
+> Implementation-only PR on `ci/phase3-trigger-optimization`, targeting `dev`.
+> This phase does **not** change the Phase 2 `needs` graph, jobs, steps,
+> permissions, required check names, CodeQL rules, Dependa­bot settings,
+> release gates, deployments or branch protection. `PR #38` release design
+> is a separate effort and remains untouched.
+
+### Observed problem and actual before/after behavior
+
+Before Phase 3, **both** `monorepo.yml` and `codeql.yml` defined:
+
+```yaml
+on:
+  push:
+    branches: [dev, main, 'feature/**', 'security/**']
+  pull_request:
+    branches: [dev, main, 'feature/**', 'security/**']
+  workflow_dispatch:
+```
+
+Monorepo also has `merge_group: {types: [checks_requested]}`; CodeQL
+does not. Dependency Review is a **separate PR-only advisory workflow**
+with `pull_request.branches: [dev, main]` and `warn-only: true`.
+GitHub `pull_request.branches` means **target/base** branch, not
+the source branch.
+
+A source `feature/**` or `security/**` push with an open PR targeting
+`dev` or `main` caused **two monorepo runs and two CodeQL runs
+for one source commit**, plus one independent Dependency Review run.
+Concurrency uses different values for the push ref and PR number and
+did not deduplicate these events. They run separately; the PR run tests
+GitHub's proposed merge ref, so a successful source-branch push run
+does **not** replace the PR-required check.
+
+Phase 3 changes only the two `push.branches` lists to `[dev, main]`.
+The full `pull_request.branches` lists, `workflow_dispatch`,
+`merge_group` (monorepo only), concurrency, matrix, actionlint,
+strict gate, PR policy, CodeQL scanning and Dependency Review remain
+**byte-for-byte unchanged**.
+
+### Event matrix (source-branch behavior)
+
+| Event | Before: monorepo / CodeQL / Dependency Review | Phase 3: monorepo / CodeQL / Dependency Review | Validation / trade-off |
+| --- | --- | --- | --- |
+| Commit to `feature/**` or `security/**`, **no PR** | Push / Push / No | **No auto run / No auto run / No** | **Automatic pre-PR feedback removed intentionally**; developers can manually dispatch both workflows on the source branch |
+| Commit to `feature/**` or `security/**` with PR to `dev`/`main` | Push **and** PR / Push **and** PR / PR | **PR / PR / PR** | Eliminates one duplicate monorepo + one duplicate CodeQL run per such update |
+| Open/reopen PR targeting `dev` or `main` | PR / PR / PR | **PR / PR / PR** | All existing checks still created |
+| Update existing PR with new source commit | PR synchronize (+ possible push duplicate) | PR synchronize (no push duplicate) | Prior PR attempt may be cancelled by existing concurrency, latest required check must succeed |
+| Commit to non-`feature/**`/`security/**` source branch before PR | No auto run / No auto run / No | Same | Existing manual dispatch option remains |
+| PR targeting `feature/**` or `security/**` | PR / PR / No | Same | Preserve existing target-branch coverage; no PR filter narrowed |
+| New commit or merge to `dev` or `main` | Push / Push / No | Same | Post-merge validation preserved independently of PR validation |
+| PR from `dev` targeting `main` | PR, plus any separate `dev` push | Same | A push validates `dev`; PR validates merger into `main`: not necessarily redundant contexts |
+| Dependabot PR targeting `dev` or `main` | PR / PR / PR | Same | Dependabot source names are not `feature/**`/`security/**`; full checks preserved |
+| Explicit manual run on a selected branch | Manual / Manual / No | Same | `workflow_dispatch` is available independently for both workflows; must request both |
+| GitHub merge queue (`merge_group`) | **Monorepo only** / No / No | Same | Existing limitation: CodeQL has no merge-group event; do not enable queue without addressing required CodeQL contexts |
+| Required job fails or is skipped | Strict gate fails, CodeQL independent | Same | Phase 2 strict-result evaluation remains unchanged |
+
+**Important:** this is a modest, explicit compromise, not completely
+automatic no-PR support. GitHub workflow filters cannot express
+"run this push only if there is no open PR" without an extra
+API lookup/guard and potentially extra runners, privilege complexity,
+races and ambiguous required checks. Automatic pre-PR behavior can be
+restored in a separate reviewed design if later needed; do not silently
+add runner/API dispatch machinery to Phase 3.
+
+**Manual pre-PR workflow:** on GitHub, open *Actions*, select
+*Validate Fox Den Media monorepo*, choose *Run workflow*, select the
+source feature/security branch in the branch dropdown, then run. Repeat
+for *CodeQL security analysis* to receive both independent checks.
+These two workflows are present on the repository default branch
+(`main`) with `workflow_dispatch`, and each supports selected-ref
+execution. The PR-only Dependency Review, PR version-policy
+comparison and PR merge-ref testing require an actual PR; **manual
+branch tests cannot substitute for final PR checks**. An early draft
+PR is preferable when the developer wants automatic continuous
+validation while iterating.
+
+### Baseline evidence: measured duplicate runs
+
+A *single* real security branch source SHA,
+`b748ea219cf3ac4283d72f9c9173059f8e434d39`, produced all
+of these on 2026-11-07 UTC:
+
+| Old execution on the same SHA | Run | Summed job execution time |
+| --- | --- | ---: |
+| Duplicate `push` monorepo | [42367971102](https://github.com/ItsFoxxin/Fox_Den_Media/actions/runs/42367971102) | **348 job-seconds** |
+| Duplicate `push` CodeQL (two languages) | [42367971122](https://github.com/ItsFoxxin/Fox_Den_Media/actions/runs/42367971122) | **135 job-seconds** |
+| Required `pull_request` monorepo | [42367975831](https://github.com/ItsFoxxin/Fox_Den_Media/actions/runs/42367975831) | 342 job-seconds |
+| Required `pull_request` CodeQL | [42367975829](https://github.com/ItsFoxxin/Fox_Den_Media/actions/runs/42367975829) | 130 job-seconds |
+| PR-only Dependency Review | [42367975793](https://github.com/ItsFoxxin/Fox_Den_Media/actions/runs/42367975793) | 7 job-seconds |
+
+With the optimized trigger lists, **two of those five workflow
+executions** (push monorepo + push CodeQL) would not be scheduled,
+eliminating **483 observed job-seconds** of *duplicated push-side
+work in that historical example*. Do not interpret that counterfactual
+as measured cash savings or as a prediction for every PR. It is a
+before-policy replay over one real SHA; actual execution duration,
+cancellation and queue load vary. Summed job seconds are not
+rounded/billed GitHub Actions usage.
+
+Additional observed duplicates on matching `feature/**` SHA
+`479ab2776cabd5869c726230993fee3757ed30c3`:
+[push monorepo](https://github.com/ItsFoxxin/Fox_Den_Media/actions/runs/41534140665)
+and [PR monorepo](https://github.com/ItsFoxxin/Fox_Den_Media/actions/runs/41534149295).
+The existing Phase 2 successful-run baseline is about 3m49s,
+but Phase 3 optimizes **workflow count and runner work per update**,
+not the single PR's critical path.
+
+### Disposable live event testing
+
+Test-only branch `feature/phase3-prepr-trigger-probe` and
+[draft PR #58](https://github.com/ItsFoxxin/Fox_Den_Media/pull/58)
+contain only harmless documentation plus these trigger changes.
+They are **never** intended to merge.
+
+- **Feature push before PR:** branch commit `daee48b` was created
+  and committed *before* the PR. GitHub's branch run list and commit
+  check-runs both returned **zero** workflow runs/checks; this is
+  expected given the new push filters (no automatic pre-PR test).
+- **Opening PR #58 against `dev`:** exactly three PR workflows
+  were created for `daee48b`: [monorepo 42370010931](https://github.com/ItsFoxxin/Fox_Den_Media/actions/runs/42370010931),
+  [CodeQL 42370010878](https://github.com/ItsFoxxin/Fox_Den_Media/actions/runs/42370010878),
+  [Dependency Review 42370010926](https://github.com/ItsFoxxin/Fox_Den_Media/actions/runs/42370010926).
+- **Updating open PR:** commit `a4c35c4` was pushed to that branch.
+  Another `pull_request` run was observed for monorepo and
+  Dependency Review immediately, **without** a feature-branch push
+  run; CodeQL's corresponding run is subject to scheduler propagation.
+  Record its final run ID/outcome in the PR implementation report.
+- **Manual dispatch:** configured in both workflows, verified to
+  exist on `main`; a real dispatch was **not executed** because the
+  connected GitHub actions available in this session do not expose
+  the workflow-dispatch operation. It must be manually exercised in
+  GitHub's Actions UI before the team relies on it for pre-PR use.
+- **PR against main, direct integration-branch pushes and merge queue:**
+  covered through event configuration and historical run/ruleset
+  evidence; **not all were artificially triggered**. No merge queue
+  rule is enabled in either currently active branch ruleset.
+- **Failure path:** Phase 2 [Bandit failure probe 42363769908](https://github.com/ItsFoxxin/Fox_Den_Media/actions/runs/42363769908)
+  demonstrated the same strict gate fails after downstream skips.
+  Phase 3 does not alter any of those job conditions or `needs`.
+
+### Required checks and limits
+
+Rulesets were read live on 2026-11-07:
+- `dev` requires `Monorepo strict gate`, `CodeQL (python)`,
+  `CodeQL (javascript-typescript)`.
+- `main` requires the same three plus the separate `CodeQL`
+  security-scanning app context.
+- Both require **zero** approving reviewers, enforce current checks
+  and review-thread resolution. Nothing about the rulesets changes.
+- The Dependency Review workflow remains PR-scoped **advisory**
+  (`warn-only: true`); this Phase 3 change does not strengthen or
+  weaken its policy or edit Dependabot configuration.
+- No `paths`/`paths-ignore` filter is added; required PR checks
+  cannot be silently omitted by path filtering.
+- An empty/manual pre-PR branch run is **not** merge eligibility:
+  the real PR head/merge ref must get fresh required checks after
+  opening/updating the PR.
+- No source-branch push CI remains automatic before a PR. Keep that
+  cost/coverage trade-off explicit in reviews.
+
+---
+
 ## Implementation status and verified evidence (Phase 2, November 7, 2026)
 
 This section tracks adoption of the architecture without rewriting the
@@ -22,7 +186,7 @@ in PR #30, **not** the updated workflow once Phase 2 merges.
 - **PR #31 — merged:** Phase 1 preserved Validation and its dependent
   checks, added checksum-pinned actionlint, reordered early policy
   validation and eliminated the duplicate secret-history scan.
-- **PR #33 — proposed, not merged:** Phase 2 changes **only**
+- **PR #33 — merged:** Phase 2 changed **only**
   `migration.needs` and `jellyfin.needs` from `validation` to
   `[music, applications, audit, sast]`. Validation remains the upstream
   prerequisite of all four core jobs. These core jobs run concurrently;
@@ -30,8 +194,8 @@ in PR #30, **not** the updated workflow once Phase 2 merges.
   begin together only when **every** core job group passes. Integration
   and the all-results `Monorepo strict gate` retain their previous
   `needs` and strict failure semantics. CodeQL remains separate.
-- **Phase 3, not started:** trigger deduplication; branch and PR trigger
-  configuration has intentionally not changed in PR #33.
+- **Phase 3 — in review:** trigger deduplication is proposed separately;
+  PR #33 did not itself change trigger configuration.
 
 The proposed graph in section 5 is **exactly** the Phase 2 graph. No
 additional job, skipped-test exception, mandatory reviewer, altered
