@@ -4,6 +4,8 @@
 
 ### Fixed
 
+- Align the Music request browser's **Downloader home** destination with Firefox's configured `BROWSER_HOME_URL` rather than the unrelated Music acquisition provider; validate custom URLs and retain a safe standalone default.
+- Improve the same-origin noVNC Home bridge's disconnected, read-only, unsupported-viewer and invalid-home feedback, with a manual address-bar fallback and synthetic browser interaction coverage.
 - Keep the selected inbox file separate from the SQLAlchemy MusicBrainz release candidate during automatic browser-download handoff. The persisted import reference and job event now retain the original relative filename when a resolved release manifest is present.
 - Preserve the original database/transaction exception if staging-file recovery independently raises an `OSError`; log the recovery error separately so a stranded staged file can be inspected instead of losing the first failure traceback.
 - Add regression tests for populated release manifests, transaction rollback, byte-preserving file recovery, repeated worker polling, successful retry, failed restoration, and initial staging permission failure.
