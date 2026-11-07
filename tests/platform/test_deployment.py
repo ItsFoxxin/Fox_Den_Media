@@ -209,6 +209,8 @@ def test_jellyfin_is_off_vpn_and_media_is_read_only() -> None:
 
 def test_gateway_render_keeps_secret_out_of_return_value(tmp_path: Path) -> None:
     values = configured(tmp_path, "music")
+    values["FOXDEN_PUID"] = str(os.getuid())
+    values["FOXDEN_PGID"] = str(os.getgid())
     secret = (Path(values["FOXDEN_SECRETS_DIR"]) / "ingress-auth").read_text(encoding="utf-8")
     target = foxden.render_gateway(values)
     assert target.name == "nginx.conf"
