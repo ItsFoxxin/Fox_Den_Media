@@ -176,7 +176,7 @@ class Settings(BaseSettings):
             return None
         from urllib.parse import urlsplit
 
-        if value != value.strip() or any(ord(char) < 32 or ord(char) == 127 for char in value):
+        if value != value.strip() or "\\" in value or any(ord(char) < 32 or ord(char) == 127 for char in value):
             raise ValueError("BROWSER_HOME_URL must be an HTTPS URL without control characters")
         parsed = urlsplit(value)
         if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password or parsed.fragment:
