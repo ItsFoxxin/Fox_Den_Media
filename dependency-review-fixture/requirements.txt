@@ -1,5 +1,0 @@
-# DISPOSABLE TEST MANIFEST — DO NOT INSTALL OR DEPLOY.
-# Not used by application code, Docker builds, or CI package installation.
-# Deliberately vulnerable test fixture only for GitHub Dependency Review:
-# GHSA-8q59-q68h-6hv4 / CVE-2020-14343, critical, affected PyYAML < 5.4.
-PyYAML==5.3.1
