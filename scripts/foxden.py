@@ -410,12 +410,21 @@ def main() -> int:
             print(f"Configuration valid for {args.mode}; gateway was not regenerated.")
         else:
             print(f"Configuration valid for {args.mode}; rendered gateway at {gateway}.")
-            print("If ingress is already running, a changed nginx.conf requires an explicit ingress recreation: Docker file bind mounts can retain the old inode.")
+            print("A changed nginx.conf needs ingress recreation (file bind-mount inode). deploy --execute refreshes only ingress after Compose up; config alone does not restart services.")
         print(redacted)
         if args.command in {"deploy", "stop"} and not args.execute:
             print("Dry run only. Repeat with --execute after reviewing the command and migration gate.")
             return 0
-        return subprocess.run(command, cwd=ROOT, check=False).returncode
+        result = subprocess.run(command, cwd=ROOT, check=False)
+        if result.returncode != 0:
+            return result.returncode
+        if args.command == "deploy":
+            # Docker file bind mounts retain the old inode after an atomic
+            # rename; always refresh only ingress on an explicitly executed
+            # deployment, never the other application writers.
+            ingress_refresh = command[:-2] + ["up", "-d", "--no-deps", "--force-recreate", "ingress"]
+            return subprocess.run(ingress_refresh, cwd=ROOT, check=False).returncode
+        return result.returncode
     except (ConfigError, ValueError, OSError) as exc:
         print(f"Configuration error: {exc}", file=sys.stderr)
         return 2
