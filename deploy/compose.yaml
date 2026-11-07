@@ -26,6 +26,8 @@ x-music-environment: &music-environment
   DOWNLOAD_INBOX_AUTO_IMPORT: "${DOWNLOAD_INBOX_AUTO_IMPORT:-true}"
   MUSIC_REQUEST_AUTO_IMPORT: "${MUSIC_REQUEST_AUTO_IMPORT:-false}"
   REMOTE_BROWSER_URL: /server-browser/
+  # Match the Music toolbar destination to Firefox FF_OPEN_URL.
+  BROWSER_HOME_URL: "${BROWSER_HOME_URL:-https://spotidownloader.com/}"
   FOXDEN_IDENTITY_PUBLIC_KEYS_FILE: /run/identity/public.json
   FOXDEN_IDENTITY_ISSUER: "${FOXDEN_IDENTITY_ISSUER:-foxden-portal}"
   FOXDEN_IDENTITY_AUDIENCE: music
