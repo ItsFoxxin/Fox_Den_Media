@@ -131,10 +131,10 @@ def stage_next_waiting_download(database: Database, settings: Settings) -> str |
         return None
     if not candidates:
         return None
-    candidate = min(candidates, key=lambda item: (item.modified_at_epoch, item.display_name.lower()))
+    inbox_file = min(candidates, key=lambda item: (item.modified_at_epoch, item.display_name.lower()))
 
     try:
-        job_id, staged_path, display_name = stage_inbox_file(candidate.relative_path, effective_settings)
+        job_id, staged_path, display_name = stage_inbox_file(inbox_file.relative_path, effective_settings)
     except IntakeError:
         return None
 
@@ -165,9 +165,9 @@ def stage_next_waiting_download(database: Database, settings: Settings) -> str |
                 source_filename=display_name,
                 source_relative_path=staged_path.relative_to(job_root).as_posix(),
                 source_reference=(
-                    f"request:{acquisition.id}:{candidate.relative_path}"
+                    f"request:{acquisition.id}:{inbox_file.relative_path}"
                     if acquisition.query_text
-                    else f"inbox:{candidate.relative_path}"
+                    else f"inbox:{inbox_file.relative_path}"
                 ),
             )
             session.add(import_job)
@@ -178,7 +178,7 @@ def stage_next_waiting_download(database: Database, settings: Settings) -> str |
                 payload = manifest.get("musicbrainz_payload")
                 if release_id and isinstance(payload, dict):
                     edition = manifest.get("album_edition") or {}
-                    candidate = ReleaseCandidate(
+                    release_candidate = ReleaseCandidate(
                         job_id=job_id,
                         musicbrainz_release_id=str(release_id),
                         title=str(edition.get("title") or acquisition.display_title),
@@ -194,7 +194,7 @@ def stage_next_waiting_download(database: Database, settings: Settings) -> str |
                         payload_json=json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
                         selected=True,
                     )
-                    session.add(candidate)
+                    session.add(release_candidate)
                     import_job.selected_release_id = str(release_id)
                     import_job.match_confidence = acquisition.confidence
             now = utcnow()
@@ -227,11 +227,20 @@ def stage_next_waiting_download(database: Database, settings: Settings) -> str |
                 "Server download automatically matched to its waiting acquisition",
                 data={
                     "acquisition_job_id": acquisition.id,
-                    "inbox_file": candidate.relative_path,
+                    "inbox_file": inbox_file.relative_path,
                     "size": staged_path.stat().st_size,
                 },
             )
         return job_id
     except BaseException:
-        _restore_staged_file(effective_settings, job_id, staged_path, display_name)
+        try:
+            _restore_staged_file(effective_settings, job_id, staged_path, display_name)
+        except OSError:
+            # Do not mask the transaction failure with a second filesystem
+            # error. _restore_staged_file leaves staging intact if its move
+            # fails, allowing an operator to recover the file safely.
+            logger.exception(
+                "Could not recover staged download after database handoff failure",
+                extra={"job_id": job_id, "acquisition_id": acquisition_id},
+            )
         raise
