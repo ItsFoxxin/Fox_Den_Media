@@ -5,8 +5,6 @@ End-to-end pinned jlesage/firefox image and Nginx ingress are manual release gat
 from __future__ import annotations
 
 import asyncio
-import time
-
 import pytest
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
@@ -23,7 +21,8 @@ ORIGIN = {"origin": "http://testserver"}
 class EchoBrowser:
     subprotocol = "binary"
 
-    def __init__(self):
+    def __init__(self, subprotocol=None):
+        self.subprotocol = subprotocol
         self.inbox = asyncio.Queue()
         self.closed = False
 
@@ -42,7 +41,7 @@ def mock_browser(monkeypatch):
     connections = []
 
     async def fake_connect(url, **kwargs):
-        browser = EchoBrowser()
+        browser = EchoBrowser("binary" if kwargs.get("subprotocols") else None)
         connections.append((url, kwargs, browser))
         return browser
 
@@ -134,7 +133,9 @@ def test_non_admin_and_offline_upstream_fail_closed(tmp_path, mock_browser, monk
         raise OSError("internal details not disclosed")
 
     monkeypatch.setattr(browser_ws, "connect", down)
-    with TestClient(create_app(settings(tmp_path / "offline"))) as client:
+    offline = tmp_path / "offline"
+    offline.mkdir()
+    with TestClient(create_app(settings(offline))) as client:
         bootstrap_admin(client)
         with pytest.raises(WebSocketDisconnect):
             with client.websocket_connect("/websockify", headers=ORIGIN):
@@ -147,9 +148,7 @@ def test_audio_and_malformed_upgrade_paths(tmp_path, mock_browser):
         with client.websocket_connect("/websockify-audio", headers=ORIGIN, subprotocols=["binary"]) as socket:
             socket.send_bytes(b"pcm")
             assert socket.receive_bytes() == b"pcm"
-        for path in ("/websockify/other", "/websockify?ignored=no"):
-            if "?" in path:
-                continue  # Query strings are allowed; path traversal is not.
+        for path in ("/websockify/other", "/ws-other"):
             with pytest.raises(WebSocketDisconnect):
                 with client.websocket_connect(path, headers=ORIGIN):
                     pass
