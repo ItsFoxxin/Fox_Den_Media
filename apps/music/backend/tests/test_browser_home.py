@@ -39,7 +39,8 @@ def test_browser_home_uses_configured_home_not_music_metadata_provider(settings,
         assert response.status_code == 200
         assert 'data-home-url="https://spotidownloader.com/"' in response.text
         assert 'data-home-url="https://musicbrainz.org/"' not in response.text
-        assert "Enter" in response.text and "server Firefox address bar" in response.text
+        assert "If remote navigation fails, enter" in response.text
+        assert "server Firefox address bar" in response.text
         assert response.headers["cache-control"] == "no-store"
 
 
