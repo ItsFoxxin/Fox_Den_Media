@@ -15,7 +15,7 @@ The `init` command creates private files as the invoking host user, while Compos
 - Private secrets stay `0600`; `identity-public.json` is a public verification key and may stay `0644`.
 - Secret and runtime host directories retain their existing operator ownership and use mode `0700`; the Docker daemon mounts explicit individual files, not whole secret directories. The renderer/NGINX access behavior is addressed in the separate RB-02 PR.
 - Only empty or newly created application config directories receive non-recursive ownership provisioning. Populated copied-state directories are **intentionally not modified**. Inspect their owners and ACLs manually before acceptance.
-- Shared paths (`MUSIC_DOWNLOAD_PATH` used by browser/Music, `TORRENT_DATA_PATH`, `JELLYFIN_MEDIA_PATH`) are never auto-chowned because their reader/writer identities differ. Review controlled shared groups or ACLs separately.
+- Shared paths (`MUSIC_DOWNLOAD_PATH` used by browser/Music, `MUSIC_LIBRARY_PATH` and `MEDIA_LIBRARY_PATH` read by Jellyfin, `TORRENT_DATA_PATH`, `JELLYFIN_MEDIA_PATH`) are never auto-chowned because their reader/writer identities differ. Review controlled shared groups or ACLs separately.
 - No automatic recursive chown, no secret printing, no secret rotation, and no NAS commands are executed by CI.
 - The env file and its absolute paths are privileged input. Review them before running the optional root action.
 
