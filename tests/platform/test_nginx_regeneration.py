@@ -93,3 +93,36 @@ def test_preflight_and_dry_runs_never_render(tmp_path, monkeypatch, command):
     monkeypatch.setattr(sys, "argv", ["foxden", *command, "--env", str(tmp_path / "fake.env")])
     assert foxden.main() == 0
     assert not Path(values["FOXDEN_RUNTIME_DIR"]).exists()
+
+
+def test_authorized_deploy_recreates_only_ingress_after_success(tmp_path, monkeypatch):
+    values = fixture_values(tmp_path)
+    calls = []
+    monkeypatch.setattr(foxden, "load_env", lambda path: values)
+    monkeypatch.setattr(foxden, "validate", lambda *args, **kw: None)
+    monkeypatch.setattr(foxden, "render_gateway", lambda *args, **kw: tmp_path / "runtime" / "nginx.conf")
+    def fake_run(command, **kw):
+        calls.append(command)
+        return type("Result", (), {"returncode": 0})()
+    monkeypatch.setattr(foxden.subprocess, "run", fake_run)
+    monkeypatch.setattr(sys, "argv", ["foxden", "deploy", "music", "--env", str(tmp_path / ".env"), "--execute"])
+    assert foxden.main() == 0
+    assert len(calls) == 2
+    assert calls[0][-2:] == ["up", "-d"]
+    assert calls[1][-5:] == ["up", "-d", "--no-deps", "--force-recreate", "ingress"]
+    assert calls[1].count("ingress") == 1
+
+
+def test_failed_deploy_does_not_recreate_ingress(tmp_path, monkeypatch):
+    values = fixture_values(tmp_path)
+    calls = []
+    monkeypatch.setattr(foxden, "load_env", lambda path: values)
+    monkeypatch.setattr(foxden, "validate", lambda *args, **kw: None)
+    monkeypatch.setattr(foxden, "render_gateway", lambda *args, **kw: tmp_path / "runtime" / "nginx.conf")
+    def fake_run(command, **kw):
+        calls.append(command)
+        return type("Result", (), {"returncode": 1})()
+    monkeypatch.setattr(foxden.subprocess, "run", fake_run)
+    monkeypatch.setattr(sys, "argv", ["foxden", "deploy", "music", "--env", str(tmp_path / ".env"), "--execute"])
+    assert foxden.main() == 1
+    assert len(calls) == 1
