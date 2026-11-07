@@ -362,6 +362,8 @@ def main() -> int:
                       help="explicitly provision known secret owners and empty config leaves; requires host root")
     for name in ("validate", "config", "deploy", "stop"):
         command = sub.add_parser(name)
+        command.add_argument("--check-service-owners", action="store_true",
+                             help="fail if private secret files are not readable by their configured service UIDs")
         command.add_argument("mode", choices=MODES)
         command.add_argument("--env", type=Path, required=True)
         command.add_argument("--browser", action="store_true")
@@ -378,6 +380,19 @@ def main() -> int:
             return 0
         validate(args.mode, values, browser=args.browser, jellyfin=args.jellyfin,
                  jellyfin_hwaccel=args.jellyfin_hwaccel)
+        if args.check_service_owners:
+            required_names = set(SECRET_FILES)
+            if "music" in MODES[args.mode]["modules"]:
+                required_names.update(MUSIC_SECRET_FILES)
+                if values.get("JELLYFIN_URL", "").strip():
+                    required_names.add("jellyfin-api-key")
+            if "media" in MODES[args.mode]["modules"]:
+                required_names.update(MEDIA_SECRET_FILES)
+            if args.mode == "full-managed":
+                required_names.add("wireguard-private-key")
+            if values.get("PORTAL_AUTH_MODE", "local").strip().lower() in {"oidc", "hybrid"}:
+                required_names.add("oidc-client-secret")
+            inspect_secret_owners(values, names=required_names)
         gateway = render_gateway(values)
         action = {"validate": "config", "config": "config", "deploy": "up", "stop": "down"}[args.command]
         command = compose_command(args.mode, args.env.resolve(), browser=args.browser, action=action,
