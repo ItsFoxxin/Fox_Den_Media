@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from fastapi.testclient import TestClient
 
 from app.config import Settings as MediaSettings
@@ -16,5 +18,5 @@ def test_real_movies_tv_summary_satisfies_portal_contract(tmp_path):
         summary = ModuleSummary.model_validate(client.get("/api/platform/v1/summary").json())
         assert summary.module_id == "media"
         assert summary.health.status == "healthy"
-        assert summary.module_version == "0.9.1"
+        assert summary.module_version == (Path(__file__).resolve().parents[2] / "media" / "VERSION").read_text(encoding="utf-8").strip()
         assert summary.activity == []

@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.9.2 - 2026-11-06
+
+### Fixed
+
+- Keep the selected inbox file separate from the SQLAlchemy MusicBrainz release candidate during automatic browser-download handoff. The persisted import reference and job event now retain the original relative filename when a resolved release manifest is present.
+- Preserve the original database/transaction exception if staging-file recovery independently raises an `OSError`; log the recovery error separately so a stranded staged file can be inspected instead of losing the first failure traceback.
+- Add regression tests for populated release manifests, transaction rollback, byte-preserving file recovery, repeated worker polling, successful retry, failed restoration, and initial staging permission failure.
+- Prevent repeated recoveries from accumulating filename prefixes or exceeding the filesystem's filename-byte limit. Include safe numeric filesystem error codes in worker JSON logs without emitting sensitive paths.
+
+### Release boundary
+
+- This is a **candidate patch milestone**, not a deployed or approved 1.0.0 release. It changes no database schema and requires passing the existing strict CI and CodeQL gates plus copied-state acceptance, with the subsequent NAS `OSError` independently diagnosed from its errno/traceback.
+- No NAS state, Test57, Test51, production deployment, protected branch, or upstream Music Search UX PR was changed.
+
 ## 0.9.1 - 2026-11-04
 
 - Updated Portal authentication to Authlib 1.9.4 and added OIDC/JWT security regressions.
