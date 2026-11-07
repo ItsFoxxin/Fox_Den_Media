@@ -1524,7 +1524,6 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
                 # request's metadata provider (which may be unset or MusicBrainz).
                 home_url=(
                     settings.browser_home_url
-                    or settings.music_request_provider_url
                     or settings.spotidownloader_url
                 ),
             ),
