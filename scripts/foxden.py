@@ -411,9 +411,6 @@ def main() -> int:
             return 0
         validate(args.mode, values, browser=args.browser, jellyfin=args.jellyfin,
                  jellyfin_hwaccel=args.jellyfin_hwaccel)
-        # Preflight and dry-run commands must not mutate active configuration.
-        should_render = args.command == "config" or (args.command == "deploy" and args.execute)
-        gateway = render_gateway(values) if should_render else None
         if args.check_service_owners:
             required_names = set(SECRET_FILES)
             if "music" in MODES[args.mode]["modules"]:
@@ -427,7 +424,10 @@ def main() -> int:
             if values.get("PORTAL_AUTH_MODE", "local").strip().lower() in {"oidc", "hybrid"}:
                 required_names.add("oidc-client-secret")
             inspect_secret_owners(values, names=required_names)
-        gateway = render_gateway(values)
+        # Only explicitly requested config renders or executed deployments write
+        # the secret-bearing nginx.conf. Validate, stop and dry runs are read-only.
+        should_render = args.command == "config" or (args.command == "deploy" and args.execute)
+        gateway = render_gateway(values) if should_render else None
         action = {"validate": "config", "config": "config", "deploy": "up", "stop": "down"}[args.command]
         command = compose_command(args.mode, args.env.resolve(), browser=args.browser, action=action,
                                   jellyfin=args.jellyfin, jellyfin_hwaccel=args.jellyfin_hwaccel)
@@ -451,8 +451,6 @@ def main() -> int:
             ingress_refresh = command[:-2] + ["up", "-d", "--no-deps", "--force-recreate", "ingress"]
             return subprocess.run(ingress_refresh, cwd=ROOT, check=False).returncode
         return result.returncode
-    except (ConfigError, ValueError, OSError) as exc:
-        return subprocess.run(command, cwd=ROOT, check=False).returncode
     except (ConfigError, PermissionSetupError, ValueError, OSError) as exc:
         print(f"Configuration error: {exc}", file=sys.stderr)
         return 2
