@@ -1,4 +1,4 @@
-# Fox Den Media 0.9.2 — Server browser Home control
+# Fox Den Media 0.9.3 — Server browser Home control
 
 ## Problem
 
