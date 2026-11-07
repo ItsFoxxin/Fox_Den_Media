@@ -161,7 +161,7 @@ def test_rb04_browser_enabled_unavailable_and_unauthorized(
     }), tmp_path, {"portal-2026-10": key})
     with database.session() as session:
         job = create_request_jobs(
-            session, [parse_request_reference("Fox Artist - Night Run")],
+            session, [parse_request_reference("https://open.spotify.com/track/37i9dQZF1DXcBWIGoYBM5M")],
             preferred_format=PreferredFormat.FLAC,
             provider=AcquisitionProvider.MANUAL_BROWSER,
         )[0]
@@ -219,7 +219,17 @@ def test_rb04_browser_enabled_unavailable_and_unauthorized(
             assert session.get(AcquisitionJob, acquisition_id).state == AcquisitionState.WAITING_FOR_USER.value
 
         probe["ready"] = True
-        assert "start watched download" in as_role(f"/acquisitions/{acquisition_id}").text
+        resumed = as_role(f"/acquisitions/{acquisition_id}")
+        assert "start watched download" in resumed.text
+        csrf = re.search(r'name="csrf_token" value="([^"]+)"', resumed.text).group(1)
+        accepted = client.post(
+            f"/acquisitions/{acquisition_id}/begin-download",
+            data={"csrf_token": csrf},
+            headers=_headers(_assertion(key, roles=["admin"]), origin=True),
+        )
+        assert accepted.status_code == 200
+        with database.session() as session:
+            assert session.get(AcquisitionJob, acquisition_id).state == AcquisitionState.ACQUIRING.value
 
 
 def test_rb04_browser_disabled_never_probes(settings, database, tmp_path, monkeypatch) -> None:
@@ -242,6 +252,6 @@ def test_rb04_browser_disabled_never_probes(settings, database, tmp_path, monkey
         def admin(path: str):
             return client.get(path, headers=_headers(_assertion(key, roles=["admin"])))
         assert 'href="/server-browser/"' not in admin("/add").text
-        assert "Open SpotiDownloader" in admin(f"/acquisitions/{acquisition_id}").text
+        assert "Open acquisition provider" in admin(f"/acquisitions/{acquisition_id}").text
         assert admin(f"/acquisitions/{acquisition_id}/browser").status_code == 409
         assert admin("/search").status_code == 200
