@@ -12,6 +12,7 @@ from fastapi import UploadFile
 
 from .audio import SUPPORTED_AUDIO_EXTENSIONS
 from .config import Settings
+from .handoff_diagnostics import handoff_operation
 
 
 class IntakeError(ValueError):
@@ -156,8 +157,9 @@ def list_download_inbox(settings: Settings) -> list[InboxFile]:
 def stage_inbox_file(relative_path: str, settings: Settings) -> tuple[str, Path, str]:
     """Move or copy one trusted server-side inbox file into immutable job staging."""
 
-    source = _safe_inbox_path(settings, relative_path)
-    item = _inbox_file_state(source, settings, root=_resolved_inbox_root(settings))
+    with handoff_operation("stage_source_inspection"):
+        source = _safe_inbox_path(settings, relative_path)
+        item = _inbox_file_state(source, settings, root=_resolved_inbox_root(settings))
     if item is None:
         raise IntakeError("Inbox file type is not supported")
     if not item.ready:
@@ -171,17 +173,22 @@ def stage_inbox_file(relative_path: str, settings: Settings) -> tuple[str, Path,
         extension = Path(display_name).suffix.lower()
         job_id = str(uuid.uuid4())
         incoming_dir = settings.jobs_dir / job_id / "incoming"
-        incoming_dir.mkdir(mode=0o700, parents=True, exist_ok=False)
+        with handoff_operation("stage_directory_mkdir"):
+            incoming_dir.mkdir(mode=0o700, parents=True, exist_ok=False)
         final_path = incoming_dir / f"source{extension}"
         if settings.download_inbox_move_files:
-            shutil.move(str(source), str(final_path))
+            with handoff_operation("stage_file_move"):
+                shutil.move(str(source), str(final_path))
         else:
-            shutil.copy2(source, final_path)
-        os.chmod(final_path, 0o600)
+            with handoff_operation("stage_file_copy"):
+                shutil.copy2(source, final_path)
+        with handoff_operation("stage_file_chmod"):
+            os.chmod(final_path, 0o600)
         return job_id, final_path, display_name
     except BaseException:
         if job_id is not None:
-            cleanup_staged_job(settings, job_id)
+            with handoff_operation("stage_cleanup"):
+                cleanup_staged_job(settings, job_id)
         raise
 
 

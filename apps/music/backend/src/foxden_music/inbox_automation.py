@@ -15,6 +15,7 @@ from .config import Settings
 from .database import Database
 from .enums import AcquisitionProvider, AcquisitionState, JobKind, JobState, SourceType
 from .intake import IntakeError, cleanup_staged_job, list_download_inbox, stage_inbox_file
+from .handoff_diagnostics import handoff_operation
 from .models import AcquisitionArtifact, AcquisitionJob, Job, ReleaseCandidate, utcnow
 from .state import add_event
 
@@ -59,10 +60,18 @@ def _restore_staged_file(
     """Return a moved file to the inbox after a database handoff race/failure."""
 
     if settings.download_inbox_move_files and staged_path.exists() and settings.download_inbox_dir:
-        root = settings.download_inbox_dir.resolve(strict=True)
+        with handoff_operation("restore_inbox_inspection"):
+            root = settings.download_inbox_dir.resolve(strict=True)
         destination = root / _recovery_name(display_name)
-        shutil.move(str(staged_path), str(destination))
-    cleanup_staged_job(settings, job_id)
+        with handoff_operation("restore_staged_file_move"):
+            shutil.move(str(staged_path), str(destination))
+    with handoff_operation("restore_staged_cleanup"):
+        cleanup_staged_job(settings, job_id)
+
+
+def _stat_staged_bytes(path: Path, *, operation: str) -> int:
+    with handoff_operation(operation):
+        return path.stat().st_size
 
 
 def stage_next_waiting_download(database: Database, settings: Settings) -> str | None:
@@ -100,7 +109,8 @@ def stage_next_waiting_download(database: Database, settings: Settings) -> str |
     request_inbox: Path | None = None
     if provider == AcquisitionProvider.FILESYSTEM_DROP.value or is_music_request:
         request_inbox = settings.download_inbox_dir / acquisition_id
-        request_inbox.mkdir(mode=0o750, parents=True, exist_ok=True)
+        with handoff_operation("request_inbox_mkdir"):
+            request_inbox.mkdir(mode=0o750, parents=True, exist_ok=True)
         effective_settings = settings.model_copy(update={"download_inbox_dir": request_inbox})
 
     # Firefox writes to the shared /downloads mount. For a v2.5 browser request,
@@ -128,8 +138,9 @@ def stage_next_waiting_download(database: Database, settings: Settings) -> str |
                 top_level,
                 key=lambda item: (item.modified_at_epoch, item.display_name.lower()),
             )
-            source = (settings.download_inbox_dir / routed.relative_path).resolve(strict=True)
-            root = settings.download_inbox_dir.resolve(strict=True)
+            with handoff_operation("route_download_inspection"):
+                source = (settings.download_inbox_dir / routed.relative_path).resolve(strict=True)
+                root = settings.download_inbox_dir.resolve(strict=True)
             if source.parent != root:
                 logger.error("Refused to route a browser download outside the inbox root")
                 return None
@@ -138,7 +149,8 @@ def stage_next_waiting_download(database: Database, settings: Settings) -> str |
                 logger.error("Refused to overwrite an existing request download")
                 return None
             try:
-                source.rename(destination)
+                with handoff_operation("route_download_rename"):
+                    source.rename(destination)
             except OSError:
                 logger.exception("Could not isolate the browser download for its request")
                 return None
@@ -157,7 +169,8 @@ def stage_next_waiting_download(database: Database, settings: Settings) -> str |
     inbox_file = min(candidates, key=lambda item: (item.modified_at_epoch, item.display_name.lower()))
 
     try:
-        job_id, staged_path, display_name = stage_inbox_file(inbox_file.relative_path, effective_settings)
+        with handoff_operation("stage_inbox_file"):
+            job_id, staged_path, display_name = stage_inbox_file(inbox_file.relative_path, effective_settings)
     except IntakeError:
         return None
 
@@ -230,7 +243,7 @@ def stage_next_waiting_download(database: Database, settings: Settings) -> str |
                     state="HANDED_OFF",
                     display_filename=display_name,
                     stored_relative_path=staged_path.relative_to(settings.staging_dir).as_posix(),
-                    byte_size=staged_path.stat().st_size,
+                    byte_size=_stat_staged_bytes(staged_path, operation="staged_artifact_stat"),
                     handed_off_at=now,
                 )
             )
@@ -251,7 +264,7 @@ def stage_next_waiting_download(database: Database, settings: Settings) -> str |
                 data={
                     "acquisition_job_id": acquisition.id,
                     "inbox_file": inbox_file.relative_path,
-                    "size": staged_path.stat().st_size,
+                    "size": _stat_staged_bytes(staged_path, operation="staged_event_stat"),
                 },
             )
         return job_id
