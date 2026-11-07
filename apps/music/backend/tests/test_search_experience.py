@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from urllib.parse import urlsplit
 from types import SimpleNamespace
 
 import pytest
@@ -176,7 +177,12 @@ def test_read_only_search_and_csrf_submission(monkeypatch, settings, database):
         assert "Compare alternatives" in page.text
         assert "Den Songs" in page.text
         assert f"?release={RELEASE_ID}" in page.text
-        assert "coverartarchive.org" in page.text
+        artwork_match = re.search(r'<img class="music-search-art" src="([^"]+)"', page.text)
+        assert artwork_match is not None
+        artwork_url = urlsplit(artwork_match.group(1))
+        assert artwork_url.scheme == "https"
+        assert artwork_url.hostname == "coverartarchive.org"
+        assert artwork_url.path == f"/release/{RELEASE_ID}/front-250"
         with database.session() as session:
             assert session.scalar(select(AcquisitionJob.id)) is None
 
