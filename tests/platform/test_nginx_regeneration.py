@@ -77,3 +77,19 @@ def test_compose_dry_run_has_no_implicit_execution(tmp_path):
     args = foxden.compose_command("music", tmp_path / ".env", browser=False, action="up")
     assert args[-2:] == ["up", "-d"]
     assert "--force-recreate" not in args
+
+
+@pytest.mark.parametrize("command", [
+    ["validate", "music"],
+    ["deploy", "music"],
+    ["stop", "music"],
+])
+def test_preflight_and_dry_runs_never_render(tmp_path, monkeypatch, command):
+    values = fixture_values(tmp_path)
+    monkeypatch.setattr(foxden, "load_env", lambda path: values)
+    monkeypatch.setattr(foxden, "validate", lambda *args, **kw: None)
+    monkeypatch.setattr(foxden, "render_gateway", lambda *args, **kw: pytest.fail("Unexpected config write"))
+    monkeypatch.setattr(foxden.subprocess, "run", lambda *args, **kw: type("Result", (), {"returncode": 0})())
+    monkeypatch.setattr(sys, "argv", ["foxden", *command, "--env", str(tmp_path / "fake.env")])
+    assert foxden.main() == 0
+    assert not Path(values["FOXDEN_RUNTIME_DIR"]).exists()
