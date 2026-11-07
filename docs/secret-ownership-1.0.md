@@ -13,7 +13,7 @@ The `init` command creates private files as the invoking host user, while Compos
 
 - Dedicated secret files are individually chowned to the consumer: `portal-secret`, `portal-bootstrap`, `ingress-auth`, `identity-private.pem`, `oidc-client-secret` to `FOXDEN_PUID`; `music-csrf` and `jellyfin-api-key` to `MUSIC_PUID`; `media-app-token` and `qbit-password` to `MEDIA_PUID`; `wireguard-private-key` to root, for the root-run Gluetun process.
 - Private secrets stay `0600`; `identity-public.json` is a public verification key and may stay `0644`.
-- Secret and runtime host directories are root-owned and mode `0700`; the Docker daemon mounts explicit individual files, not whole secret directories. The renderer/NGINX access behavior is addressed in the separate RB-02 PR.
+- Secret and runtime host directories retain their existing operator ownership and use mode `0700`; the Docker daemon mounts explicit individual files, not whole secret directories. The renderer/NGINX access behavior is addressed in the separate RB-02 PR.
 - Only empty or newly created application config directories receive non-recursive ownership provisioning. Populated copied-state directories are **intentionally not modified**. Inspect their owners and ACLs manually before acceptance.
 - Shared paths (`MUSIC_DOWNLOAD_PATH` used by browser/Music, `TORRENT_DATA_PATH`, `JELLYFIN_MEDIA_PATH`) are never auto-chowned because their reader/writer identities differ. Review controlled shared groups or ACLs separately.
 - No automatic recursive chown, no secret printing, no secret rotation, and no NAS commands are executed by CI.
