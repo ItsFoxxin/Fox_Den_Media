@@ -108,7 +108,15 @@ def register_browser_websockets(app: FastAPI, store, public_url: str) -> None:
                 if remaining <= 0:
                     return "maximum_lifetime"
                 await asyncio.sleep(min(RECHECK_INTERVAL_SECONDS, remaining))
-                if not await asyncio.to_thread(_authorized, store, token):
+                try:
+                    # SQLite can wait for a writer lock; do not let a stalled
+                    # database read extend access for the full lock timeout.
+                    allowed = await asyncio.wait_for(
+                        asyncio.to_thread(_authorized, store, token), timeout=3.0,
+                    )
+                except Exception:
+                    allowed = False
+                if not allowed:
                     return "authorization_revoked"
 
         tasks = [
