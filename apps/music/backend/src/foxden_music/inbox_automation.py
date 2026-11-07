@@ -60,7 +60,8 @@ def _restore_staged_file(
     """Return a moved file to the inbox after a database handoff race/failure."""
 
     if settings.download_inbox_move_files and staged_path.exists() and settings.download_inbox_dir:
-        root = settings.download_inbox_dir.resolve(strict=True)
+        with handoff_operation("restore_inbox_inspection"):
+            root = settings.download_inbox_dir.resolve(strict=True)
         destination = root / _recovery_name(display_name)
         with handoff_operation("restore_staged_file_move"):
             shutil.move(str(staged_path), str(destination))
