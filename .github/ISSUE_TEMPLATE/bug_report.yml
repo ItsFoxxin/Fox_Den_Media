@@ -61,6 +61,21 @@ body:
       description: "What must pass to consider this specific bug resolved?"
     validations:
       required: true
+  - type: textarea
+    id: progress
+    attributes:
+      label: "Fix progress tracker"
+      description: "Update these checkboxes as the bug moves through triage, review, validation, and release."
+      value: |
+        - [ ] Reproduction confirmed and root cause isolated
+        - [ ] Dedicated fix branch and patch version selected
+        - [ ] Regression test added and fix implemented
+        - [ ] Fix PR linked to this issue
+        - [ ] CI, CodeQL, and relevant isolated-runtime checks passed
+        - [ ] Fix reviewed, merged and published in a release
+        - [ ] Fix verified in the intended environment after deployment approval
+    validations:
+      required: false
   - type: checkboxes
     id: scope
     attributes:
