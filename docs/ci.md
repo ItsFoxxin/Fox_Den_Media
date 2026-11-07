@@ -46,9 +46,9 @@ Do not commit generated reports, temporary secrets, real environment files or pr
 
 ## Version and release process
 
-The root `VERSION` is currently `0.9.1`. [`scripts/check_release.py`](../scripts/check_release.py) verifies semantic version format, the Media image tag in Compose, bold README version, dated [changelog](../CHANGELOG.md), and Dockerfile version copy. For a stable promotion it can additionally compare `--base` against an earlier commit and enforce an increase; it can check JUnit report skip/failure policy with `--reports`. `apps/media/VERSION` remains part of the image build.
+The root `VERSION` is currently `0.9.2`. [`scripts/check_release.py`](../scripts/check_release.py) verifies semantic version format, the Media image tag in Compose, bold README version, dated [changelog](../CHANGELOG.md), and Dockerfile version copy. For a stable promotion it can additionally compare `--base` against an earlier commit and enforce an increase; it can check JUnit report skip/failure policy with `--reports`. `apps/media/VERSION` remains part of the image build.
 
-1. Develop, test and review changes against `dev`.
+The prospective [versioning and bug-tracking policy](versioning-and-bug-tracking.md) requires exact one-step major/minor/patch increments. Every future bug fix must have its own GitHub issue, dedicated patch version, single-root-cause changelog entry, and linked PR. CI validates PR version changes and checks that the patch's issue exists. Historical versions through `0.9.2` are grandfathered.\n\n1. Develop, test and review changes against `dev`.
 2. For an actual release proposal, update all required version metadata together, collect passing hosted checks and record approved image digests.
 3. Complete copied-state NAS, authentication, VPN, file-permission, client and rollback rehearsals.
 4. Request independent owner approval of the production cutover and a `dev` → `main` promotion.
