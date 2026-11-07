@@ -65,7 +65,7 @@ def changelog_entry(changelog: str, version: str) -> str:
 
 def patch_bug_issue(changelog: str, version: str) -> int:
     entry = changelog_entry(changelog, version)
-    fixed_section = re.search(r"^### Fixed\s*$([\s\S]*?)(?=^### |\Z)", entry, re.M)
+    fixed_section = re.search(r"^### Fixed\s*\n([\s\S]*?)(?=^### |\Z)", entry, re.M)
     if fixed_section is None:
         raise VersionPolicyError(f"Patch {version} requires a ### Fixed changelog section")
     # One canonical bullet identifies the single bug. Supporting details and
