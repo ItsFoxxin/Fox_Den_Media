@@ -6,7 +6,7 @@ The `init` command creates private files as the invoking host user, while Compos
 
 1. Audit the isolated env file, `FOXDEN_SECRETS_DIR`, `FOXDEN_RUNTIME_DIR`, all `*_PUID`/`*_PGID`, symlinks and copied paths. Do not run provisioning against Test57, Test51, or live NAS state.
 2. In a disposable, separately approved deployment only: `sudo python scripts/foxden.py init --env /path/to/isolated.env --create-paths --apply-permissions`. Install Portal signing-key Python dependencies beforehand. Host root is required only for this explicit provisioning action, not for steady-state containers.
-3. Use `python scripts/foxden.py validate full-managed --env /path/to/isolated.env --check-service-owners` to audit per-file ownership. Adjust mode and optional profile flags as appropriate. The legacy validate operation also renders NGINX configuration; it is not read-only in the current baseline (tracked separately under RB-02).
+3. Use the approved privileged Python environment to run `sudo python scripts/foxden.py validate full-managed --env /path/to/isolated.env --check-service-owners` to audit per-file ownership; the operator account may no longer be able to read owner-only secret contents after the chown. Adjust mode and optional profile flags as appropriate. The legacy validate operation also renders NGINX configuration; it is not read-only in the current baseline (tracked separately under RB-02).
 4. Inspect actual service access under mapped numeric UIDs and record redacted evidence. Group ownership, NAS ACL inheritance, Docker user namespaces, and filesystem semantics can alter access results.
 
 ## Scope and security boundaries
