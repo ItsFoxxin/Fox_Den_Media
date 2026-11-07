@@ -1394,7 +1394,9 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
                 confidence_reasons=confidence_reasons,
                 effective_state=_effective_acquisition_state(acquisition),
                 provider_url=(
-                    settings.music_request_provider_url
+                    settings.spotidownloader_url
+                    if acquisition.source_url.startswith("https://open.spotify.com/")
+                    else settings.music_request_provider_url
                     if acquisition.query_text
                     else settings.spotidownloader_url
                 ),
