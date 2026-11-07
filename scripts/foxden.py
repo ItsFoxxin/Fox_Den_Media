@@ -14,6 +14,8 @@ import tempfile
 from pathlib import Path
 from urllib.parse import urlparse
 
+from host_permissions import PermissionSetupError, inspect_secret_owners, provision_permissions, SECRET_ROLES
+
 ROOT = Path(__file__).resolve().parents[1]
 COMPOSE = ROOT / "deploy" / "compose.yaml"
 GATEWAY_TEMPLATE = ROOT / "infra" / "gateway" / "portal-ingress.conf"
@@ -244,11 +246,14 @@ def validate(mode: str, values: dict[str, str], *, browser: bool = False, jellyf
             raise ConfigError(f"{key} must use a pinned tag or digest, not latest.")
 
 
-def initialize(values: dict[str, str], *, create_paths: bool) -> None:
+def initialize(values: dict[str, str], *, create_paths: bool, apply_permissions: bool = False) -> None:
     secret_dir = Path(_required(values, "FOXDEN_SECRETS_DIR")).expanduser()
     runtime_dir = Path(_required(values, "FOXDEN_RUNTIME_DIR")).expanduser()
     if not secret_dir.is_absolute() or not runtime_dir.is_absolute():
         raise ConfigError("Secret and runtime directories must be absolute paths.")
+    if apply_permissions and (os.name != "posix" or os.geteuid() != 0):
+        raise PermissionSetupError("init --apply-permissions requires host root privileges.")
+    existing_paths = {Path(v).expanduser() for k, v in values.items() if k.endswith("_PATH") and v and Path(v).expanduser().exists()}
     secret_dir.mkdir(parents=True, exist_ok=True)
     runtime_dir.mkdir(parents=True, exist_ok=True)
     for name in ("portal-secret", "portal-bootstrap", "ingress-auth", "music-csrf", "media-app-token"):
@@ -285,6 +290,9 @@ def initialize(values: dict[str, str], *, create_paths: bool) -> None:
                 if not path.is_absolute():
                     raise ConfigError(f"{key} must be absolute before it can be created.")
                 path.mkdir(parents=True, exist_ok=True)
+    if apply_permissions:
+        created_directories = {Path(v).expanduser() for k, v in values.items() if k.endswith("_PATH") and v and Path(v).expanduser().is_dir()} - existing_paths
+        provision_permissions(values, created_directories=created_directories)
     print(f"Initialized secret and runtime material under {secret_dir.parent}; secret values were not printed.")
 
 
@@ -381,8 +389,12 @@ def main() -> int:
     init = sub.add_parser("init", help="create local secret material without overwriting existing files")
     init.add_argument("--env", type=Path, required=True)
     init.add_argument("--create-paths", action="store_true")
+    init.add_argument("--apply-permissions", action="store_true",
+                      help="explicitly provision known secret owners and empty config leaves; requires host root")
     for name in ("validate", "config", "deploy", "stop"):
         command = sub.add_parser(name)
+        command.add_argument("--check-service-owners", action="store_true",
+                             help="fail if private secret files are not readable by their configured service UIDs")
         command.add_argument("mode", choices=MODES)
         command.add_argument("--env", type=Path, required=True)
         command.add_argument("--browser", action="store_true")
@@ -395,13 +407,27 @@ def main() -> int:
     try:
         values = load_env(args.env.resolve())
         if args.command == "init":
-            initialize(values, create_paths=args.create_paths)
+            initialize(values, create_paths=args.create_paths, apply_permissions=args.apply_permissions)
             return 0
         validate(args.mode, values, browser=args.browser, jellyfin=args.jellyfin,
                  jellyfin_hwaccel=args.jellyfin_hwaccel)
         # Preflight and dry-run commands must not mutate active configuration.
         should_render = args.command == "config" or (args.command == "deploy" and args.execute)
         gateway = render_gateway(values) if should_render else None
+        if args.check_service_owners:
+            required_names = set(SECRET_FILES)
+            if "music" in MODES[args.mode]["modules"]:
+                required_names.update(MUSIC_SECRET_FILES)
+                if values.get("JELLYFIN_URL", "").strip():
+                    required_names.add("jellyfin-api-key")
+            if "media" in MODES[args.mode]["modules"]:
+                required_names.update(MEDIA_SECRET_FILES)
+            if args.mode == "full-managed":
+                required_names.add("wireguard-private-key")
+            if values.get("PORTAL_AUTH_MODE", "local").strip().lower() in {"oidc", "hybrid"}:
+                required_names.add("oidc-client-secret")
+            inspect_secret_owners(values, names=required_names)
+        gateway = render_gateway(values)
         action = {"validate": "config", "config": "config", "deploy": "up", "stop": "down"}[args.command]
         command = compose_command(args.mode, args.env.resolve(), browser=args.browser, action=action,
                                   jellyfin=args.jellyfin, jellyfin_hwaccel=args.jellyfin_hwaccel)
@@ -426,6 +452,8 @@ def main() -> int:
             return subprocess.run(ingress_refresh, cwd=ROOT, check=False).returncode
         return result.returncode
     except (ConfigError, ValueError, OSError) as exc:
+        return subprocess.run(command, cwd=ROOT, check=False).returncode
+    except (ConfigError, PermissionSetupError, ValueError, OSError) as exc:
         print(f"Configuration error: {exc}", file=sys.stderr)
         return 2
 
