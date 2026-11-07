@@ -35,7 +35,6 @@ DIRECTORY_ROLES = {
     "PORTAL_CONFIG_PATH": "FOXDEN",
     "MUSIC_CONFIG_PATH": "MUSIC",
     "MUSIC_STAGING_PATH": "MUSIC",
-    "MUSIC_DOWNLOAD_PATH": "MUSIC",
     "MUSIC_LIBRARY_PATH": "MUSIC",
     "MEDIA_CONFIG_PATH": "MEDIA",
     "MEDIA_LIBRARY_PATH": "MEDIA",
@@ -45,7 +44,7 @@ DIRECTORY_ROLES = {
     "JELLYFIN_CACHE_PATH": "JELLYFIN",
     "BROWSER_CONFIG_PATH": "FOXDEN",
 }
-# Shared or external paths such as TORRENT_DATA_PATH and JELLYFIN_MEDIA_PATH
+# Shared or external paths such as MUSIC_DOWNLOAD_PATH, TORRENT_DATA_PATH and JELLYFIN_MEDIA_PATH
 # are deliberately excluded. The operator must audit existing ACLs separately.
 
 
@@ -133,7 +132,7 @@ def provision_permissions(values: dict[str, str], *, created_directories: set[Pa
         _safe_directory(path)
         if path not in created_directories and any(path.iterdir()):
             continue
-        mode = 0o770 if key == "MUSIC_DOWNLOAD_PATH" else 0o700
+        mode = 0o700
         planned.append((path, role_identity(values, role), mode))
 
     # Preflight is complete before any metadata mutation. Keep host directories
