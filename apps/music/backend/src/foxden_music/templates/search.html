@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block title %}Search music · {{ app_name }}{% endblock %}
+{% block content %}
+<section class="page-heading">
+  <p class="eyebrow">MusicBrainz discovery</p>
+  <h1>Find the right music</h1>
+  <p>Search by track, album, or artist. Pick the correct recording or edition before adding it to the request queue. No Spotify link or account is needed.</p>
+</section>
+
+<section class="panel">
+  <form class="form-stack" action="{{ root_path }}/search" method="get">
+    <div class="search-fields">
+      <label for="search-mode"><strong>Search for</strong>
+        <select id="search-mode" name="mode">
+          {% for value, label in [('TRACK','Song / track'), ('ALBUM','Album / release'), ('ARTIST','Artist')] %}
+          <option value="{{ value }}"{% if mode == value %} selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label for="search-query"><strong>Song, album or artist name</strong>
+        <input id="search-query" name="q" type="text" value="{{ query }}" maxlength="160" placeholder="Cover Me" {% if not artist_id %}required{% endif %}>
+      </label>
+      <label for="search-artist"><strong>Artist (optional)</strong>
+        <input id="search-artist" name="artist" type="text" value="{{ artist }}" maxlength="160" placeholder="Stray Kids">
+      </label>
+    </div>
+    {% if artist_id %}<input type="hidden" name="artist_id" value="{{ artist_id }}">{% endif %}
+    <button class="button primary" type="submit">Find matches</button>
+    <p class="muted fine-print">MusicBrainz supplies metadata, not audio. Search scores indicate matching evidence, not a guarantee of the correct edition.</p>
+  </form>
+</section>
+
+{% if search_error %}
+<section class="panel warning-panel" role="alert">
+  <h2>Search unavailable</h2>
+  <p>{{ search_error }}</p>
+  <p class="muted">Try a narrower title or artist, check the MusicBrainz contact setting, or return to <a href="{{ root_path }}/add">manual requests</a>.</p>
+</section>
+{% elif searched %}
+<section aria-label="Music search matches">
+  <div class="panel-heading"><div><p class="eyebrow">Review before queueing</p><h2>{{ matches|length }} matching choices</h2></div></div>
+  {% if not matches %}<div class="panel empty"><p>No results. Try another spelling, remove an artist filter, or search for an album instead.</p></div>{% endif %}
+  <div class="search-results">
+  {% for item in matches %}
+    <article class="panel music-search-card">
+      {% if item.artwork_url %}
+      <img class="music-search-art" src="{{ item.artwork_url }}" alt="" loading="lazy" referrerpolicy="no-referrer">
+      {% else %}
+      <span class="music-search-art music-search-placeholder" aria-hidden="true">♫</span>
+      {% endif %}
+      <div class="music-search-info">
+        <p class="eyebrow">{{ 'Track' if item.kind == 'recording' else ('Album / release' if item.kind == 'release' else 'Artist') }}</p>
+        <h3>{{ item.title }}</h3>
+        {% if item.artist %}<p>{{ item.artist }}</p>{% endif %}
+        {% if item.release %}<p class="muted">Appears on: {{ item.release }}</p>{% endif %}
+        <div class="music-search-facts">
+          {% if item.date %}<span>{{ item.date }}</span>{% endif %}
+          {% if item.duration %}<span>{{ item.duration }}</span>{% endif %}
+          {% if item.track_count and item.kind == 'release' %}<span>{{ item.track_count }} tracks</span>{% endif %}
+          {% if item.disambiguation %}<span>{{ item.disambiguation }}</span>{% endif %}
+        </div>
+        {% if item.score is not none %}
+        <p class="music-search-confidence"><strong>{{ '%.1f'|format(item.score) }}% search score</strong>
+        {% if item.ambiguous %}<span class="status status-waiting_for_user">Compare alternatives</span>{% else %}<span class="status status-complete">Strong search match</span>{% endif %}</p>
+        {% else %}<p class="muted fine-print">Edition choice · score unavailable</p>{% endif %}
+        {% if item.track_preview %}<details><summary>Preview track list</summary><ol>{% for track in item.track_preview %}<li>{{ track }}</li>{% endfor %}</ol></details>{% endif %}
+        {% if item.kind == 'artist' %}
+          <a class="button primary" href="{{ root_path }}/search?mode=ARTIST&amp;artist_id={{ item.id }}">Browse artist releases</a>
+        {% else %}
+          <form action="{{ root_path }}/acquisitions" method="post" class="music-search-actions">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="request_type" value="AUTO">
+            <input type="hidden" name="source_urls" value="{{ item.reference }}">
+            <label for="format-{{ loop.index }}">Audio format
+              <select id="format-{{ loop.index }}" name="preferred_format"><option value="FLAC">FLAC</option><option value="MP3_320">MP3 320</option></select>
+            </label>
+            <button class="button primary" type="submit">Request this {{ 'track' if item.kind == 'recording' else 'release' }}</button>
+          </form>
+        {% endif %}
+        <p class="muted fine-print">Selection enters the existing resolution, provider handoff, validation and approval workflow.</p>
+      </div>
+    </article>
+  {% endfor %}
+  </div>
+</section>
+{% endif %}
+{% endblock %}

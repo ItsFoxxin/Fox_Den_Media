@@ -346,6 +346,19 @@ class MusicBrainzClient:
         rows = payload.get("recordings")
         return [item for item in rows if isinstance(item, Mapping)] if isinstance(rows, list) else []
 
+    def browse_artist_releases(self, artist_id: str, *, limit: int = 8) -> list[Mapping[str, Any]]:
+        """Browse an artist's releases using the public MusicBrainz API."""
+        canonical_id = _canonical_mbid(artist_id)
+        if not 1 <= limit <= 25:
+            raise ValueError("Artist browse limit must be between 1 and 25")
+        payload = self._request_json(
+            "release/",
+            params={"artist": canonical_id, "fmt": "json", "limit": str(limit)},
+            namespace="musicbrainz-artist-releases",
+        )
+        rows = payload.get("releases")
+        return [item for item in rows if isinstance(item, Mapping)] if isinstance(rows, list) else []
+
     def search_recording_by_isrc(self, isrc: str, *, limit: int = 10) -> list[Mapping[str, Any]]:
         payload = self._request_json(
             "recording/",
