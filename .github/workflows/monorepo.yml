@@ -178,7 +178,8 @@ jobs:
 
   migration:
     name: Migration backup restore and rollback
-    needs: validation
+    # Run isolated heavy checks only after required core tests and security gates pass.
+    needs: [music, applications, audit, sast]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -211,7 +212,8 @@ jobs:
 
   jellyfin:
     name: Optional Jellyfin container
-    needs: validation
+    # Run isolated heavy checks only after required core tests and security gates pass.
+    needs: [music, applications, audit, sast]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
