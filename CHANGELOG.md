@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.9.4 - 2026-11-07
+
+### Fixed
+
+- Fixes #37: Suppress Music's server-browser actions when Firefox is disabled, unavailable or unauthorized and block watched-download handoff before state mutation when browser is unavailable.
+
+### Validation
+
+- Add bounded internal HTTP readiness checks, Portal admin and unauthorized regression tests, disabled/available/unavailable scenarios, and explicit Compose/controller browser-profile behavior.
+- Real pinned Firefox/noVNC tests and copied-state NAS acceptance remain pending. No production deployment or cutover is authorized.
+
+
 ## 0.9.3 - 2026-11-06
 
 ### Fixed

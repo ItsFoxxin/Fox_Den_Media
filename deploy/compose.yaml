@@ -25,7 +25,8 @@ x-music-environment: &music-environment
   DOWNLOAD_INBOX_DIR: /downloads
   DOWNLOAD_INBOX_AUTO_IMPORT: "${DOWNLOAD_INBOX_AUTO_IMPORT:-true}"
   MUSIC_REQUEST_AUTO_IMPORT: "${MUSIC_REQUEST_AUTO_IMPORT:-false}"
-  REMOTE_BROWSER_URL: /server-browser/
+  # Browser actions require an explicitly selected optional Firefox profile.
+  REMOTE_BROWSER_URL: "${REMOTE_BROWSER_URL:-}"
   # Match the Music toolbar destination to Firefox FF_OPEN_URL.
   BROWSER_HOME_URL: "${BROWSER_HOME_URL:-https://spotidownloader.com/}"
   FOXDEN_IDENTITY_PUBLIC_KEYS_FILE: /run/identity/public.json
@@ -71,7 +72,7 @@ services:
 
   portal:
     <<: *hardening
-    image: "${PORTAL_IMAGE:-foxden-portal:0.9.3}"
+    image: "${PORTAL_IMAGE:-foxden-portal:0.9.4}"
     build:
       context: ../apps/portal
       args:
@@ -165,7 +166,7 @@ services:
     <<: *hardening
     user: "${MEDIA_PUID:-10001}:${MEDIA_PGID:-10001}"
     profiles: [media]
-    image: "${MEDIA_IMAGE:-fox-den-media:0.9.3}"
+    image: "${MEDIA_IMAGE:-fox-den-media:0.9.4}"
     build:
       context: ..
       dockerfile: apps/media/Dockerfile
