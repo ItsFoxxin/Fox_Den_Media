@@ -88,7 +88,7 @@ Portal supports local, OIDC and hybrid authentication. It signs short-lived inte
 ## Development, testing and releases
 
 - `main` is protected, default and stable; `dev` is protected integration. Use reviewable feature/docs/security PRs into `dev`; promote reviewed `dev` to `main` separately.
-- CI covers tests, Compose modes, container smoke, real audio, migration fixtures, dependency auditing, Bandit, secret scanning and CodeQL. Its aggregate check is **Monorepo strict gate**.
+- CI covers tests, Compose modes, container smoke, real audio, migration fixtures, dependency auditing, Bandit, secret scanning and CodeQL. Its aggregate check is **Monorepo strict gate**.\n- [Versioning and bug tracking](docs/versioning-and-bug-tracking.md) uses one-step major/minor/patch releases; each future patch must fix one tracked GitHub bug issue, with a dedicated release increment, regression test and PR.
 - `VERSION` and `CHANGELOG.md` record the `0.9.2` milestone, **not** production acceptance or proof of a published GitHub release. CI never deploys the NAS.
 
 See [CI/development](docs/ci.md), [validation evidence](docs/validation.md), and the [1.0.0 checklist](docs/release-1.0-checklist.md).
