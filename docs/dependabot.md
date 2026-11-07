@@ -9,15 +9,16 @@ that nested file as the configuration of this monorepo.
 
 | Ecosystem | Dependency definitions | Frequency | Routine PR cap |
 | --- | --- | --- | --- |
-| GitHub Actions | Root `.github/workflows/` | Monday, 01:00 America/New_York | 2 |
-| pip | `apps/music/backend`, `apps/music/ci`, `apps/media`, `apps/portal` | Wednesday, 01:00 America/New_York | 3 |
-| Docker | Dockerfiles in `apps/music/backend`, `apps/media`, `apps/portal` | Friday, 01:00 America/New_York (weekly) | 2 |
+| GitHub Actions | Root `.github/workflows/` | Monday, 00:15 America/New_York | 2 |
+| pip | `apps/music/backend`, `apps/music/ci`, `apps/media`, `apps/portal` | Wednesday, 00:15 America/New_York | 3 |
+| Docker | Dockerfiles in `apps/music/backend`, `apps/media`, `apps/portal` | Friday, 00:15 America/New_York (weekly) | 2 |
 
 The cap limits open **routine version-update PRs** per update entry, not
 the number of dependencies examined. Unrelated updates are not deliberately
 grouped, allowing changes and failed tests to be attributed to a dependency.
 The schedule does not guarantee that an update exists or that GitHub will
-create a PR at precisely the specified minute. The morning 02:00 briefing\nmay contain checks still running or GitHub scheduling delays.
+create a PR at precisely the specified minute. The morning 02:00 briefing
+may contain checks still running or GitHub scheduling delays.
 
 ### Known boundaries
 
@@ -41,6 +42,26 @@ create a PR at precisely the specified minute. The morning 02:00 briefing\nmay c
   enabling updates for those services.
 - Some other tools, OS packages, and runtime images are outside the above
   supported manifests. Dependabot is not an all-dependencies audit.
+
+## Overnight reporting target
+
+- Routine version-update checks are requested Monday (Actions), Wednesday
+  (Python), and Friday (Docker) at 00:15 America/New_York. The intended
+  reporting cutoff is 02:00 local time on those days.
+- This is a **best-effort reporting target, not a completion guarantee**.
+  Dependabot checks, dependency resolution, PR creation, and subsequent CI
+  jobs can be delayed or fail to start. Security updates are event-driven
+  and do not follow this routine schedule.
+- A future read-only reporting integration must query current GitHub state
+  at report time rather than assume the scheduled job completed. Clearly
+  distinguish PASS, FAIL, RUNNING, QUEUED, NOT STARTED and NO UPDATE FOUND
+  (only when confirmed), and include relevant PR/run URLs and last checked
+  timestamps. Do not infer "nothing changed" from missing activity.
+- For missed cutoffs, queue delays or failures, preserve the item as
+  pending in the report and surface the completed result in the next
+  check/report; do not create duplicate issues for the same failing
+  workflow/PR. That report plumbing belongs to the later CI/event-hub
+  work, not the Dependabot foundation.
 
 ## Activation and routing
 
