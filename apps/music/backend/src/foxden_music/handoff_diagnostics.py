@@ -21,9 +21,9 @@ HANDOFF_OPERATIONS = frozenset({
     "stage_cleanup",
     "staged_artifact_stat",
     "staged_event_stat",
+    "restore_inbox_inspection",
     "restore_staged_file_move",
     "restore_staged_cleanup",
-    "database_handoff",
 })
 
 _ATTRIBUTE = "_foxden_handoff_operation"
