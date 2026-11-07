@@ -65,14 +65,15 @@ def changelog_entry(changelog: str, version: str) -> str:
 
 def patch_bug_issue(changelog: str, version: str) -> int:
     entry = changelog_entry(changelog, version)
-    fixed_section = re.search(r"^### Fixed\s*\n([\s\S]*?)(?=^### |\Z)", entry, re.M)
+    fixed_section = re.search(r"^### Fixed[ \t]*\n([\s\S]*?)(?=^#{2,3} |\Z)", entry, re.M)
     if fixed_section is None:
         raise VersionPolicyError(f"Patch {version} requires a ### Fixed changelog section")
     # One canonical bullet identifies the single bug. Supporting details and
     # regression-test bullets are allowed, but no additional bug issues.
     bullets = PATCH_BULLET_RE.findall(fixed_section.group(1))
+    all_fixed_bullets = re.findall(r"^[ \t]*-[ \t]+", fixed_section.group(1), re.M)
     refs = {int(number) for number in BUG_REFERENCE_RE.findall(entry)}
-    if len(bullets) != 1 or len(refs) != 1 or int(bullets[0]) not in refs:
+    if len(bullets) != 1 or len(all_fixed_bullets) != 1 or len(refs) != 1 or int(bullets[0]) not in refs:
         raise VersionPolicyError(
             f"Patch {version} must contain one '- Fixes #123: description' bullet "
             "and reference no other bug issue in its changelog entry."
@@ -111,7 +112,9 @@ def validate_policy(
         issue = patch_bug_issue(changelog, proposed)
         if not pr_title:
             raise VersionPolicyError("Patch release requires pull-request tracking metadata")
-        references = {int(number) for number in BUG_REFERENCE_RE.findall(pr_body)}
+        # Ignore placeholder examples inside the GitHub PR template's HTML comments.
+        visible_pr_body = re.sub(r"<!--[\s\S]*?-->", "", pr_body)
+        references = {int(number) for number in BUG_REFERENCE_RE.findall(visible_pr_body)}
         if references != {issue}:
             raise VersionPolicyError(
                 f"Patch {proposed} must reference only its tracked bug issue "
@@ -141,6 +144,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base", required=True, help="SHA of the PR target branch")
     parser.add_argument("--pr-event", type=Path, required=True, help="GitHub pull_request event JSON")
+    parser.add_argument("--issue-output", type=Path, help="Optional GitHub Actions output file")
     args = parser.parse_args()
     if not SHA_RE.fullmatch(args.base):
         parser.error("--base must be a Git commit SHA")
@@ -158,6 +162,10 @@ def main() -> int:
         )
     except (OSError, ValueError, subprocess.CalledProcessError) as exc:
         parser.exit(1, f"Version policy violation: {exc}\n")
+    if args.issue_output is not None:
+        issue = patch_bug_issue(changelog, current) if kind == "patch" else None
+        with args.issue_output.open("a", encoding="utf-8") as output:
+            output.write(f"issue={issue if issue is not None else ''}\n")
     print(f"Version policy passed: {previous} -> {current} ({kind})")
     return 0
 
