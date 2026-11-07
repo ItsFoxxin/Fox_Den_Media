@@ -101,7 +101,15 @@ reviewer is requested.
 
 ## Versioning and issue tracking
 
-- An ordinary Dependabot dependency-update PR is already the tracking work item;\n  avoid creating a duplicate GitHub issue for every routine update.\n- Future CI automation may create or update a deduplicated issue for actionable\n  persistent CI failures, regression detections, and confirmed security work.\n  That ticket-writing workflow belongs in the CI redesign rather than this\n  Dependabot foundation. Sensitive vulnerability details must not be\n  published in public issues. FoxForge execution should require separately\n  scoped authorization, and neither issue creation nor issue labeling is\n  permission to merge, release, or deploy.\n\n
+- An ordinary Dependabot dependency-update PR is already the tracking work item;
+  avoid creating a duplicate GitHub issue for every routine update.
+- Future CI automation may create or update a deduplicated issue for actionable
+  persistent CI failures, regression detections, and confirmed security work.
+  That ticket-writing workflow belongs in the CI redesign rather than this
+  Dependabot foundation. Sensitive vulnerability details must not be
+  published in public issues. FoxForge execution should require separately
+  scoped authorization, and neither issue creation nor issue labeling is
+  permission to merge, release, or deploy.
 - Routine dependency maintenance is **non-release** work unless it changes
   released application behavior. Do not automatically bump the product's
   root `VERSION` just because Dependabot opened a PR.
