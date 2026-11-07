@@ -10,7 +10,7 @@ import shutil
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from http.client import HTTPConnection, HTTPException
+from http.client import HTTPConnection, HTTPException as BrowserHTTPException
 from pathlib import Path
 from typing import Any
 
@@ -127,7 +127,7 @@ def _browser_server_ready() -> bool:
         connection.request("HEAD", "/")
         response = connection.getresponse()
         return 200 <= response.status < 400
-    except (OSError, HTTPException):
+    except (OSError, BrowserHTTPException):
         return False
     finally:
         connection.close()
