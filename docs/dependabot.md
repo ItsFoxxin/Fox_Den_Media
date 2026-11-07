@@ -9,15 +9,15 @@ that nested file as the configuration of this monorepo.
 
 | Ecosystem | Dependency definitions | Frequency | Routine PR cap |
 | --- | --- | --- | --- |
-| GitHub Actions | Root `.github/workflows/` | Monday, 09:00 America/New_York | 2 |
-| pip | `apps/music/backend`, `apps/music/ci`, `apps/media`, `apps/portal` | Tuesday, 09:00 America/New_York | 3 |
-| Docker | Dockerfiles in `apps/music/backend`, `apps/media`, `apps/portal` | Monthly, 09:00 America/New_York | 2 |
+| GitHub Actions | Root `.github/workflows/` | Monday, 01:00 America/New_York | 2 |
+| pip | `apps/music/backend`, `apps/music/ci`, `apps/media`, `apps/portal` | Wednesday, 01:00 America/New_York | 3 |
+| Docker | Dockerfiles in `apps/music/backend`, `apps/media`, `apps/portal` | Friday, 01:00 America/New_York (weekly) | 2 |
 
 The cap limits open **routine version-update PRs** per update entry, not
 the number of dependencies examined. Unrelated updates are not deliberately
 grouped, allowing changes and failed tests to be attributed to a dependency.
 The schedule does not guarantee that an update exists or that GitHub will
-create a PR at precisely the specified minute.
+create a PR at precisely the specified minute. The morning 02:00 briefing\nmay contain checks still running or GitHub scheduling delays.
 
 ### Known boundaries
 
@@ -80,6 +80,7 @@ reviewer is requested.
 
 ## Versioning and issue tracking
 
+- An ordinary Dependabot dependency-update PR is already the tracking work item;\n  avoid creating a duplicate GitHub issue for every routine update.\n- Future CI automation may create or update a deduplicated issue for actionable\n  persistent CI failures, regression detections, and confirmed security work.\n  That ticket-writing workflow belongs in the CI redesign rather than this\n  Dependabot foundation. Sensitive vulnerability details must not be\n  published in public issues. FoxForge execution should require separately\n  scoped authorization, and neither issue creation nor issue labeling is\n  permission to merge, release, or deploy.\n\n
 - Routine dependency maintenance is **non-release** work unless it changes
   released application behavior. Do not automatically bump the product's
   root `VERSION` just because Dependabot opened a PR.
