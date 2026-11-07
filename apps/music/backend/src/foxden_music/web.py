@@ -10,6 +10,7 @@ import shutil
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from http.client import HTTPConnection, HTTPException
 from pathlib import Path
 from typing import Any
 
@@ -113,6 +114,23 @@ _SECURITY_HEADERS = {
     "Referrer-Policy": "no-referrer",
     "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
 }
+
+
+def _browser_server_ready() -> bool:
+    """Probe only the fixed internal Firefox frontend, without proxies or redirects.
+
+    HTTP reachability does not guarantee a working noVNC session. Unavailable
+    profiles, DNS errors, timeouts and HTTP failures all fail closed.
+    """
+    connection = HTTPConnection("download-browser", 5800, timeout=0.5)
+    try:
+        connection.request("HEAD", "/")
+        response = connection.getresponse()
+        return 200 <= response.status < 400
+    except (OSError, HTTPException):
+        return False
+    finally:
+        connection.close()
 
 
 class _RequestBodyTooLarge(BaseException):
@@ -922,6 +940,21 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
             **values,
         }
 
+
+    def browser_admin_authorized(request: Request) -> bool:
+        if not settings.foxden_integrated_mode:
+            return True  # Preserve the prior standalone Music behavior.
+        claims = getattr(request.state, "foxden_identity", None)
+        return isinstance(claims, dict) and "admin" in claims.get("roles", [])
+
+    def available_browser_url(request: Request) -> str | None:
+        if not settings.remote_browser_url or not browser_admin_authorized(request):
+            return None
+        # Managed Compose has a fixed internal endpoint; no user URL is probed.
+        if settings.foxden_integrated_mode and not _browser_server_ready():
+            return None
+        return settings.remote_browser_url
+
     def render_error(
         request: Request,
         *,
@@ -1184,7 +1217,7 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
                 download_inbox_min_bytes=settings.download_inbox_min_bytes,
                 inbox_files=inbox_files,
                 inbox_error=inbox_error,
-                remote_browser_url=settings.remote_browser_url,
+                remote_browser_url=available_browser_url(request),
                 source_urls="",
                 request_type="AUTO",
                 artist="",
@@ -1366,7 +1399,7 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
                     else settings.spotidownloader_url
                 ),
                 auto_import_enabled=settings.music_request_auto_import,
-                remote_browser_url=settings.remote_browser_url,
+                remote_browser_url=available_browser_url(request),
                 automatic_inbox_enabled=bool(
                     settings.download_inbox_auto_import and settings.download_inbox_dir
                 ),
@@ -1512,14 +1545,17 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
         session: Session = Depends(session_dependency),
     ) -> HTMLResponse:
         acquisition = load_acquisition(session, acquisition_id)
-        if not settings.remote_browser_url:
-            raise HTTPException(status_code=409, detail="Server browser is not configured")
+        if not browser_admin_authorized(request):
+            raise HTTPException(status_code=403, detail="Administrator access is required")
+        browser_url = available_browser_url(request)
+        if not browser_url:
+            raise HTTPException(status_code=409, detail="Server browser is disabled or unavailable")
         return templates.TemplateResponse(
             request=request,
             name="acquisitions/browser.html",
             headers={"Cache-Control": "no-store"},
             context=common_context(
-                request, acquisition=acquisition, browser_url="/server-browser/",
+                request, acquisition=acquisition, browser_url=browser_url,
                 # Browser Home targets the configured Firefox homepage, not the
                 # request's metadata provider (which may be unset or MusicBrainz).
                 home_url=(
@@ -1538,6 +1574,10 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
     ) -> HTMLResponse:
         request.app.state.csrf.verify(csrf_token)
         acquisition = load_acquisition(session, acquisition_id)
+        if not browser_admin_authorized(request):
+            raise HTTPException(status_code=403, detail="Administrator access is required")
+        if not available_browser_url(request):
+            raise HTTPException(status_code=409, detail="Server browser is disabled or unavailable")
         if not settings.download_inbox_auto_import or settings.download_inbox_dir is None:
             raise HTTPException(status_code=409, detail="Automatic download inbox is not configured")
         if acquisition.associated_import_job_id is not None:
