@@ -57,8 +57,24 @@ def check():
                                 page = context.new_page()
                                 errors = []
                                 page.on("pageerror", lambda error: errors.append(str(error)))
+                                # Same-origin fixture exercises the actual Home bridge without
+                                # launching a VNC process or contacting the public provider.
+                                viewer_fixture = (
+                                    '<html><head><script type="module">'
+                                    'import UI from "./app/ui.js?v=fixture";'
+                                    'window.__viewerReady = Boolean(UI);'
+                                    '</script></head><body>CI viewer</body></html>'
+                                )
+                                viewer_module = (
+                                    'window.__foxdenKeys = [];'
+                                    'const UI = { connected: true, rfb: { viewOnly: false,'
+                                    ' sendKey: (...args) => window.__foxdenKeys.push(args) } };'
+                                    'window.__testViewer = UI; export default UI;'
+                                )
                                 page.route("**/server-browser/**", lambda route: route.fulfill(
-                                    content_type="text/html", body="<html><body>CI viewer placeholder</body></html>"))
+                                    content_type="text/html", body=viewer_fixture))
+                                page.route("**/server-browser/app/ui.js*", lambda route: route.fulfill(
+                                    content_type="application/javascript", body=viewer_module))
                                 for route in ("/", "/add", "/acquisitions", "/review", "/history",
                                     "/library", "/library/albums", "/library/artists", "/library/health"):
                                     response = page.goto(BASE + route)
@@ -79,8 +95,31 @@ def check():
                                 # outside this browser-only gate. Exercise the contained
                                 # browser shell without bypassing the resolution state.
                                 page.goto(acquisition_url + "/browser")
-                                assert page.get_by_role("button", name="Downloader home", exact=True).is_visible()
+                                home_button = page.get_by_role("button", name="Downloader home", exact=True)
+                                assert home_button.is_visible()
                                 assert page.locator(".sidebar").count() == 0
+                                assert page.locator(".browser-frame").get_attribute("data-home-url") == "https://spotidownloader.com/"
+                                # The bridge imports the real viewer UI module (mocked RFB)
+                                # and sends Ctrl+L, the HTTPS URL and Enter on one connection.
+                                home_button.wait_for(state="visible")
+                                page.wait_for_function("!document.querySelector('[data-browser-home]').disabled")
+                                home_button.click()
+                                page.get_by_text("Home address sent to Firefox.").wait_for()
+                                keys = page.frame_locator(".browser-frame").locator("body").evaluate(
+                                    "() => window.__foxdenKeys"
+                                )
+                                assert keys[0][0] == 0xff1b
+                                assert keys[-1][0] == 0xff0d
+                                assert "".join(chr(item[0]) for item in keys[4:-1]) == "https://spotidownloader.com/"
+                                # A disconnected RFB session must report failure rather
+                                # than claiming to have navigated.
+                                viewer = page.frame_locator(".browser-frame").locator("body")
+                                viewer.evaluate("() => { window.__testViewer.connected = false; }")
+                                home_button.click()
+                                page.get_by_text("The Firefox viewer is disconnected. Reconnect and try again.").wait_for()
+                                viewer.evaluate("() => { window.__testViewer.connected = true; window.__testViewer.rfb.viewOnly = true; }")
+                                home_button.click()
+                                page.get_by_text("Remote keyboard input is disabled in the viewer.").wait_for()
                                 page.get_by_role("link", name="Back to request", exact=True).click()
                                 assert "REQUESTED" in page.locator("body").inner_text()
                                 page.get_by_role("button", name="Cancel request", exact=True).click()

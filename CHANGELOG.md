@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.9.3 - 2026-11-06
+
+### Fixed
+
+- Fixes #27: Make the Music Downloader Home button target Firefox's configured `BROWSER_HOME_URL`, with strict HTTPS validation, explicit noVNC connection and keyboard-state feedback, and a manual address-bar fallback.
+
+### Validation
+
+- Added HTTP/configuration and mocked noVNC keyboard-navigation regressions.
+- Actual pinned Firefox image acceptance in a new isolated NAS deployment is still required; no production deployment or cutover is authorized.
+
 ## 0.9.2 - 2026-11-06
 
 ### Fixed

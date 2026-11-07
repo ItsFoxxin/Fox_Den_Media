@@ -40,6 +40,7 @@ class Settings(BaseSettings):
     chromaprint_enabled: bool = False
     fpcalc_path: str = "fpcalc"
     remote_browser_url: str | None = None
+    browser_home_url: str | None = None
     database_url: str | None = None
 
     # Container listener; Compose publishes only ingress and keeps this port private.
@@ -104,6 +105,7 @@ class Settings(BaseSettings):
         "jellyfin_url",
         "download_inbox_dir",
         "remote_browser_url",
+        "browser_home_url",
         "music_request_provider_url",
         "spotify_client_id",
         "spotify_client_secret",
@@ -166,6 +168,25 @@ class Settings(BaseSettings):
     @property
     def foxden_integrated_mode(self) -> bool:
         return self.foxden_identity_public_keys_file is not None
+
+    @field_validator("browser_home_url")
+    @classmethod
+    def validate_browser_home_url(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        from urllib.parse import urlsplit
+
+        if value != value.strip() or "\\" in value or any(ord(char) < 32 or ord(char) == 127 for char in value):
+            raise ValueError("BROWSER_HOME_URL must be an HTTPS URL without control characters")
+        parsed = urlsplit(value)
+        if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password or parsed.fragment:
+            raise ValueError("BROWSER_HOME_URL must be a public HTTPS URL without credentials or fragments")
+        try:
+            if parsed.port not in (None, 443):
+                raise ValueError("BROWSER_HOME_URL must use the default HTTPS port")
+        except ValueError as exc:
+            raise ValueError("BROWSER_HOME_URL has an invalid port") from exc
+        return value
 
     @field_validator("spotidownloader_url")
     @classmethod
