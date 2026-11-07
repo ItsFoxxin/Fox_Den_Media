@@ -110,6 +110,15 @@ def check():
                                 assert keys[0][0] == 0xff1b
                                 assert keys[-1][0] == 0xff0d
                                 assert "".join(chr(item[0]) for item in keys[4:-1]) == "https://spotidownloader.com/"
+                                # A disconnected RFB session must report failure rather
+                                # than claiming to have navigated.
+                                viewer = page.frame_locator(".browser-frame").locator("body")
+                                viewer.evaluate("() => { window.__testViewer.connected = false; }")
+                                home_button.click()
+                                page.get_by_text("The Firefox viewer is disconnected. Reconnect and try again.").wait_for()
+                                viewer.evaluate("() => { window.__testViewer.connected = true; window.__testViewer.rfb.viewOnly = true; }")
+                                home_button.click()
+                                page.get_by_text("Remote keyboard input is disabled in the viewer.").wait_for()
                                 page.get_by_role("link", name="Back to request", exact=True).click()
                                 assert "REQUESTED" in page.locator("body").inner_text()
                                 page.get_by_role("button", name="Cancel request", exact=True).click()
