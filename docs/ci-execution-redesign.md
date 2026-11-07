@@ -11,6 +11,77 @@
 > and active repository rulesets. Workflow code reviewed from `dev`;
 > proposed documentation lives only on `docs/ci-execution-design`.
 
+## Implementation status and verified evidence (Phase 2, November 7, 2026)
+
+This section tracks adoption of the architecture without rewriting the
+historical **pre-Phase-2** audit below. The "Current execution graph"
+and findings in sections 3–4 describe the original baseline examined
+in PR #30, **not** the updated workflow once Phase 2 merges.
+
+- **PR #30 — merged:** the accepted architecture and staged approach.
+- **PR #31 — merged:** Phase 1 preserved Validation and its dependent
+  checks, added checksum-pinned actionlint, reordered early policy
+  validation and eliminated the duplicate secret-history scan.
+- **PR #33 — proposed, not merged:** Phase 2 changes **only**
+  `migration.needs` and `jellyfin.needs` from `validation` to
+  `[music, applications, audit, sast]`. Validation remains the upstream
+  prerequisite of all four core jobs. These core jobs run concurrently;
+  both Music Python matrix versions are required. Migration and Jellyfin
+  begin together only when **every** core job group passes. Integration
+  and the all-results `Monorepo strict gate` retain their previous
+  `needs` and strict failure semantics. CodeQL remains separate.
+- **Phase 3, not started:** trigger deduplication; branch and PR trigger
+  configuration has intentionally not changed in PR #33.
+
+The proposed graph in section 5 is **exactly** the Phase 2 graph. No
+additional job, skipped-test exception, mandatory reviewer, altered
+CodeQL requirement, production deployment or release stage is added.
+
+### Live verification and benchmarking
+
+First successful [Phase 2 run 42363676078](https://github.com/ItsFoxxin/Fox_Den_Media/actions/runs/42363676078)
+finished with all ten monorepo job instances successful (two Music
+versions, six other test/security job instances, integration and gate).
+The longest core job (Music 3.12) completed at 10:23:38 UTC; Jellyfin
+started at 10:23:40 UTC and Migration at 10:23:41 UTC, overlapping one
+another. Only after they succeeded did integration start at 10:24:17 UTC.
+
+| Sample | Monorepo wall-clock | Sum of job execution durations |
+| --- | ---: | ---: |
+| Pre-Phase-1 design [run 42328872182](https://github.com/ItsFoxxin/Fox_Den_Media/actions/runs/42328872182) | 191 s | 360 job-seconds |
+| Phase 1 [run 42361440923](https://github.com/ItsFoxxin/Fox_Den_Media/actions/runs/42361440923) | 185 s | 360 job-seconds |
+| Phase 1 [run 42362886896](https://github.com/ItsFoxxin/Fox_Den_Media/actions/runs/42362886896) | 202 s | 374 job-seconds |
+| **Phase 2, first green run** [42363676078](https://github.com/ItsFoxxin/Fox_Den_Media/actions/runs/42363676078) | **225 s** | **343 job-seconds** |
+
+Green-run latency increased relative to the two sampled Phase 1 runs:
+that is the expected cost of placing isolated heavy work behind all
+core checks. Reducing actual total runner work on *failed-core* PRs,
+not accelerating every green PR, is the primary reason for these
+dependencies. Job seconds are **not GitHub billing totals**; cache,
+runner, Docker image and network variability mean these runs cannot
+establish a reliable cost trend on their own.
+
+In a **disposable unmerged** [failure-probe PR #34](https://github.com/ItsFoxxin/Fox_Den_Media/pull/34),
+a test-only deliberate Bandit job failure in
+[run 42363769908](https://github.com/ItsFoxxin/Fox_Den_Media/actions/runs/42363769908)
+left Music (both Python versions), apps, and dependency audit successful;
+**Migration, Jellyfin and integration all skipped**, while the
+`Monorepo strict gate` **failed**. Independent CodeQL analysis
+[passed](https://github.com/ItsFoxxin/Fox_Den_Media/actions/runs/42363769983).
+The disposable probe must never merge. `if: always()` still evaluates
+the gate; any skipped/cancelled/failed result is unequal to `success`.
+No intentional failure was pushed to `dev`.
+
+**Trade-off to revisit after benchmark collection:** the separate
+Migration suite is short (~9 seconds). Keeping it parallel with core
+checks would improve failing-PR diagnostics and save a little green-run
+critical path at the cost of executing it even when core fails; the
+approved all-core gate instead prioritizes lower unnecessary execution
+on invalid PRs. Do not quietly change that policy outside another
+reviewed implementation PR.
+
+---
+
 ## 1. Decision summary
 
 **Recommended:** maintain one short existing `validation` prerequisite; run

@@ -1,6 +1,6 @@
 # Fox Den Media — consolidated NAS acceptance checklist
 
-**Prepared:** 2026-11-07. **Reviewed dev SHA:** 60cce4e7e4cd73ca20f467af3f9f9e4b84f524f6. **Release metadata:** 0.9.3. **Older Test57 SHA:** 6c7f4b11a7a6978162057922d788fd9a85fb2d78 (0.9.1). **Release status: NO-GO pending new NAS rehearsal.**
+**Prepared:** 2026-11-07. **Synchronized/reviewed dev SHA:** 7c944988d737f42a0d1bc724bb7748a065ae3bc9 (CI Phase 2; original plan baseline 60cce4e7e4cd73ca20f467af3f9f9e4b84f524f6). **Release metadata:** 0.9.3. **Older Test57 SHA:** 6c7f4b11a7a6978162057922d788fd9a85fb2d78 (0.9.1). **Release status: NO-GO pending new NAS rehearsal.**
 
 **Scope and consent:** Documentation only. Do not run these steps without separate authorization; never modify existing Test57, Test51 or production projects, writable state, credentials, NAS networks or services. Use a NEW uniquely named Compose project, approved isolated copies/synthetic fixtures, private credentials, unique ports and separate backups. No merge/deploy/cutover authorization is implied.
 
@@ -15,7 +15,7 @@
 | Downloader Home [#24](https://github.com/ItsFoxxin/Fox_Den_Media/pull/24) | Home URL, error feedback, simulated noVNC keys; Music tests passed | Old Test57 observed Home issue | Actual pinned Firefox Home, fallback, mobile/desktop in [#27](https://github.com/ItsFoxxin/Fox_Den_Media/issues/27) |
 | Worker diagnostics [#28](https://github.com/ItsFoxxin/Fox_Den_Media/pull/28) | Synthetic EXDEV/EACCES/missing-stage and log-privacy regressions | Old logs lacked errno and failing syscall | Future sanitized numeric errno plus allowlisted handoff_operation |
 
-All six PRs are merged. The reviewed dev SHA has 12 successful GitHub check runs: strict monorepo gate, container integration, optional Jellyfin, Music 3.12 and 3.13, Portal/Media, migration fixtures, security audits, validation, Bandit and Python/JavaScript CodeQL (Actions run 42364488403; CodeQL run 42364488398). All six PR heads also passed their strict gates. The external CodeQL check on PR #24 was neutral, *not* successful, although its separate CodeQL Actions jobs succeeded. Recheck CI if dev moves.
+All six PRs are merged. The original reviewed 60cce4e head had 12 successful GitHub checks (Actions run 42364488403; CodeQL run 42364488398). The updated 7c944988 dev head has 14 successful checks, including Monorepo strict gate, consolidated containers, optional Jellyfin, Music 3.12/3.13, Portal/Media, migration fixtures, security audits, validation, Bandit, CodeQL for Python/JavaScript and two Dependabot checks (Actions run 42369088386; CodeQL run 42369088448). PR #33 changed only the CI workflow and CI design document, not runtime services or this checklist. All six PR heads also passed their strict gates. The external CodeQL check on PR #24 was neutral, *not* successful, although its separate CodeQL Actions jobs succeeded. Recheck CI if dev moves.
 
 Earlier Test51 six-container health and login redirect, Test52/53 SSO/role/outage work, and the separately running NAS Gluetun v3.41.1 DNS/HTTPS VPN evidence **do not validate this integrated release**. Test56's managed setup used a TEST-NET documentation endpoint; its qBittorrent/tunnel test did not pass. Gluetun health alone does not prove qBittorrent integration.
 
