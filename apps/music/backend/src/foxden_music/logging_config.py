@@ -45,6 +45,11 @@ class JsonFormatter(logging.Formatter):
                 payload[key] = value
         if record.exc_info:
             payload["exception_type"] = record.exc_info[0].__name__
+            # A numeric errno helps distinguish permission, filesystem and
+            # filename failures without exposing sensitive filesystem paths.
+            error = record.exc_info[1]
+            if isinstance(error, OSError) and isinstance(error.errno, int):
+                payload["exception_errno"] = error.errno
         return json.dumps(payload, ensure_ascii=False, default=str)
 
 
