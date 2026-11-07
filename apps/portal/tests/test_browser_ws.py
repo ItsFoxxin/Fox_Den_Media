@@ -111,7 +111,8 @@ def test_unauthenticated_wrong_origin_and_unexpected_paths_do_not_reach_firefox(
             ("/websockify", {"origin": "http://attacker.invalid"}),
             ("/unrelated-socket", ORIGIN),
         ]:
-            if headers["origin"] == ORIGIN["origin"] and path == "/unrelated-socket":
+            if headers["origin"] == "http://attacker.invalid":
+                # The malicious Origin must be rejected *with* a valid admin cookie.
                 bootstrap_admin(client)
             with pytest.raises(WebSocketDisconnect):
                 with client.websocket_connect(path, headers=headers):
