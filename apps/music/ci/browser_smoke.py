@@ -67,8 +67,9 @@ def check():
                                 )
                                 viewer_module = (
                                     'window.__foxdenKeys = [];'
-                                    'export default { connected: true, rfb: { viewOnly: false,'
+                                    'const UI = { connected: true, rfb: { viewOnly: false,'
                                     ' sendKey: (...args) => window.__foxdenKeys.push(args) } };'
+                                    'window.__testViewer = UI; export default UI;'
                                 )
                                 page.route("**/server-browser/**", lambda route: route.fulfill(
                                     content_type="text/html", body=viewer_fixture))
