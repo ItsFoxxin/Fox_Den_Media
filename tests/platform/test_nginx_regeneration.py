@@ -126,3 +126,43 @@ def test_failed_deploy_does_not_recreate_ingress(tmp_path, monkeypatch):
     monkeypatch.setattr(sys, "argv", ["foxden", "deploy", "music", "--env", str(tmp_path / ".env"), "--execute"])
     assert foxden.main() == 1
     assert len(calls) == 1
+
+
+def test_config_error_never_executes_compose(tmp_path, monkeypatch, capsys):
+    """A failed validation/render must never fall through to a Docker action."""
+    values = fixture_values(tmp_path)
+    calls = []
+    monkeypatch.setattr(foxden, "load_env", lambda path: values)
+    monkeypatch.setattr(foxden, "validate", lambda *args, **kw: None)
+    monkeypatch.setattr(
+        foxden,
+        "render_gateway",
+        lambda *args, **kw: (_ for _ in ()).throw(foxden.ConfigError("synthetic render failure")),
+    )
+    monkeypatch.setattr(foxden.subprocess, "run", lambda *args, **kw: calls.append((args, kw)))
+    monkeypatch.setattr(
+        sys, "argv", ["foxden", "deploy", "music", "--env", str(tmp_path / ".env"), "--execute"]
+    )
+
+    assert foxden.main() == 2
+    assert calls == []
+    assert "synthetic render failure" in capsys.readouterr().err
+
+
+def test_optional_owner_check_runs_before_secret_bearing_render(tmp_path, monkeypatch):
+    values = fixture_values(tmp_path)
+    calls = []
+    monkeypatch.setattr(foxden, "load_env", lambda path: values)
+    monkeypatch.setattr(foxden, "validate", lambda *args, **kw: None)
+    monkeypatch.setattr(foxden, "inspect_secret_owners", lambda *args, **kw: calls.append("inspect"))
+    monkeypatch.setattr(foxden, "render_gateway", lambda *args, **kw: calls.append("render") or tmp_path / "nginx.conf")
+    monkeypatch.setattr(
+        foxden.subprocess, "run", lambda *args, **kw: type("Result", (), {"returncode": 0})()
+    )
+    monkeypatch.setattr(
+        sys, "argv",
+        ["foxden", "config", "music", "--env", str(tmp_path / ".env"), "--check-service-owners"],
+    )
+
+    assert foxden.main() == 0
+    assert calls == ["inspect", "render"]
