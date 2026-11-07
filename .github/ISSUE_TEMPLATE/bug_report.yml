@@ -1,0 +1,87 @@
+name: "Bug report"
+description: "Track one independently reproducible Fox Den Media defect and its patch release."
+title: "bug: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **One issue per bug/root cause.** Do not include credentials, private paths, tokens, or unredacted logs. A dedicated fix PR must link this issue and increment PATCH by one.
+  - type: textarea
+    id: defect
+    attributes:
+      label: "Bug / unexpected behavior"
+      description: "Describe one defect, including the affected module and observed behavior."
+      placeholder: "When ..., the application ..."
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: "Steps to reproduce"
+      description: "Use safe, synthetic data and describe exactly how to reproduce the issue."
+      placeholder: "1. ...\n2. ..."
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: "Expected versus actual behavior"
+      description: "Explain what should have happened and what happened instead."
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: "Relevant logs / evidence"
+      description: "Redact secrets, tokens, private paths and identifying data before posting."
+    validations:
+      required: false
+  - type: input
+    id: baseline
+    attributes:
+      label: "Affected version / commit"
+      placeholder: "0.9.2 / commit SHA"
+    validations:
+      required: true
+  - type: dropdown
+    id: severity
+    attributes:
+      label: "Impact"
+      options:
+        - "Low - cosmetic or minor behavior"
+        - "Medium - workflow broken or unreliable"
+        - "High - security, data integrity or major outage"
+        - "Critical - active exploit or risk to production state"
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: "Fix acceptance criteria and regression tests"
+      description: "What must pass to consider this specific bug resolved?"
+    validations:
+      required: true
+  - type: textarea
+    id: progress
+    attributes:
+      label: "Fix progress tracker"
+      description: "Update these checkboxes as the bug moves through triage, review, validation, and release."
+      value: |
+        - [ ] Reproduction confirmed and root cause isolated
+        - [ ] Dedicated fix branch and patch version selected
+        - [ ] Regression test added and fix implemented
+        - [ ] Fix PR linked to this issue
+        - [ ] CI, CodeQL, and relevant isolated-runtime checks passed
+        - [ ] Fix reviewed, merged and published in a release
+        - [ ] Fix verified in the intended environment after deployment approval
+    validations:
+      required: false
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: "Scope and safety"
+      options:
+        - label: "This issue describes one defect, not a collection of unrelated bugs."
+          required: true
+        - label: "I have removed private credentials and sensitive data."
+          required: true
