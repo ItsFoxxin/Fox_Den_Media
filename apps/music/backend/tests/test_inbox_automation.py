@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import time
+import uuid
 
 import pytest
 from pathlib import Path
@@ -17,7 +18,6 @@ from foxden_music import inbox_automation
 from foxden_music.inbox_automation import stage_next_waiting_download
 from foxden_music.handoff_diagnostics import handoff_error_context
 from foxden_music.intake import stage_inbox_file
-import uuid
 from foxden_music.models import AcquisitionArtifact, AcquisitionJob, Job, JobEvent, ReleaseCandidate
 from foxden_music.request_workflow import create_request_jobs, parse_request_reference
 
