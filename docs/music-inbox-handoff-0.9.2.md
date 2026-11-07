@@ -16,6 +16,14 @@ The patch keeps `inbox_file` immutable throughout filename/reference tracking an
 - A staging `OSError` before database mutation is independent of the `AttributeError`. If the request's inbound file remains, it can be retried after fixing access. Auto-retry must not silently duplicate a committed handoff.
 - Other recovery failure types, interrupted worker process/host crash and cross-device moves still require separate stress/rehearsal evidence. Passing synthetic tests is **not** proof of a transactional filesystem.
 
+## 2026-11-07: new read-only Test57 log evidence
+
+Test57 logged ten `AttributeError` handoff failures between 00:02:45 and 00:03:04 UTC, followed by one `OSError` at 00:03:06 UTC. The JSON log formatter emitted only `exception_type`; it did not include a numeric errno or traceback. The exact errno therefore **cannot be established** from these historical lines.
+
+The recovery path prefixes the filename with `recovered-<8 hex digits>-` after every failed transaction; successive retries may repeatedly prepend prefixes, eventually reaching a filesystem component-size limit and raising `ENAMETOOLONG` (`errno=36` on typical Linux hosts). This is a strong mechanistic candidate for the observed transition from `AttributeError` to `OSError`, **not yet confirmed without errno**.
+
+The 0.9.2 candidate now strips existing generated recovery prefixes, caps UTF-8 basename length to 255 bytes while retaining the extension and adds a synthetic 18-retry test proving file contents, database rollback and subsequent successful handoff. The structured JSON logger now emits a numeric `exception_errno` for future `OSError` events without disclosing paths or exception messages.
+
 ## Subsequent `OSError` investigation
 
 Do **not** assume that the observed NAS `OSError` is a direct consequence of the variable collision. Distinguish these paths from timestamped, *redacted* traceback frames and errno:
