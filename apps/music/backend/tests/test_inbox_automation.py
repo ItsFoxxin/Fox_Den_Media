@@ -15,6 +15,9 @@ from foxden_music.database import Database
 from foxden_music.enums import AcquisitionProvider, AcquisitionState, JobState, PreferredFormat
 from foxden_music import inbox_automation
 from foxden_music.inbox_automation import stage_next_waiting_download
+from foxden_music.handoff_diagnostics import handoff_error_context
+from foxden_music.intake import stage_inbox_file
+import uuid
 from foxden_music.models import AcquisitionArtifact, AcquisitionJob, Job, JobEvent, ReleaseCandidate
 from foxden_music.request_workflow import create_request_jobs, parse_request_reference
 
@@ -353,3 +356,67 @@ def test_recovery_filename_is_bounded_and_keeps_extension(filename: str) -> None
     assert recovered.count("recovered-") == 1
     assert recovered.endswith(".zip")
     assert len(recovered.encode("utf-8")) <= 255
+
+
+def test_stage_move_exdev_identifies_failing_operation_and_preserves_source(
+    settings: Settings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Synthetic cross-device move failure must not claim or delete a file."""
+    inbox = tmp_path / "downloads"
+    inbox.mkdir()
+    configured = settings.model_copy(update={
+        "download_inbox_dir": inbox,
+        "download_inbox_settle_seconds": 0,
+        "download_inbox_min_bytes": 1,
+        "download_inbox_move_files": True,
+        "staging_dir": tmp_path / "staging",
+    })
+    source = inbox / "album.zip"
+    original = b"do-not-delete-this-download"
+    source.write_bytes(original)
+
+    def fail_move(*_args, **_kwargs):
+        raise OSError(18, "synthetic cross-device move failure", "/private/download.zip")
+
+    monkeypatch.setattr("foxden_music.intake.shutil.move", fail_move)
+    with pytest.raises(OSError) as caught:
+        stage_inbox_file("album.zip", configured)
+    assert caught.value.errno == 18
+    assert handoff_error_context(caught.value) == {"handoff_operation": "stage_file_move"}
+    assert source.read_bytes() == original
+    assert list(configured.jobs_dir.iterdir()) == []
+
+
+def test_restore_move_eacces_identifies_recovery_operation_and_keeps_staging(
+    settings: Settings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    inbox = tmp_path / "downloads"
+    inbox.mkdir()
+    configured = settings.model_copy(update={
+        "download_inbox_dir": inbox,
+        "download_inbox_move_files": True,
+        "staging_dir": tmp_path / "staging",
+    })
+    job_id = str(uuid.uuid4())
+    source = configured.jobs_dir / job_id / "incoming" / "source.zip"
+    source.parent.mkdir(parents=True)
+    original = b"keep-staged-bytes-for-operator"
+    source.write_bytes(original)
+
+    def fail_move(*_args, **_kwargs):
+        raise OSError(13, "synthetic permission denied", "/private/album.zip")
+
+    monkeypatch.setattr(inbox_automation.shutil, "move", fail_move)
+    with pytest.raises(OSError) as caught:
+        inbox_automation._restore_staged_file(configured, job_id, source, "album.zip")
+    assert caught.value.errno == 13
+    assert handoff_error_context(caught.value) == {"handoff_operation": "restore_staged_file_move"}
+    assert source.read_bytes() == original
+    assert not list(inbox.iterdir())
+
+
+def test_missing_staged_artifact_reports_exact_stat_operation(tmp_path: Path) -> None:
+    missing = tmp_path / "not-an-actual-file.zip"
+    with pytest.raises(FileNotFoundError) as caught:
+        inbox_automation._stat_staged_bytes(missing, operation="staged_artifact_stat")
+    assert handoff_error_context(caught.value) == {"handoff_operation": "staged_artifact_stat"}
