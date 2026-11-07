@@ -1,0 +1,50 @@
+# Root Dependabot configuration for the Fox Den Media monorepo.
+# GitHub activates these schedules only after this file reaches default branch main.
+# Routine version-update PRs target dev. Security-update PRs target main and
+# are reviewed and back-synced separately; target-branch settings do not apply
+# to security-update PRs.
+version: 2
+updates:
+  # Root GitHub Actions workflows, including SHA-pinned action references.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    target-branch: "dev"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "00:15"
+      timezone: "America/New_York"
+    open-pull-requests-limit: 2
+
+  # Music application, Music browser-test tooling, Movies/TV, and Portal.
+  # Music has overlapping pins in pyproject.toml and requirements*.txt:
+  # review generated PRs for consistent pins before merging.
+  # Do not group unrelated updates; keep failures attributable.
+  - package-ecosystem: "pip"
+    directories:
+      - "/apps/music/backend"
+      - "/apps/music/ci"
+      - "/apps/media"
+      - "/apps/portal"
+    target-branch: "dev"
+    schedule:
+      interval: "weekly"
+      day: "wednesday"
+      time: "00:15"
+      timezone: "America/New_York"
+    open-pull-requests-limit: 3
+
+  # Application Dockerfile base images. Deployment Compose image references use
+  # variable-driven defaults and require a separate image-update policy.
+  - package-ecosystem: "docker"
+    directories:
+      - "/apps/music/backend"
+      - "/apps/media"
+      - "/apps/portal"
+    target-branch: "dev"
+    schedule:
+      interval: "weekly"
+      day: "friday"
+      time: "00:15"
+      timezone: "America/New_York"
+    open-pull-requests-limit: 2
