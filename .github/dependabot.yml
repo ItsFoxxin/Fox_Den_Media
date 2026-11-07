@@ -1,0 +1,46 @@
+# Fox Den Media dependency updates.
+# This file must also exist on the default branch (main) before Dependabot
+# uses it. Routine version-update PRs are directed to dev for testing.
+# GitHub's Dependabot security-update PRs target the default branch (main);
+# they need a separate main-to-dev back-sync after an approved security merge.
+version: 2
+updates:
+  # Update pinned GitHub Actions used in root workflows.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    target-branch: "dev"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "America/New_York"
+    open-pull-requests-limit: 2
+
+  # App-level Python manifests, including requirements and pyproject.toml.
+  # Keep updates small: one dependency per PR, so CI failures are attributable.
+  - package-ecosystem: "pip"
+    directories:
+      - "/apps/music/backend"
+      - "/apps/media"
+      - "/apps/portal"
+    target-branch: "dev"
+    schedule:
+      interval: "weekly"
+      day: "tuesday"
+      time: "09:00"
+      timezone: "America/New_York"
+    open-pull-requests-limit: 3
+
+  # App Dockerfile base images. Complex variable-driven production Compose
+  # images are deliberately excluded pending a separate image-update policy.
+  - package-ecosystem: "docker"
+    directories:
+      - "/apps/music/backend"
+      - "/apps/media"
+      - "/apps/portal"
+    target-branch: "dev"
+    schedule:
+      interval: "monthly"
+      time: "09:00"
+      timezone: "America/New_York"
+    open-pull-requests-limit: 2
