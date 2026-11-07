@@ -45,6 +45,12 @@ at SpotiDownloader. The toolbar could therefore send the wrong destination
    their intended destinations. Confirm login, session authorization and
    browser-download staging remain independent.
 
+## Release tracking
+
+This single-bug patch is tracked by GitHub issue #27. Root/media release metadata
+advances from 0.9.2 to 0.9.3. The separate worker handoff fixes remain part
+of 0.9.2; their changelog entry and tests are not changed here.
+
 ## Limits
 
 The fixture validates JavaScript/Home dispatch against a simulated noVNC
