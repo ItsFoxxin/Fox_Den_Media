@@ -1,6 +1,6 @@
 # Fox Den Media documentation
 
-This index is the maintained entry point for **0.9.1**, an isolated-deployment and copied-state rehearsal candidate. **Production cutover remains blocked** pending the [readiness assessment](production-readiness.md).
+This index is the maintained entry point for **0.9.2**, an isolated-deployment and copied-state rehearsal candidate. **Production cutover remains blocked** pending the [readiness assessment](production-readiness.md).
 
 ## Start and operate
 
@@ -24,7 +24,7 @@ This index is the maintained entry point for **0.9.1**, an isolated-deployment a
 
 ## Validation, development and releases
 
-- [CI and development workflow](ci.md), [validation evidence](validation.md), [documentation audit](documentation-audit.md)
+- [Versioning and bug tracking](versioning-and-bug-tracking.md), [CI and development workflow](ci.md), [validation evidence](validation.md), [documentation audit](documentation-audit.md)
 - [Production-readiness decision](production-readiness.md), [0.9.0 compatibility report](production-compatibility-0.9.md), [0.9.1 security review](security-0.9.1.md)
 - [NAS inventory checklist](nas-inventory-checklist.md), [production rehearsal](production-migration-rehearsal.md), [cutover runbook](migration-runbook.md), [N100 hardware validation](n100-hardware-validation.md)
 - [0.9.0 release-candidate checklist](release-0.9-checklist.md), [1.0.0 acceptance checklist](release-1.0-checklist.md)

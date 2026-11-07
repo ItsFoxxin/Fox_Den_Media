@@ -11,6 +11,7 @@ on:
 
 permissions:
   contents: read
+  issues: read
 
 concurrency:
   group: monorepo-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -38,6 +39,22 @@ jobs:
           python scripts/scan_history_secrets.py
           python -m pytest tests/platform tests/test_integration_compose.py tests/test_ingress_config.py -q
           test -z "$(git ls-tree -r --name-only HEAD | grep '^music/' || true)"
+      - name: Verify semantic version and single-bug patch policy
+        if: github.event_name == 'pull_request'
+        id: version_policy
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          python scripts/check_version_policy.py --base "$PR_BASE_SHA" --pr-event "$GITHUB_EVENT_PATH" --issue-output "$GITHUB_OUTPUT"
+      - name: Verify linked patch bug issue exists in this repository
+        if: github.event_name == 'pull_request' && steps.version_policy.outputs.issue != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUG_ISSUE: ${{ steps.version_policy.outputs.issue }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          test "$(gh api "repos/$GH_REPO/issues/$BUG_ISSUE" --jq '(.pull_request == null) and (.state != null)')" = true
+
       - name: Render every deployment mode
         run: |
           docker compose --env-file deploy/examples/music.env.example -f deploy/compose.yaml --profile music config --quiet
