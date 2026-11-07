@@ -301,3 +301,55 @@ def test_stage_oserror_before_database_write_leaves_acquisition_retryable(
         assert session.scalars(select(Job)).all() == []
 
     assert stage_next_waiting_download(database, configured) is not None
+
+
+def test_repeated_manifest_handoff_failures_never_grow_recovered_filenames(
+    settings: Settings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    configured, database, inbox = configured_database(settings, tmp_path)
+    acquisition_id = waiting_manifest_request(database)
+    original = b"retry-preserves-original-file"
+    # Long but valid name: the old implementation added a prefix on every
+    # failed transaction until the filesystem rejected the growing basename.
+    filename = "x" * 180 + ".zip"
+    (inbox / filename).write_bytes(original)
+
+    with monkeypatch.context() as patch:
+        def reject_event(*args, **kwargs):
+            raise RuntimeError("synthetic handoff failure")
+        patch.setattr(inbox_automation, "add_event", reject_event)
+        for _ in range(18):
+            with pytest.raises(RuntimeError, match="synthetic handoff failure"):
+                stage_next_waiting_download(database, configured)
+            files = list((inbox / acquisition_id).glob("*"))
+            assert len(files) == 1
+            assert files[0].read_bytes() == original
+            assert len(files[0].name.encode("utf-8")) <= 255
+            assert files[0].name.count("recovered-") == 1
+            assert list(configured.jobs_dir.iterdir()) == []
+
+    job_id = stage_next_waiting_download(database, configured)
+    assert job_id is not None
+    assert stage_next_waiting_download(database, configured) is None
+    with database.session() as session:
+        acquisition = session.get(AcquisitionJob, acquisition_id)
+        assert acquisition.associated_import_job_id == job_id
+        assert acquisition.state == AcquisitionState.VALIDATING.value
+        assert len(session.scalars(select(Job)).all()) == 1
+        assert len(session.scalars(select(ReleaseCandidate)).all()) == 1
+        assert len(session.scalars(select(AcquisitionArtifact)).all()) == 1
+
+
+@pytest.mark.parametrize("filename", [
+    "track.zip",
+    "recovered-1234abcd-track.zip",
+    "recovered-1234abcd-recovered-5678abcd-track.zip",
+    "테스트" * 75 + ".zip",
+    "f" * 240 + ".zip",
+])
+def test_recovery_filename_is_bounded_and_keeps_extension(filename: str) -> None:
+    recovered = inbox_automation._recovery_name(filename)
+    assert recovered.startswith("recovered-")
+    assert recovered.count("recovered-") == 1
+    assert recovered.endswith(".zip")
+    assert len(recovered.encode("utf-8")) <= 255
