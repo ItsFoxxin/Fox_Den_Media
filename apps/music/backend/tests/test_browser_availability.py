@@ -41,3 +41,18 @@ def test_browser_http_probe_fails_closed_on_connection_error(monkeypatch):
     monkeypatch.setattr(web, "HTTPConnection", Unreachable)
     assert web._browser_server_ready() is False
     assert closed
+
+
+def test_browser_http_probe_fails_closed_on_malformed_http(monkeypatch):
+    from http.client import BadStatusLine
+    closed = []
+    class Malformed:
+        def __init__(self, host, port, timeout):
+            assert (host, port, timeout) == ("download-browser", 5800, 0.5)
+        def request(self, method, path):
+            raise BadStatusLine("invalid HTTP response")
+        def close(self):
+            closed.append(True)
+    monkeypatch.setattr(web, "HTTPConnection", Malformed)
+    assert web._browser_server_ready() is False
+    assert closed
