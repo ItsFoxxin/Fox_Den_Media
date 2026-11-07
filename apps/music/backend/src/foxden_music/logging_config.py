@@ -6,6 +6,8 @@ import sys
 from datetime import datetime, timezone
 from typing import Any
 
+from .handoff_diagnostics import handoff_error_context
+
 
 STANDARD_KEYS = {
     "name",
@@ -48,8 +50,10 @@ class JsonFormatter(logging.Formatter):
             # A numeric errno helps distinguish permission, filesystem and
             # filename failures without exposing sensitive filesystem paths.
             error = record.exc_info[1]
-            if isinstance(error, OSError) and isinstance(error.errno, int):
-                payload["exception_errno"] = error.errno
+            if isinstance(error, OSError):
+                if isinstance(error.errno, int):
+                    payload["exception_errno"] = error.errno
+                payload.update(handoff_error_context(error))
         return json.dumps(payload, ensure_ascii=False, default=str)
 
 
