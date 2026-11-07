@@ -47,6 +47,9 @@ from .acquisition import (
     transition_acquisition,
 )
 from .config import Settings, get_settings
+from .cache import DatabaseJsonCache
+from .musicbrainz import MusicBrainzClient, MusicBrainzError
+from .search_experience import search_music
 from .database import Database
 from .enums import (
     ACTIVE_JOB_STATES,
@@ -102,7 +105,7 @@ _MUSICBRAINZ_RELEASE_ID = re.compile(
 )
 _SECURITY_HEADERS = {
     "Content-Security-Policy": (
-        "default-src 'self'; img-src 'self' data:; object-src 'none'; "
+        "default-src 'self'; img-src 'self' data: https://coverartarchive.org https://archive.org https://*.archive.org; object-src 'none'; "
         "base-uri 'self'; frame-ancestors 'none'; form-action 'self'"
     ),
     "X-Content-Type-Options": "nosniff",
@@ -1117,6 +1120,49 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
             request=request,
             name="partials/dashboard_recent.html",
             context=common_context(request, recent_imports=_recent_imports(session)),
+        )
+
+    @app.get("/search", response_class=HTMLResponse)
+    def search_page(
+        request: Request,
+        mode: str = Query("TRACK"),
+        q: str = Query(""),
+        artist: str = Query(""),
+        artist_id: str = Query(""),
+    ) -> HTMLResponse:
+        query = q.strip()
+        matches: list[dict[str, Any]] = []
+        search_error: str | None = None
+        searched = bool(query or artist_id)
+        response_status = 200
+        if searched:
+            try:
+                if len(q) > 160 or len(artist) > 160:
+                    raise ValueError("Search terms cannot exceed 160 characters")
+                with MusicBrainzClient(settings, cache=DatabaseJsonCache(database)) as client:
+                    matches = search_music(client, mode=mode, query=query, artist=artist, artist_id=artist_id)
+            except ValueError as exc:
+                search_error = str(exc)
+                response_status = 400
+            except MusicBrainzError as exc:
+                logger.warning("MusicBrainz discovery failed: %s", exc.__class__.__name__)
+                search_error = str(exc)
+                response_status = 503
+        return templates.TemplateResponse(
+            request=request,
+            name="search.html",
+            status_code=response_status,
+            headers={"Cache-Control": "no-store"},
+            context=common_context(
+                request,
+                mode=mode.strip().upper(),
+                query=query,
+                artist=artist.strip(),
+                artist_id=artist_id,
+                matches=matches,
+                search_error=search_error,
+                searched=searched,
+            ),
         )
 
     @app.get("/add", response_class=HTMLResponse)

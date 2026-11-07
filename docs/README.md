@@ -38,3 +38,5 @@ This index is the maintained entry point for **0.9.1**, an isolated-deployment a
 - [Music component docs](../apps/music/README.md), [Music backend docs](../apps/music/backend/README.md), [Portal docs](../apps/portal/README.md)
 
 Older phase documents, component version notes and ADRs are retained as evidence of *when* decisions were made. They are **not** current deployment instructions. Start with [deployment](deployment.md) and the actual CLI/Compose files for operational work.
+
+- [MusicBrainz name search and selection](music-search.md) — track, album, and artist discovery; reviewed edition selection.
