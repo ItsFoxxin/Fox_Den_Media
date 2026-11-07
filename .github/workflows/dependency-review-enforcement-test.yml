@@ -1,0 +1,26 @@
+name: Temporary Dependency Review Enforcement Test
+
+# DISPOSABLE: only attached to PR #35 on test/dependency-review-ghsa-8q59.
+# Never merge this workflow. It does not run package installation or builds.
+on:
+  pull_request:
+    branches: [dev]
+
+permissions:
+  contents: read
+
+jobs:
+  verify-blocking:
+    name: Dependency Review (test blocking)
+    if: ${{ github.event.pull_request.number == 35 && github.head_ref == 'test/dependency-review-ghsa-8q59' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Inspect newly added fixture against GitHub Advisory Database
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: high
+          fail-on-scopes: runtime, development, unknown
+          license-check: false
+          show-openssf-scorecard: false
+          warn-only: false
