@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import json
+import re
 import shutil
 import uuid
 from datetime import datetime, timezone
@@ -20,6 +21,28 @@ from .state import add_event
 
 logger = logging.getLogger(__name__)
 
+# Each failed handoff is eligible for retry. Never prepend another recovery
+# prefix to an already recovered filename: repeated failures otherwise cause
+# ENAMETOOLONG on filesystems with 255-byte name limits.
+_RECOVERY_PREFIXES = re.compile(r"^(?:recovered-[0-9a-f]{8}-)+")
+_RECOVERY_FILENAME_MAX_BYTES = 255
+
+
+def _recovery_name(display_name: str) -> str:
+    """Return a bounded, extension-preserving unique recovery filename."""
+    original = _RECOVERY_PREFIXES.sub("", display_name)
+    if not original:
+        original = "download"
+    prefix = f"recovered-{uuid.uuid4().hex[:8]}-"
+    allowance = _RECOVERY_FILENAME_MAX_BYTES - len(prefix.encode("utf-8"))
+    if len(original.encode("utf-8")) > allowance:
+        suffix = Path(original).suffix
+        stem = original[:-len(suffix)] if suffix else original
+        stem_allowance = max(1, allowance - len(suffix.encode("utf-8")))
+        stem = stem.encode("utf-8")[:stem_allowance].decode("utf-8", errors="ignore")
+        original = (stem or "download") + suffix
+    return prefix + original
+
 
 def _epoch(value: datetime) -> float:
     if value.tzinfo is None:
@@ -37,7 +60,7 @@ def _restore_staged_file(
 
     if settings.download_inbox_move_files and staged_path.exists() and settings.download_inbox_dir:
         root = settings.download_inbox_dir.resolve(strict=True)
-        destination = root / f"recovered-{uuid.uuid4().hex[:8]}-{display_name}"
+        destination = root / _recovery_name(display_name)
         shutil.move(str(staged_path), str(destination))
     cleanup_staged_job(settings, job_id)
 
