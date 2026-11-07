@@ -59,7 +59,11 @@ def register_browser_websockets(app: FastAPI, store, public_url: str) -> None:
             return
         upstream_url = f"{UPSTREAM_ORIGIN}/{browser_socket_path}"
         if query:
-            upstream_url += "?" + query.decode("ascii", errors="strict")
+            try:
+                upstream_url += "?" + query.decode("ascii", errors="strict")
+            except UnicodeDecodeError:
+                await websocket.close(code=1008)
+                return
         # noVNC's optional 'binary' subprotocol is forwarded, including on audio.
         offered = websocket.scope.get("subprotocols", [])
         protocols = ["binary"] if "binary" in offered else None
@@ -68,7 +72,7 @@ def register_browser_websockets(app: FastAPI, store, public_url: str) -> None:
                 upstream_url, subprotocols=protocols, open_timeout=5,
                 close_timeout=2, max_size=MAX_FRAME_BYTES,
             )
-        except (OSError, TimeoutError, ValueError, Exception) as exc:
+        except Exception:
             # No stack trace, query string or user session data in error logs.
             await websocket.close(code=1013)
             return
