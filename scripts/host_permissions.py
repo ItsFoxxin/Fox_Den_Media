@@ -137,9 +137,10 @@ def provision_permissions(values: dict[str, str], *, created_directories: set[Pa
 
     # Preflight is complete before any metadata mutation. Keep host directories
     # private; Docker daemon resolves the per-file source bind mounts.
-    os.chown(secret_dir, 0, 0, follow_symlinks=False)
+    # Retain the operator-owned directory owner so subsequent unprivileged CLI
+    # validation can traverse the directories. Host service users do not need
+    # host directory access: Docker bind-mounts the explicitly declared files.
     os.chmod(secret_dir, 0o700, follow_symlinks=False)
-    os.chown(runtime_dir, 0, 0, follow_symlinks=False)
     os.chmod(runtime_dir, 0o700, follow_symlinks=False)
     for path, (uid, gid), mode in planned:
         if path.is_dir():
