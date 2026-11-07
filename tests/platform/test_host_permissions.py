@@ -35,6 +35,8 @@ def test_each_secret_has_only_intended_service_reader():
     assert p.SECRET_ROLES["jellyfin-api-key"] == "MUSIC"
     assert p.SECRET_ROLES["wireguard-private-key"] == "ROOT"
     assert "MUSIC_DOWNLOAD_PATH" not in p.DIRECTORY_ROLES
+    assert "MUSIC_LIBRARY_PATH" not in p.DIRECTORY_ROLES
+    assert "MEDIA_LIBRARY_PATH" not in p.DIRECTORY_ROLES
     assert "TORRENT_DATA_PATH" not in p.DIRECTORY_ROLES
     assert "JELLYFIN_MEDIA_PATH" not in p.DIRECTORY_ROLES
 
