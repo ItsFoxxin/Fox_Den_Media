@@ -5,6 +5,9 @@ filenames, exception messages or filesystem paths.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
+from collections.abc import Iterator
+
 HANDOFF_OPERATIONS = frozenset({
     "request_inbox_mkdir",
     "route_download_inspection",
@@ -41,3 +44,15 @@ def handoff_error_context(error: BaseException) -> dict[str, str]:
         return {}
     operation = getattr(error, _ATTRIBUTE, None)
     return {"handoff_operation": operation} if operation in HANDOFF_OPERATIONS else {}
+
+
+@contextmanager
+def handoff_operation(operation: str) -> Iterator[None]:
+    """Tag a filesystem failure at its specific operation; preserve traceback."""
+    if operation not in HANDOFF_OPERATIONS:
+        raise ValueError("Unknown handoff operation label")
+    try:
+        yield
+    except OSError as exc:
+        tag_handoff_oserror(exc, operation)
+        raise
