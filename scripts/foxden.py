@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 import secrets
+import stat
 import subprocess
 import sys
 import re
@@ -296,8 +297,22 @@ def initialize(values: dict[str, str], *, create_paths: bool, apply_permissions:
 
 
 def render_gateway(values: dict[str, str]) -> Path:
+    """Atomically render the private ingress config for the configured UID.
+
+    A rename replaces the inode behind Docker file bind mounts. An operator
+    must explicitly recreate ingress after any changed render.
+    """
     secret_dir = Path(values["FOXDEN_SECRETS_DIR"]).resolve()
-    runtime_dir = Path(values["FOXDEN_RUNTIME_DIR"]).resolve()
+    runtime_dir = Path(values["FOXDEN_RUNTIME_DIR"]).expanduser()
+    if not runtime_dir.is_absolute() or runtime_dir.is_symlink():
+        raise ConfigError("FOXDEN_RUNTIME_DIR must be an absolute, non-symlink directory.")
+    try:
+        ingress_uid = int(_required(values, "FOXDEN_PUID"))
+        ingress_gid = int(_required(values, "FOXDEN_PGID"))
+    except ValueError as exc:
+        raise ConfigError("FOXDEN_PUID/PGID must be numeric.") from exc
+    if ingress_uid <= 0 or ingress_gid <= 0:
+        raise ConfigError("Ingress UID/GID must be positive.")
     ingress_secret = (secret_dir / "ingress-auth").read_text(encoding="utf-8").strip()
     if len(ingress_secret) < 32:
         raise ConfigError("ingress-auth must contain at least 32 characters.")
@@ -316,11 +331,28 @@ def render_gateway(values: dict[str, str]) -> Path:
         raise ConfigError("Gateway template did not render the Jellyfin hostname.")
     runtime_dir.mkdir(parents=True, exist_ok=True)
     target = runtime_dir / "nginx.conf"
+    if target.is_symlink():
+        raise ConfigError("Refusing symlink nginx.conf target.")
+    if target.exists():
+        info = target.lstat()
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+            raise ConfigError("Refusing unsafe nginx.conf target.")
+        if (info.st_uid, info.st_gid, stat.S_IMODE(info.st_mode)) == (ingress_uid, ingress_gid, 0o600):
+            if target.read_text(encoding="utf-8") == rendered:
+                return target  # No unnecessary inode replacement.
     descriptor, temporary_name = tempfile.mkstemp(prefix=".nginx.conf.", dir=runtime_dir, text=True)
     temporary = Path(temporary_name)
     try:
-        if hasattr(os, "fchmod"):
-            os.fchmod(descriptor, 0o600)
+        try:
+            if hasattr(os, "fchown"):
+                os.fchown(descriptor, ingress_uid, ingress_gid)
+            if hasattr(os, "fchmod"):
+                os.fchmod(descriptor, 0o600)
+        except PermissionError as exc:
+            raise ConfigError(
+                f"Cannot set ingress nginx.conf ownership to {ingress_uid}:{ingress_gid}; "
+                "render using an authorized host administrator with chown privileges."
+            ) from exc
         with os.fdopen(descriptor, "w", encoding="utf-8", closefd=True) as handle:
             descriptor = -1
             handle.write(rendered)
@@ -332,7 +364,6 @@ def render_gateway(values: dict[str, str]) -> Path:
             os.close(descriptor)
         temporary.unlink(missing_ok=True)
     return target
-
 
 def compose_command(mode: str, env_path: Path, *, browser: bool, action: str,
                     jellyfin: bool = False, jellyfin_hwaccel: bool = False) -> list[str]:
@@ -393,17 +424,33 @@ def main() -> int:
             if values.get("PORTAL_AUTH_MODE", "local").strip().lower() in {"oidc", "hybrid"}:
                 required_names.add("oidc-client-secret")
             inspect_secret_owners(values, names=required_names)
-        gateway = render_gateway(values)
+        # Only explicitly requested config renders or executed deployments write
+        # the secret-bearing nginx.conf. Validate, stop and dry runs are read-only.
+        should_render = args.command == "config" or (args.command == "deploy" and args.execute)
+        gateway = render_gateway(values) if should_render else None
         action = {"validate": "config", "config": "config", "deploy": "up", "stop": "down"}[args.command]
         command = compose_command(args.mode, args.env.resolve(), browser=args.browser, action=action,
                                   jellyfin=args.jellyfin, jellyfin_hwaccel=args.jellyfin_hwaccel)
         redacted = " ".join(command)
-        print(f"Configuration valid for {args.mode}; rendered gateway at {gateway}.")
+        if gateway is None:
+            print(f"Configuration valid for {args.mode}; gateway was not regenerated.")
+        else:
+            print(f"Configuration valid for {args.mode}; rendered gateway at {gateway}.")
+            print("A changed nginx.conf needs ingress recreation (file bind-mount inode). deploy --execute refreshes only ingress after Compose up; config alone does not restart services.")
         print(redacted)
         if args.command in {"deploy", "stop"} and not args.execute:
             print("Dry run only. Repeat with --execute after reviewing the command and migration gate.")
             return 0
-        return subprocess.run(command, cwd=ROOT, check=False).returncode
+        result = subprocess.run(command, cwd=ROOT, check=False)
+        if result.returncode != 0:
+            return result.returncode
+        if args.command == "deploy":
+            # Docker file bind mounts retain the old inode after an atomic
+            # rename; always refresh only ingress on an explicitly executed
+            # deployment, never the other application writers.
+            ingress_refresh = command[:-2] + ["up", "-d", "--no-deps", "--force-recreate", "ingress"]
+            return subprocess.run(ingress_refresh, cwd=ROOT, check=False).returncode
+        return result.returncode
     except (ConfigError, PermissionSetupError, ValueError, OSError) as exc:
         print(f"Configuration error: {exc}", file=sys.stderr)
         return 2
