@@ -9,7 +9,7 @@ description = "A security-focused, self-hosted music importer and Jellyfin libra
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-  "fastapi==0.141.1",
+  "fastapi==0.162.0",
   "uvicorn[standard]==0.52.3",
   "sqlalchemy==2.0.52",
   "pydantic-settings==2.15.0",
