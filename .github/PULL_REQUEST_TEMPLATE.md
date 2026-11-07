@@ -18,7 +18,7 @@ Issue:
 ## Verification
 
 - [ ] Root VERSION, README, Compose image tag and dated CHANGELOG entry agree if releasing
-- [ ] PATCH release has a single `### Fixed` entry: `- Fixes #123: ...`
+- [ ] PATCH release has one `### Fixed` bullet linking the exact issue
 - [ ] Focused regression tests and failure reproduction documented
 - [ ] Full CI and CodeQL reviewed
 - [ ] Safe rollback and security implications considered
