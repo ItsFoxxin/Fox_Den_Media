@@ -146,7 +146,7 @@ def test_missing_or_invalid_allowed_groups_revoke_instead_of_trusting_old_role(t
         if groups is None:
             idp.claims.pop("groups")
         else:
-            idp.claims["groups"] = groups
+            idp.claims["groups"] = [groups]
         rejected = callback(client) if groups is None else None
         if groups is None:
             assert rejected.status_code == 401
