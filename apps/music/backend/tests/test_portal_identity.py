@@ -186,7 +186,7 @@ def test_rb04_browser_enabled_unavailable_and_unauthorized(
 
         calls = probe["calls"]
         assert 'href="/server-browser/"' not in as_role("/add", "user").text
-        assert "Open SpotiDownloader" in as_role(f"/acquisitions/{acquisition_id}", "user").text
+        assert 'href="https://spotidownloader.com/"' in as_role(f"/acquisitions/{acquisition_id}", "user").text
         assert as_role(f"/acquisitions/{acquisition_id}/browser", "user").status_code == 403
         assert probe["calls"] == calls  # Unauthorized users never trigger a probe.
         assert client.get("/add").status_code == 401
@@ -199,7 +199,7 @@ def test_rb04_browser_enabled_unavailable_and_unauthorized(
         probe["ready"] = False
         assert 'href="/server-browser/"' not in as_role("/add").text
         fallback = as_role(f"/acquisitions/{acquisition_id}")
-        assert "Open SpotiDownloader" in fallback.text
+        assert 'href="https://spotidownloader.com/"' in fallback.text
         assert "start watched download" not in fallback.text
         assert as_role(f"/acquisitions/{acquisition_id}/browser").status_code == 409
         csrf = re.search(r'name="csrf_token" value="([^"]+)"', fallback.text).group(1)
@@ -236,6 +236,7 @@ def test_rb04_browser_disabled_never_probes(settings, database, tmp_path, monkey
     key = Ed25519PrivateKey.generate()
     configured = _integrated(settings.model_copy(update={
         "remote_browser_url": None,
+        "music_request_provider_url": "https://spotidownloader.com/",
     }), tmp_path, {"portal-2026-10": key})
     monkeypatch.setattr(
         "foxden_music.web._browser_server_ready",
