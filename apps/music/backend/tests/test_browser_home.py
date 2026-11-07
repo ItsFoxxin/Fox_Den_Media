@@ -67,7 +67,7 @@ def test_browser_home_defaults_to_spotidownloader_when_not_explicit(settings, da
     "https://user:pass@example.com/",
     "https://example.com:8443/",
     "https://example.com/#fragment",
-    "https://example.com/\\n",
+    "https://example.com/\n",
     "javascript:alert(1)",
 ])
 def test_rejects_unsafe_browser_home_urls(url):
