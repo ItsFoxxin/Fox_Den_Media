@@ -49,6 +49,18 @@ jobs:
           SECURITY_RUN: ${{ inputs.security_run_id }}
         run: |
           set -euo pipefail
+          # All artifact download and verifier commands need a patched gh CLI.
+          # gh <= 2.101.0 allowed prefix matches for --signer-workflow.
+          gh_version="$(gh --version | head -n1 | awk '{print $3}')"
+          python - "$gh_version" <<'PY'
+          import sys
+          try:
+              parts = tuple(int(x) for x in sys.argv[1].split(".")[:3])
+          except ValueError as exc:
+              raise SystemExit("Unknown gh version; fail closed") from exc
+          if parts < (2, 102, 0):
+              raise SystemExit("gh 2.102+ required for exact workflow signer validation")
+          PY
           [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
           [[ "$PUBLISHER_RUN" =~ ^[1-9][0-9]*$ ]]
           [[ "$SECURITY_RUN" =~ ^[1-9][0-9]*$ ]]
@@ -97,17 +109,6 @@ jobs:
           test -s security/release-lock.json
           test -s security/rendered-release-compose.json
           test -d security/reports
-          # gh <= 2.101.0 allowed prefix matches for --signer-workflow.
-          gh_version="$(gh --version | head -n1 | awk '{print $3}')"
-          python - "$gh_version" <<'PY'
-          import sys
-          try:
-              parts = tuple(int(x) for x in sys.argv[1].split(".")[:3])
-          except ValueError as exc:
-              raise SystemExit("Unknown gh version; fail closed") from exc
-          if parts < (2, 102, 0):
-              raise SystemExit("gh 2.102+ required for exact workflow signer validation")
-          PY
           gh attestation verify security/security-contract.json \
             --repo "$GITHUB_REPOSITORY" \
             --source-ref "refs/heads/main" \
