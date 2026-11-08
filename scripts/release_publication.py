@@ -258,6 +258,12 @@ def validate_approval(comments: list, owner: str, main_sha: str,
     require(approved, "Independent owner release-publication approval absent or stale")
 
 
+def validate_release_absence(tag_ref: object, published_release: object) -> None:
+    """No existing version identity may be overwritten or force-retagged."""
+    require(tag_ref is None, "Version tag already exists; reject publication")
+    require(published_release is None, "GitHub Release already exists; reject publication")
+
+
 def api(path: str, *, missing_ok: bool = False) -> dict | list | None:
     token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
     require(bool(token), "Missing GitHub Actions API token")
@@ -313,10 +319,9 @@ def live_check(source_sha: str, r4_id: int, *, approval_issue: int = 0,
     validate_blockers(blockers)
     run = api("repos/" + REPOSITORY + "/actions/runs/" + str(r4_id))
     validate_r4_run(run, source_sha, r4_id)
-    require(api("repos/" + REPOSITORY + "/git/ref/tags/" + TAG, missing_ok=True) is None,
-            "Version tag already exists; never overwrite or automatically resume")
-    require(api("repos/" + REPOSITORY + "/releases/tags/" + TAG, missing_ok=True) is None,
-            "GitHub Release already exists; never overwrite")
+    tag_ref = api("repos/" + REPOSITORY + "/git/ref/tags/" + TAG, missing_ok=True)
+    published_release = api("repos/" + REPOSITORY + "/releases/tags/" + TAG, missing_ok=True)
+    validate_release_absence(tag_ref, published_release)
     if require_approval:
         require(approval_issue > 0 and re.fullmatch(r"[0-9a-f]{64}", lock_sha) is not None,
                 "Approval issue or release-lock checksum missing")
