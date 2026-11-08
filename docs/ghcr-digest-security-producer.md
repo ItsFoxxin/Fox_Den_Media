@@ -98,7 +98,8 @@ variables afterward. There is no triggered PR/build/push/publishing event.
 - Enforces Trivy version, a nonmissing parseable vulnerability DB timestamp
   not future-dated or older than 14 days, complete unsuppressed report,
   package-containing SPDX SBOM, exact scan subject, and per-file SHA-256 hashes.
-  The tool's raw scanner JSON is retained for DB version/details.
+  Trivy DB schema version is required; raw scanner JSON is also attested
+  and uploaded, although PR #81 v1 consumes only DB update time.
 - HIGH, CRITICAL and UNKNOWN severity cause hard failure; missing evidence,
   malformed CVE/package identities and any nonempty exception ledger fail
   without producing a passing signed contract. This **intentionally blocks**
@@ -106,8 +107,9 @@ variables afterward. There is no triggered PR/build/push/publishing event.
   Owner-approved, issue-linked, expiring exceptions cannot pass R4 until the
   consumer is independently extended and tested. No suppression or
   `.trivyignore` is introduced.
-- Only after *every* scan and check passes, signs `security-contract.json`
-  using GitHub OIDC `actions/attest`, then uploads
+- Only after *every* scan and check passes, signs the contract, release
+  lock, sanitized Compose render and raw scanner metadata together using
+  GitHub OIDC `actions/attest`, then uploads
   `ghcr-security-contract-v1`. The producer has `packages: read`, not write.
   R4 separately verifies run identity and GitHub attestation before reading
   the artifact. No GitHub release/tag, GHCR publication or NAS operations.
@@ -145,7 +147,9 @@ scan, signed OCI provenance, protected environment, or R3 publication.
 
 For the PR #81 worker: verify `scripts/verify_image_security.py` accepts
 this exact v1 file layout and `ghcr-verify.yml` fetches the same artifact
-and verifies exact `trivy-digest-security.yml` signature. The R4 consumer
+and verifies exact `trivy-digest-security.yml` signature. The consumer
+should additionally verify the separately attested lock, rendered Compose
+and scanner JSON subjects before treating those files as authenticated. The R4 consumer
 currently records only DB update time; the producer also uploads raw
 `scanner.json`, but its DB version cannot be added to the strict
 contract without an approved matching consumer schema revision. Also assess
