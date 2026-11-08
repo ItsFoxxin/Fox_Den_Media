@@ -28,6 +28,7 @@ LIB_RE = re.compile(
 )
 SYMBOLS = {
     "zlib_minizip": re.compile(r"^(?:inflate|deflate|crc32|uncompress|unz[A-Za-z0-9_]*|zip[A-Za-z0-9_]*|mz_(?:zip|unzip|stream)_[A-Za-z0-9_]*)$"),
+    "minizip_api": re.compile(r"^(?:unz[A-Z][A-Za-z0-9_]*|zip[A-Z][A-Za-z0-9_]*|mz_(?:zip|unzip|stream)_[A-Za-z0-9_]*)$"),
     "mbedtls_crypto_ffdh": re.compile(r"^mbedtls_(?:dhm|mpi|rsa|ecdh|ctr_drbg|version)_[A-Za-z0-9_]+$"),
     "psa_crypto": re.compile(r"^(?:psa_export_public_key|psa_(?:import|generate|export|destroy|sign|verify|key_derivation|raw_key_agreement)[A-Za-z0-9_]*)$"),
     "mbedtls_x509_tls": re.compile(r"^(?:mbedtls_(?:x509|ssl)_[A-Za-z0-9_]+|X509_[A-Za-z0-9_]+|SSL_[A-Za-z0-9_]+|gnutls_(?:x509|handshake|certificate)[A-Za-z0-9_]*)$"),
@@ -400,11 +401,11 @@ def related_native_evidence(binaries):
             "note": "linkage/symbol observation only; usage is not demonstrated"}
     mini_names = [x["image_path"] for x in binaries if "minizip" in x["image_path"].lower()]
     bundled = [x["image_path"] for x in binaries if x["image_path"] not in mini_names and
-               (x["symbols"]["zlib_minizip"] or x["imports"]["zlib_minizip"])]
+               (x["symbols"]["minizip_api"] or x["imports"]["minizip_api"])]
     return {
         "minizip": {"named_candidates": mini_names[:40],
                     "other_binary_symbol_candidates": bundled[:40],
-                    "limit": "stripped/embedded MiniZip cannot be excluded"},
+                    "limit": "MiniZip-specific API symbols only; generic zlib symbols excluded; stripped/embedded MiniZip cannot be excluded"},
         "librist_mbed_crypto": group("librist.so", "mbedtls_crypto_ffdh", "libmbedcrypto"),
         "libavformat_xml2": group("libavformat.so", "libxml2_parser", "libxml2"),
         "gio_gdbus": group("libgio-2.0.so", "gio_gdbus", "libglib"),
