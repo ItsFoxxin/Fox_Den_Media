@@ -60,15 +60,7 @@ jobs:
           test "$SOURCE_SHA" = "$GITHUB_SHA"
           test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')" = "$SOURCE_SHA"
           gh_version="$(gh --version | head -n1 | awk '{print $3}')"
-          python - "$gh_version" <<'PY'
-          import sys
-          try:
-              version = tuple(int(x) for x in sys.argv[1].split(".")[:3])
-          except (ValueError, IndexError) as exc:
-              raise SystemExit("Unknown gh version") from exc
-          if version < (2, 102, 0):
-              raise SystemExit("Require gh >= 2.102 for exact signer-workflow matching")
-          PY
+          python scripts/ghcr_digest_security.py check-gh-version "$gh_version"
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$PUBLISHER_RUN" > "$RUNNER_TEMP/r3-run.json"
           jq -e --arg repo "$GITHUB_REPOSITORY" --arg sha "$SOURCE_SHA" '
             .repository.full_name == $repo and
