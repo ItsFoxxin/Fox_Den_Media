@@ -302,6 +302,57 @@ class BundleTests(unittest.TestCase):
         self.update_verification()
         self.assert_blocked()
 
+    def test_release_ready_manifest_wrong_run_source_or_signer_fails(self):
+        for key, altered in (
+            ("source_sha", "0" * 40),
+            ("r3_run_id", R3 + 1),
+            ("r4_run_id", R4 + 1),
+            ("workflow", ".github/workflows/untrusted.yml"),
+            ("repository", "other/repository"),
+            ("schema_version", "foxden.r4.release-ready.v2"),
+        ):
+            with self.subTest(key=key):
+                manifest = refresh_manifest(self.root, self.verified)
+                manifest[key] = altered
+                (self.root / "release-ready.json").write_text(json.dumps(manifest))
+                self.assert_blocked()
+        refresh_manifest(self.root, self.verified)
+
+    def test_manifest_missing_and_wrong_exact_file_digest_fail(self):
+        (self.root / "release-ready.json").unlink()
+        self.assert_blocked()
+        manifest = refresh_manifest(self.root, self.verified)
+        manifest["files"]["release-lock.json"] = "0" * 64
+        (self.root / "release-ready.json").write_text(json.dumps(manifest))
+        self.assert_blocked()
+
+    def test_unsigned_security_top_level_file_not_optional(self):
+        (self.root / "scanner.json").unlink()
+        self.assert_blocked()
+
+    def test_wrong_digest_subject_even_with_recomputed_envelope_fails(self):
+        self.verified["image_evidence"]["portal"]["ref"] = (
+            R5.FIRST_PARTY["portal"] + "@sha256:" + "f" * 64)
+        self.update_verification()
+        self.assert_blocked()
+
+    def test_reject_unknown_json_keys_and_duplicate_keys(self):
+        path = self.root / "release-ready.json"
+        path.write_text(path.read_text().replace(
+            '"version": "1.0.0",', '"version": "1.0.0", "version": "1.0.0",'))
+        self.assert_blocked()
+        manifest = refresh_manifest(self.root, self.verified)
+        manifest["unknown"] = "unreviewed"
+        path.write_text(json.dumps(manifest))
+        self.assert_blocked()
+
+    def test_nonempty_security_exceptions_fail_even_if_unexpired(self):
+        self.update_verification(exceptions=[{
+            "issue": 70, "approved_by": "ItsFoxxin",
+            "expires_at": "2099-01-01T00:00:00Z",
+        }])
+        self.assert_blocked()
+
     def test_output_assets_with_sha256_sums(self):
         with tempfile.TemporaryDirectory() as scratch:
             out = Path(scratch)
@@ -335,6 +386,63 @@ class BundleTests(unittest.TestCase):
         annotated["object"]["sha"] = "0" * 40
         with self.assertRaises(R5.ReleaseBlocked):
             R5.verify_published_records(tag_ref, annotated, release, SHA, assets)
+
+
+class SignedEnvelopeTests(unittest.TestCase):
+    """Offline validation of the required exact R4 signing verification call."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        make_bundle(self.root)
+        self.manifest_digest = R5.hash_file(self.root / "release-ready.json")
+
+    def attestation(self, digest=None):
+        return json.dumps([{"verificationResult": {
+            "statement": {"subject": [{"digest": {"sha256":
+                digest if digest is not None else self.manifest_digest}}]}}}])
+
+    def test_verified_signature_requires_exact_repo_workflow_source(self):
+        with patch.object(R5, "run_command", side_effect=[
+            "gh version 2.102.0 (synthetic)\n", self.attestation()
+        ]) as run:
+            R5.verify_signed_release_ready(self.root, SHA, R4)
+        cmd = run.call_args_list[1].args[0]
+        self.assertEqual(cmd[:3], ["gh", "attestation", "verify"])
+        for flag, required in (
+            ("--repo", R5.REPOSITORY),
+            ("--source-ref", "refs/heads/main"),
+            ("--source-digest", SHA),
+            ("--signer-workflow", R5.R4_SIGNER_WORKFLOW),
+            ("--predicate-type", "https://slsa.dev/provenance/v1"),
+            ("--format", "json"),
+        ):
+            self.assertEqual(cmd[cmd.index(flag) + 1], required)
+
+    def test_missing_signature_or_mismatched_signed_digest_fails(self):
+        for response in ("[]", "{}", "not-json", self.attestation("f" * 64)):
+            with self.subTest(response=response[:40]):
+                with patch.object(R5, "run_command", side_effect=[
+                    "gh version 2.102.0\n", response,
+                ]), self.assertRaises(R5.ReleaseBlocked):
+                    R5.verify_signed_release_ready(self.root, SHA, R4)
+
+    def test_untrusted_attestation_verifier_failure_fails(self):
+        with patch.object(R5, "run_command", side_effect=[
+            "gh version 2.102.0\n",
+            R5.ReleaseBlocked("untrusted signer or missing signature"),
+        ]), self.assertRaises(R5.ReleaseBlocked):
+            R5.verify_signed_release_ready(self.root, SHA, R4)
+
+    def test_vulnerable_gh_or_missing_manifest_fails(self):
+        for version in ("gh version 2.101.0\n", "gh version unknown\n"):
+            with patch.object(R5, "run_command", return_value=version):
+                with self.assertRaises(R5.ReleaseBlocked):
+                    R5.verify_signed_release_ready(self.root, SHA, R4)
+        (self.root / "release-ready.json").unlink()
+        with self.assertRaises(R5.ReleaseBlocked):
+            R5.verify_signed_release_ready(self.root, SHA, R4)
 
 
 class ExternalGateTests(unittest.TestCase):
