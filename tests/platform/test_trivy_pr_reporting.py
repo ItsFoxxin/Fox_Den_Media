@@ -171,8 +171,8 @@ class TrivyPhase2Tests(unittest.TestCase):
                     return [{"id": 1, "body": r.MARKER,
                              "user": {"login": "human"}}]
         api = API()
-        with self.assertRaises(Exception):
-            r.comment_upsert(api, 7, r.MARKER + " update")
+        self.assertEqual(r.comment_upsert(api, 7, r.MARKER + " update"), "created")
+        self.assertIn("POST", calls)
         self.assertNotIn("PATCH", calls)
 
     def test_label_update_preserves_non_owned_labels(self):
