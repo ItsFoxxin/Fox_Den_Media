@@ -86,3 +86,44 @@ The installer downloads **official Trivy v0.76.2** from the `aquasecurity/trivy`
 ## Before considering mandatory enforcement
 
 Keep advisory until real GitHub runs prove all three Dockerfile builds, scans, CycloneDX validity, artifact retrieval, parser clean/finding fixtures, baseline comparison and stable performance. Investigate DB/network failures and available fixes, explicitly review approved exceptions and expiry controls, ensure third-party release digests are assessed, and define an enforceable **new critical/high** (or documented severity) policy with trusted baseline acquisition and regression tests. Require the owner's approval **before** adding new required checks or changing branch rulesets. Do not introduce CI-to-NAS or GHCR publishing permissions as part of this workflow.
+
+
+## Phase 2 — Trusted PR summaries and automation
+
+**Dependency:** PR #72 is required. Until it merges, Phase 2 is stacked on its head and the Phase 2 PR targeting dev shows Phase 1 and Phase 2 changes. No Phase 1 code is overwritten. The trusted reporting workflow is activated only after the workflow file exists on **the default main branch**; merging only into dev can test it but cannot demonstrate live workflow_run publication. Promotion to main requires the separate existing approval process.
+
+### Trust boundary, output and GitHub permissions
+
+The regular Trivy workflow stays read-only and uploads scan JSON, CycloneDX SBOM, component baseline files, and a new trivy-version.json recording scanner and vulnerability DB update time. The separate trivy-publish.yml consumes completed workflow_run data and checks out only trusted main code. It has job-level contents:read, actions:read and issues:write, with no deployment credentials, registry publishing or security-events permission. PR source code is never executed with write permissions.
+
+The publisher verifies repository, workflow, PR identity, current head SHA, completed status, artifact provenance, exactly three component artifacts, expected source merge SHA, image ID, scanner version, recomputed counts, CycloneDX structure and ZIP limits. It skips fork PRs, closed PRs and superseded runs. It rejects scan workflow or scanner-installer modifications compared with protected dev. Failed or incomplete scans cannot appear clean.
+
+After successful publication the PR receives one **bot-authored** updateable comment, recognized by hidden marker foxden-trivy-pr-v1. It lists PR and SHA, run link, scanner and vulnerability DB version/date, scan status, image identities, severity/fixability counts, new/resolved counts, baseline status, advisory policy, and artifact links. No hundreds-of-CVEs comment dump. It updates its own comment, never a human comment.
+
+### Automation-owned labels
+
+| Label | Color | Meaning |
+| --- | --- | --- |
+| security: review-required | D4A017 | Invalid/missing/stale baseline, failed scan or new high/critical vulnerability |
+| security: new-critical | B60205 | Newly observed or escalated critical findings against trusted dev |
+| security: new-high | D93F0B | Newly observed or escalated high findings against trusted dev |
+
+The default-branch reporter **will create** these three labels with descriptions when they are first required if they are missing. They are not created by an unmerged branch. Only these three reserved names can be added or removed by automation; operators must not manually apply them. Existing type, area, priority, needs-testing, release-blocker and Dependabot labels remain untouched. On baseline failure, no severity label is assigned as new solely due to inherited OS CVEs; review-required remains.
+
+### Trusted dev baseline
+
+The first completed successful push scan on protected dev following Phase 1 approval is the candidate. The reporter verifies the baseline workflow and repository, protected dev ancestry, run conclusion, artifact ownership, three image identities and valid JSON. It rejects unavailable baselines (missing), outdated baselines (older than 14 days, stale) and malformed baselines (invalid). It never promotes an untrusted PR report as dev baseline. Relative changes use CVE plus ecosystem plus package plus installed version, per component, with severity escalations separately detected. A vulnerability DB update or upstream --pull refresh may produce newly observed CVEs unrelated to source code changes; the report records DB freshness and makes no causal attribution.
+
+### Remediation issue proposal (not yet automatic)
+
+Do not open an issue for every CVE. Triage confirmed critical findings, fixable high, externally reachable packages, shared vulnerable packages and 1.0 blockers. Propose one reviewed remediation issue per actionable package/advisory group, deduplicated using ecosystem + advisory ID + package/version, with all affected image/components recorded. Each issue should include CVE, installed/fixed version, evidence run/Image ID, severity/exposure, remediation, regression tests, owner and exception expiry when applicable. Reuse type: security, relevant area, assessed priority and needs-testing appropriately. Maintain #18 as the consolidated release blocker register. No unrestricted automatic issue creation has been enabled.
+
+### SARIF and scheduled scanning decisions
+
+**SARIF: deferred.** Trivy can generate SARIF for GitHub Code Scanning in public repositories, but an upload introduces security-events:write and may flood code scanning with OS packages lacking meaningful source-file locations, overlapping CodeQL and Dependency Review. Review code-scanning alert volumes, stable identities and deduplication first. See https://docs.github.com/en/code-security/how-tos/find-and-fix-code-vulnerabilities/integrate-with-existing-tools/upload-sarif-file . CodeQL is not modified.
+
+**Weekly scans: deferred.** A scheduled --pull rebuild could conflate new CVEs with mutable upstream base images and consume extra Actions minutes. Before adding a weekly scan, approve an immutable image/digest inventory, define DB-age and artifact retention rules, and benchmark a protected-dev snapshot scan. No automatic build, dependency upgrade, issue flood or NAS deployment is scheduled by Phase 2.
+
+### Validation boundaries
+
+Phase 2 regression fixtures validate clean/finding scans, high/critical deltas, resolved and escalated CVEs, missing baselines, different image identities, corrupt or duplicated artifacts, comment upserts, label ownership/idempotency, stale and closed PRs, fork rejection, and simulated missing permissions. This is **mock/fixture coverage**, not evidence that the trusted workflow has actually posted a GitHub comment. Real publication requires both workflows on default main and a controlled reviewed PR test; it cannot be marked verified while PR #72 and Phase 2 remain unmerged.
