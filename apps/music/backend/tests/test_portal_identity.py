@@ -12,6 +12,9 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi.testclient import TestClient
 
 from foxden_music.config import Settings
+from foxden_music.enums import AcquisitionProvider, AcquisitionState, PreferredFormat
+from foxden_music.models import AcquisitionJob
+from foxden_music.request_workflow import create_request_jobs, parse_request_reference
 from foxden_music.web import create_app
 
 
@@ -141,3 +144,115 @@ def test_standalone_mode_remains_unchanged(settings, database) -> None:
     with TestClient(create_app(settings, database)) as client:
         assert client.get("/").status_code == 200
         assert client.get("/api/status").status_code == 200
+
+
+def test_rb04_browser_enabled_unavailable_and_unauthorized(
+    settings, database, tmp_path, monkeypatch
+) -> None:
+    """Browser actions require a live Firefox HTTP frontend and Portal admin."""
+    key = Ed25519PrivateKey.generate()
+    inbox = tmp_path / "inbox"
+    inbox.mkdir()
+    configured = _integrated(settings.model_copy(update={
+        "remote_browser_url": "/server-browser/",
+        "download_inbox_dir": inbox,
+        "download_inbox_auto_import": True,
+        "music_request_provider_url": "https://musicbrainz.org/",
+    }), tmp_path, {"portal-2026-10": key})
+    with database.session() as session:
+        job = create_request_jobs(
+            session, [parse_request_reference("https://open.spotify.com/track/37i9dQZF1DXcBWIGoYBM5M")],
+            preferred_format=PreferredFormat.FLAC,
+            provider=AcquisitionProvider.MANUAL_BROWSER,
+        )[0]
+        job.state = AcquisitionState.WAITING_FOR_USER.value
+        acquisition_id = job.id
+
+    probe = {"ready": True, "calls": 0}
+    def ready() -> bool:
+        probe["calls"] += 1
+        return probe["ready"]
+    monkeypatch.setattr("foxden_music.web._browser_server_ready", ready)
+
+    with TestClient(create_app(configured, database)) as client:
+        def as_role(path: str, role: str = "admin"):
+            return client.get(path, headers=_headers(_assertion(key, roles=[role])))
+
+        assert 'href="/server-browser/"' in as_role("/add").text
+        detail = as_role(f"/acquisitions/{acquisition_id}")
+        assert detail.status_code == 200
+        assert "start watched download" in detail.text
+        assert as_role("/search").status_code == 200
+
+        calls = probe["calls"]
+        assert 'href="/server-browser/"' not in as_role("/add", "user").text
+        assert 'href="https://spotidownloader.com/"' in as_role(f"/acquisitions/{acquisition_id}", "user").text
+        assert as_role(f"/acquisitions/{acquisition_id}/browser", "user").status_code == 403
+        assert probe["calls"] == calls  # Unauthorized users never trigger a probe.
+        assert client.get("/add").status_code == 401
+        assert client.get(f"/acquisitions/{acquisition_id}/browser").status_code == 401
+
+        browser = as_role(f"/acquisitions/{acquisition_id}/browser")
+        assert browser.status_code == 200
+        assert 'data-home-url="https://spotidownloader.com/"' in browser.text
+
+        probe["ready"] = False
+        assert 'href="/server-browser/"' not in as_role("/add").text
+        fallback = as_role(f"/acquisitions/{acquisition_id}")
+        assert 'href="https://spotidownloader.com/"' in fallback.text
+        assert "start watched download" not in fallback.text
+        assert as_role(f"/acquisitions/{acquisition_id}/browser").status_code == 409
+        csrf = re.search(r'name="csrf_token" value="([^"]+)"', fallback.text).group(1)
+        user_post = client.post(
+            f"/acquisitions/{acquisition_id}/begin-download",
+            data={"csrf_token": csrf},
+            headers=_headers(_assertion(key, roles=["user"]), origin=True),
+        )
+        assert user_post.status_code == 403
+        rejected = client.post(
+            f"/acquisitions/{acquisition_id}/begin-download",
+            data={"csrf_token": csrf},
+            headers=_headers(_assertion(key, roles=["admin"]), origin=True),
+        )
+        assert rejected.status_code == 409
+        with database.session() as session:
+            assert session.get(AcquisitionJob, acquisition_id).state == AcquisitionState.WAITING_FOR_USER.value
+
+        probe["ready"] = True
+        resumed = as_role(f"/acquisitions/{acquisition_id}")
+        assert "start watched download" in resumed.text
+        csrf = re.search(r'name="csrf_token" value="([^"]+)"', resumed.text).group(1)
+        accepted = client.post(
+            f"/acquisitions/{acquisition_id}/begin-download",
+            data={"csrf_token": csrf},
+            headers=_headers(_assertion(key, roles=["admin"]), origin=True),
+        )
+        assert accepted.status_code == 200
+        with database.session() as session:
+            assert session.get(AcquisitionJob, acquisition_id).state == AcquisitionState.ACQUIRING.value
+
+
+def test_rb04_browser_disabled_never_probes(settings, database, tmp_path, monkeypatch) -> None:
+    key = Ed25519PrivateKey.generate()
+    configured = _integrated(settings.model_copy(update={
+        "remote_browser_url": None,
+        "music_request_provider_url": "https://spotidownloader.com/",
+    }), tmp_path, {"portal-2026-10": key})
+    monkeypatch.setattr(
+        "foxden_music.web._browser_server_ready",
+        lambda: (_ for _ in ()).throw(AssertionError("disabled browser was probed")),
+    )
+    with database.session() as session:
+        job = create_request_jobs(
+            session, [parse_request_reference("Fox Artist - Night Run")],
+            preferred_format=PreferredFormat.FLAC,
+            provider=AcquisitionProvider.MANUAL_BROWSER,
+        )[0]
+        acquisition_id = job.id
+    with TestClient(create_app(configured, database)) as client:
+        def admin(path: str):
+            return client.get(path, headers=_headers(_assertion(key, roles=["admin"])))
+        assert 'href="/server-browser/"' not in admin("/add").text
+        assert "Open acquisition provider" in admin(f"/acquisitions/{acquisition_id}").text
+        assert admin(f"/acquisitions/{acquisition_id}/browser").status_code == 409
+        assert admin("/search").status_code == 200
