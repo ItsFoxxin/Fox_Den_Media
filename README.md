@@ -2,7 +2,7 @@
 
 **Fox Den Media** is a modular, self-hosted platform that brings a Portal, Music management, Movies/TV requests and imports, and optional Jellyfin and download services behind one Nginx ingress. Each application retains its own processes and state. The repository preserves the original Music lineage and imported unique Media history.
 
-Current source milestone: **0.9.5**. This is a security-hardened **copied-state rehearsal candidate**, **not a production-validated release**. Passing CI alone does not authorize a NAS migration, torrent cutover, or a 1.0.0 release. See [production readiness](docs/production-readiness.md).
+Current source milestone: **0.9.6**. This is a security-hardened **copied-state rehearsal candidate**, **not a production-validated release**. Passing CI alone does not authorize a NAS migration, torrent cutover, or a 1.0.0 release. See [production readiness](docs/production-readiness.md).
 
 ![Fox Den Midnight Portal with optional Jellyfin entry](docs/foxden-midnight-portal-desktop.png)
 
@@ -22,7 +22,8 @@ Current source milestone: **0.9.5**. This is a security-hardened **copied-state 
 User / HTTPS proxy -> Nginx ingress :8080 -> Portal :8020
                                          -> Music web :8000 -> Music worker
                                          -> Movies/TV :8010 -> reviewed media imports
-                                         -> Firefox :5800 (optional)
+                                         -> Firefox HTTP :5800 (optional)
+                                         -> Portal WebSocket relay -> Firefox noVNC
                        Jellyfin host   -> Jellyfin :8096 (optional; native login)
 Movies/TV -> qBittorrent API -> Gluetun namespace -> WireGuard (managed only)
 ```
@@ -30,6 +31,8 @@ Movies/TV -> qBittorrent API -> Gluetun namespace -> WireGuard (managed only)
 The host ingress bind defaults to `127.0.0.1:8080`; managed Gluetun also offers a separately loopback-bound qBittorrent Web UI port. Module backends are not host-published. Acquisition and contained-browser routes require a Portal administrator; Jellyfin maintains independent users and roles. See [architecture](docs/architecture.md) and [permissions](docs/permissions.md).
 
 Fox Den does **not** currently deliver embedded Jellyfin playback, Android/Wear OS apps, automated torrent deletion, or a production-approved migration. See the [roadmap](docs/ROADMAP_TO_3.0.0.md).
+
+Active browser WebSocket connections are reauthorized against the live Portal session and stored administrator role every 15 seconds, with a one-hour maximum lifetime. Authentik changes between verified logins are **not immediately detected** without a trusted upstream event or refresh. See [RA-06 security review](docs/browser-session-security-1.0.md). Exact pinned-Firefox/noVNC manual acceptance remains pending in a new disposable NAS rehearsal.
 
 ## Deployment modes
 
