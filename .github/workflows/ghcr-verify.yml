@@ -153,6 +153,13 @@ jobs:
               --source-ref "refs/heads/main" \
               --source-digest "$SOURCE_SHA" \
               --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/ghcr-candidates.yml"
+            # An existing mutable commit tag may not be trusted as a release identity.
+            # Refuse tag retargets rather than quietly accepting a mismatched digest.
+            tag_digest="$(docker buildx imagetools inspect "$image:sha-$SOURCE_SHA" \
+              --format '{{json .Manifest}}' | jq -er '.digest')"
+            test "$tag_digest" = "$digest" || {
+              echo "::error::Candidate commit tag was retargeted: $component"; exit 1;
+            }
             docker buildx imagetools inspect "$image@$digest" --raw > "$RUNNER_TEMP/$component-oci.json"
             test "$(jq -er '[.manifests[] | select(.platform.os == "linux" and .platform.architecture == "amd64") | .digest] | unique | length' "$RUNNER_TEMP/$component-oci.json")" = 1
             test "$(jq -er '[.manifests[] | select(.platform.os == "linux" and .platform.architecture == "amd64") | .digest] | first' "$RUNNER_TEMP/$component-oci.json")" = "$(jq -er .platform_digest "candidates/$component.json")"
