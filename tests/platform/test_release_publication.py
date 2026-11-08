@@ -275,6 +275,24 @@ class BundleTests(unittest.TestCase):
 
 
 class ExternalGateTests(unittest.TestCase):
+    def test_r4_workflow_identity_matches_r3_r4_workstream(self):
+        self.assertEqual(R5.R4_WORKFLOW, ".github/workflows/ghcr-verify.yml")
+        self.assertEqual(
+            R5.R3_WORKFLOW,
+            "ItsFoxxin/Fox_Den_Media/.github/workflows/ghcr-candidates.yml",
+        )
+        good = {
+            "id": R4, "repository": {"full_name": R5.REPOSITORY},
+            "path": R5.R4_WORKFLOW, "event": "workflow_dispatch",
+            "head_branch": "main", "head_sha": SHA,
+            "status": "completed", "conclusion": "success",
+        }
+        R5.validate_r4_run(good, SHA, R4)
+        with self.assertRaises(R5.ReleaseBlocked):
+            R5.validate_r4_run(
+                dict(good, path=".github/workflows/release-verify.yml"), SHA, R4
+            )
+
     def test_required_checks_all_success(self):
         items = {"check_runs": [
             {"name": name, "status": "completed",
