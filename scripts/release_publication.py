@@ -497,6 +497,39 @@ def verify_registry(lock: dict, source_sha: str) -> None:
             ])
 
 
+def verify_signed_release_ready(root: Path, source_sha: str, r4_id: int) -> None:
+    """Verify the exact manifest bytes against a trusted R4 GitHub attestation."""
+    require(valid_sha(source_sha) and r4_id > 0, "Invalid signed R4 identity")
+    manifest_path = safe_file(root, "release-ready.json")
+    version_output = run_command(["gh", "--version"], output=True)
+    match = re.search(r"^gh version (\\d+)\\.(\\d+)\\.(\\d+)", version_output)
+    require(match is not None and tuple(map(int, match.groups())) >= (2, 102, 0),
+            "gh CLI >= 2.102.0 required for exact signer-workflow verification")
+    result = run_command([
+        "gh", "attestation", "verify", str(manifest_path),
+        "--repo", REPOSITORY,
+        "--source-ref", "refs/heads/main",
+        "--source-digest", source_sha,
+        "--signer-workflow", R4_SIGNER_WORKFLOW,
+        "--predicate-type", "https://slsa.dev/provenance/v1",
+        "--format", "json",
+    ], output=True)
+    try:
+        attestations = json.loads(result)
+    except json.JSONDecodeError as err:
+        raise ReleaseBlocked("Malformed cryptographic attestation response") from err
+    digest = hash_file(manifest_path)
+    require(isinstance(attestations, list) and any(
+        isinstance(item, dict)
+        and isinstance(item.get("verificationResult"), dict)
+        and any(isinstance(subject, dict)
+                and isinstance(subject.get("digest"), dict)
+                and subject["digest"].get("sha256") == digest
+                for subject in item["verificationResult"].get("statement", {}).get("subject", []))
+        for item in attestations
+    ), "No verified signature on exact R4 release-ready manifest bytes")
+
+
 def stage_assets(root: Path, target: Path) -> None:
     """Copy a verified bundle to uniquely named GitHub Release assets."""
     require(target.is_dir() and not any(target.iterdir()), "Asset directory is not empty")
@@ -583,16 +616,19 @@ def main() -> int:
         require(valid_sha(args.source_sha) and args.r4_run_id > 0,
                 "Invalid source commit or R4 run ID")
         if args.command == "published":
+            verify_signed_release_ready(args.evidence_dir, args.source_sha, args.r4_run_id)
             check_published(args.source_sha, args.evidence_dir, args.r4_run_id)
         elif args.command in ("live", "approval"):
             summary = None
             if args.command == "approval":
+                verify_signed_release_ready(args.evidence_dir, args.source_sha, args.r4_run_id)
                 summary = validate_bundle(args.evidence_dir, args.source_sha, args.r4_run_id)
             live_check(args.source_sha, args.r4_run_id,
                        approval_issue=args.approval_issue,
                        lock_sha=summary["lock_sha256"] if summary else "",
                        require_approval=args.command == "approval")
         elif args.command in ("bundle", "registry", "assets"):
+            verify_signed_release_ready(args.evidence_dir, args.source_sha, args.r4_run_id)
             summary = validate_bundle(args.evidence_dir, args.source_sha, args.r4_run_id)
             if args.command == "registry":
                 verify_registry({"images": summary["images"]}, args.source_sha)
