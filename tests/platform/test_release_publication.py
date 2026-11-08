@@ -273,6 +273,15 @@ class ExternalGateTests(unittest.TestCase):
         with self.assertRaises(R5.ReleaseBlocked):
             R5.validate_checks(checks, SHA)
 
+    def test_existing_release_tag_or_release_blocks_publication(self):
+        R5.validate_release_absence(None, None)
+        with self.assertRaises(R5.ReleaseBlocked):
+            R5.validate_release_absence(
+                {"ref": "refs/tags/v1.0.0"}, None)
+        with self.assertRaises(R5.ReleaseBlocked):
+            R5.validate_release_absence(
+                None, {"tag_name": "v1.0.0"})
+
     def test_open_release_blocker_fails(self):
         with self.assertRaises(R5.ReleaseBlocked):
             R5.validate_blockers([{"number": 18, "state": "open"}])
