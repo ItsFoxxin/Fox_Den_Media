@@ -228,6 +228,8 @@ class PortalStore:
 
     def map_external_identity(self, provider: str, subject: str, username: str, display_name: str,
                               claims: dict, role: str) -> dict:
+        if role not in {"admin", "user"}:
+            raise ValueError("Unsupported external identity role.")
         now = int(time.time())
         safe_claims = {key: claims.get(key) for key in ("sub", "preferred_username", "name", "email", "groups") if key in claims}
         with self.lock, self.connection() as db:
@@ -235,9 +237,16 @@ class PortalStore:
             linked = db.execute("SELECT user_id FROM external_identities WHERE provider=? AND subject=?",
                                 (provider, subject)).fetchone()
             if linked:
+                user_id = linked[0]
+                current = db.execute("SELECT role,active FROM users WHERE id=?", (user_id,)).fetchone()
+                if current is None or not current["active"]:
+                    raise ValueError("The linked Portal account is disabled.")
                 db.execute("UPDATE external_identities SET claims_json=?,updated_at=? WHERE provider=? AND subject=?",
                            (json.dumps(safe_claims), now, provider, subject))
-                user_id = linked[0]
+                if current["role"] != role:
+                    db.execute("UPDATE users SET role=? WHERE id=?", (role, user_id))
+                    # Old sessions must not retain their former authorization context.
+                    db.execute("DELETE FROM sessions WHERE user_id=?", (user_id,))
             else:
                 candidate = username
                 suffix = 1
@@ -253,6 +262,22 @@ class PortalStore:
             if row is None:
                 raise ValueError("The linked Portal account is disabled.")
             return dict(row)
+
+    def revoke_external_permissions(self, provider: str, subject: str) -> None:
+        """Fail closed for a verified OIDC subject that loses allowed-group access.
+
+        Only a previously linked external identity is affected. Local users
+        cannot be selected by username or email.
+        """
+        with self.lock, self.connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            linked = db.execute(
+                "SELECT user_id FROM external_identities WHERE provider=? AND subject=?",
+                (provider, subject),
+            ).fetchone()
+            if linked:
+                db.execute("UPDATE users SET role='user' WHERE id=? AND role='admin'", (linked[0],))
+                db.execute("DELETE FROM sessions WHERE user_id=?", (linked[0],))
 
 
 def _hash(value: str) -> str:

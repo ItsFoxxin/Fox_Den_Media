@@ -11,6 +11,172 @@
 > and active repository rulesets. Workflow code reviewed from `dev`;
 > proposed documentation lives only on `docs/ci-execution-design`.
 
+## Final CI optimization closeout — verified November 7, 2026 (US Eastern)
+
+**Scope:** This is the final status of the foundational CI project; the
+design and intermediate observations below are retained as **historical
+evidence**, not outstanding implementation instructions. No release,
+deployment or NAS actions are authorized by this closeout.
+
+### Completed work and ownership
+
+| Phase | PR | Completed change |
+| --- | --- | --- |
+| CI architecture | [#30](https://github.com/ItsFoxxin/Fox_Den_Media/pull/30) — merged | Dependency-first architecture and acceptance criteria |
+| Phase 1 | [#31](https://github.com/ItsFoxxin/Fox_Den_Media/pull/31) — merged | Cheap validation earlier, SHA-256-verified pinned actionlint, one authoritative history scan, least-privilege checkouts |
+| Phase 2 | [#33](https://github.com/ItsFoxxin/Fox_Den_Media/pull/33) — merged | Core checks in parallel; Migration/Jellyfin behind core; strict downstream gate |
+| Phase 3 | [#60](https://github.com/ItsFoxxin/Fox_Den_Media/pull/60) — merged | Remove feature/security source-branch push duplicates while preserving PR, protected-branch push and manual triggers |
+| Evidence closeout | [#61](https://github.com/ItsFoxxin/Fox_Den_Media/pull/61) — awaiting owner approval | Final measured evidence, configuration and event-matrix verification; **documentation only** |
+
+### Final dependency graph (implemented on `dev`)
+
+```mermaid
+flowchart TD
+  V["Validation: release policy, actionlint, history secrets, Compose, platform"]
+  M["Music matrix: Python 3.12 + 3.13"]
+  A["Portal and Movies/TV"]
+  U["Python dependency audits"]
+  S["Bandit SAST"]
+  R["Migration backup/restore/rollback"]
+  J["Jellyfin smoke"]
+  I["Consolidated container and VPN fail-closed integration"]
+  G["Monorepo strict gate — if: always(); all needs must succeed"]
+  Q["CodeQL: Python + JavaScript/TypeScript (separate required workflow)"]
+  D["Dependency Review: PR-only advisory (independent)"]
+  V --> M & A & U & S
+  M & A & U & S --> R & J
+  M & A & U & S & R & J --> I
+  V & M & A & U & S & R & J & I --> G
+```
+
+Music's `fail-fast: false` preserves both interpreter results. Migration
+and Jellyfin may run **concurrently with each other**, but only after
+all four core job groups succeed. Integration needs the core jobs and
+both isolated checks; a failure or skip prevents integration. The
+unconditional strict gate explicitly asserts every direct `needs`
+result is `success`; cancelled, skipped and failed prerequisites
+cannot produce a passing aggregate gate. Independent CodeQL checks
+are enforced by branch rulesets, not hidden inside the monorepo gate.
+Dependency Review remains a separate `warn-only: true` PR check.
+
+### Final trigger/event matrix
+
+| Event | Monorepo | CodeQL | Dependency Review | Verification |
+| --- | --- | --- | --- | --- |
+| PR opened/updated to `dev` | PR run | PR run | PR run (advisory) | Live [#60](https://github.com/ItsFoxxin/Fox_Den_Media/pull/60), [#61](https://github.com/ItsFoxxin/Fox_Den_Media/pull/61) |
+| PR opened/updated to `main` | PR run | PR run | PR run (advisory) | Existing main-targeting [PR #36](https://github.com/ItsFoxxin/Fox_Den_Media/pull/36); filters unchanged |
+| Dependabot PR to `dev` | PR run | PR run | PR run (advisory) | Actual [Dependabot checkout PR runs](https://github.com/ItsFoxxin/Fox_Den_Media/actions/runs/42370745843) plus CodeQL/Dependency Review on the same source SHA |
+| Feature/security source push **with** PR | PR run only | PR run only | PR run | Live disposable [PR #58](https://github.com/ItsFoxxin/Fox_Den_Media/pull/58): three runs and no duplicate source push |
+| Feature/security source push **without** PR | No automatic run | No automatic run | No | Live disposable branch push; manual dispatch remains configured |
+| Merge/direct push to `dev` | Push run | Push run | No | Actual post-Phase-3 `dev` run [42370596039](https://github.com/ItsFoxxin/Fox_Den_Media/actions/runs/42370596039) and CodeQL [42370596075](https://github.com/ItsFoxxin/Fox_Den_Media/actions/runs/42370596075) |
+| Merge/direct push to `main` | Push run | Push run | No | Filters inspected; historical [main push](https://github.com/ItsFoxxin/Fox_Den_Media/actions/runs/42367878747); no new main mutation |
+| Explicit `workflow_dispatch` | Select branch and run | Select branch and run | No | Declared on both workflows/default branch; **live pre-PR manual dispatch still untested** |
+| Merge queue `merge_group` | `checks_requested` | Not configured | Not configured | Monorepo YAML checked; no active merge-queue ruleset; CodeQL support would need separate review |
+| Required check fails/skips | Strict gate fails | Independent check can fail separately | Advisory result as configured | Actual disposable failure probes and unchanged conditions |
+
+The PR target filters remain `[dev, main, 'feature/**',
+'security/**']` for monorepo and CodeQL; these filter **PR base
+branches**, not source branches. Protected-branch `push` filters are
+`[dev, main]`. No `paths` or `paths-ignore` filters were introduced,
+so none of the required checks is intentionally absent on eligible PRs.
+A real invalid workflow or other GitHub scheduling failure can still
+leave a pending required check; no configuration can guarantee that
+such failures will never occur.
+
+### Failure-propagation evidence
+
+- [Bandit failure probe 42363769908](https://github.com/ItsFoxxin/Fox_Den_Media/actions/runs/42363769908):
+  intentional Bandit failure; **Migration, Jellyfin and integration
+  skipped**, strict gate **failed**, CodeQL remained separate.
+- [Jellyfin failure probe 42363900276](https://github.com/ItsFoxxin/Fox_Den_Media/actions/runs/42363900276):
+  intentional Jellyfin failure; integration skipped, strict gate failed.
+- [Validation policy failure 42324314012](https://github.com/ItsFoxxin/Fox_Den_Media/actions/runs/42324314012):
+  downstream execution skipped and aggregate gate failed.
+- Failure probes used [closed disposable PR #34](https://github.com/ItsFoxxin/Fox_Den_Media/pull/34),
+  not `dev`. Additional failure checks for every hypothetical state
+  were not manufactured; explicit gate source and past runs cover
+  skipped/cancelled result handling.
+
+### Before/after measurement (successful monorepo samples)
+
+| Stage and live run | Wall time | Sum of monorepo job execution intervals |
+| --- | ---: | ---: |
+| Before Phase 1 — [42328872182](https://github.com/ItsFoxxin/Fox_Den_Media/actions/runs/42328872182) | 3m11s (191s) | 360 job-seconds |
+| Phase 1 — [42361440923](https://github.com/ItsFoxxin/Fox_Den_Media/actions/runs/42361440923) | 3m05s (185s) | 360 job-seconds |
+| Phase 1 — [42362886896](https://github.com/ItsFoxxin/Fox_Den_Media/actions/runs/42362886896) | 3m22s (202s) | 374 job-seconds |
+| Phase 2 — [42363676078](https://github.com/ItsFoxxin/Fox_Den_Media/actions/runs/42363676078) | 3m45s (225s) | 343 job-seconds |
+| Phase 2 — [42364003169](https://github.com/ItsFoxxin/Fox_Den_Media/actions/runs/42364003169) | 3m53s (233s) | 366 job-seconds |
+| Phase 2 — [42364405065](https://github.com/ItsFoxxin/Fox_Den_Media/actions/runs/42364405065) | 3m54s (234s) | 375 job-seconds |
+| Phase 2 — [42364757337](https://github.com/ItsFoxxin/Fox_Den_Media/actions/runs/42364757337) | 3m49s (229s) | 357 job-seconds |
+| Phase 3 — [PR #60 run 42370306519](https://github.com/ItsFoxxin/Fox_Den_Media/actions/runs/42370306519) | 3m34s (214s) | 335 job-seconds |
+| Phase 3 — [PR #61 run 42370827586](https://github.com/ItsFoxxin/Fox_Den_Media/actions/runs/42370827586) | 3m40s (220s) | 357 job-seconds |
+| Current integrated `dev` — [42435669249](https://github.com/ItsFoxxin/Fox_Den_Media/actions/runs/42435669249) | 3m53s (233s) | 346 job-seconds |
+
+Phase 2's serial heavy-stage barrier adds roughly half a minute to
+green runs compared with Phase 1, while avoiding unnecessary
+Migration/Jellyfin work on core failures. Phase 3 reduces duplicated
+**workflow count** rather than the length of one PR's test graph.
+A historical security branch update launched five workflows;
+the new policy launches three, removing one monorepo and one CodeQL
+push execution. In that historical sample, those two redundant runs
+totalled **483 job-seconds**; this is a counterfactual for the old
+update, not controlled post-change cost data. Samples are small,
+vary with runner and network conditions, and job-second totals
+are **not billing records**.
+
+### Final security gate and ownership boundaries
+
+At audit, `dev` requires **Monorepo strict gate**, **CodeQL (python)**
+and **CodeQL (javascript-typescript)**. `main` requires those three
+and its separate **CodeQL** scanning-app check. Both rulesets are
+active, require up-to-date checks and review-thread resolution, and
+require **zero independent approving reviewers**. No check names,
+permissions, protections or self-approval policies were modified by
+PR #61. Its sole proposed file is this documentation file.
+
+Remaining limits: manual pre-PR workflow dispatch has not been
+exercised in a live run; an early draft PR is the tested route for
+automatic validation. CodeQL does **not** currently implement a
+`merge_group` trigger, so do not activate a merge queue without
+separate required-context validation. Dependency Review remains
+advisory rather than blocking on high/critical findings.
+
+### Successor workstreams — separate issues and approval
+
+1. **Trivy container image security** (security pipeline): scan
+   built/pinned images, record severity and fixable findings, define
+   exceptions/expiration and SBOM inputs, and establish trusted
+   digest-to-release linkage. Start advisory; gate releases only after
+   reproducible false-positive/noise review.
+2. **zizmor for GitHub Actions** (workflow security): pinned version
+   with verified provenance, GitHub Actions-specific findings,
+   least-privilege and untrusted-input review; do not replace
+   actionlint or rename current checks.
+3. **Dependency Review high/critical enforcement** (policy PR):
+   audit dependency-manifest coverage, current `warn-only` behavior,
+   allowlist/exception ownership and Dependabot noise; then enable
+   blocking findings in an explicitly approved change with a safe
+   failing-fixture acceptance test.
+4. **Deduplicated persistent CI-failure issues** (monitoring
+   automation): fingerprint by workflow/check/ref/root cause, wait
+   for retries or persistence, avoid duplicate issues and permission
+   escalation, attach run links, and define reopen/close ownership.
+   It must not auto-merge or bypass required checks.
+5. **1.0.0 release and GHCR integration** (separate
+   [release design PR #38](https://github.com/ItsFoxxin/Fox_Den_Media/pull/38)):
+   treat this CI gate as a prerequisite for reviewed
+   `dev`→`main` promotion; add version/changelog validation,
+   digest-pinned images, provenance, SBOM, vulnerability policy and
+   rollback plans in approved release-pipeline PRs. Any NAS
+   production deployment requires an explicit manual approval boundary.
+
+**Closeout criterion:** once PR #61's up-to-date checks are green
+and the owner explicitly merges it, mark the *foundational CI
+optimization* complete. The five successor workstreams are **not**
+part of this PR.
+
+---
+
 ## Phase 3 — workflow event/trigger optimization (November 7, 2026)
 
 > Implementation PR [#60](https://github.com/ItsFoxxin/Fox_Den_Media/pull/60) on `ci/phase3-trigger-optimization`, targeting `dev`.
@@ -234,7 +400,7 @@ in PR #30, **not** the updated workflow once Phase 2 merges.
   begin together only when **every** core job group passes. Integration
   and the all-results `Monorepo strict gate` retain their previous
   `needs` and strict failure semantics. CodeQL remains separate.
-- **Phase 3 — in review:** trigger deduplication is proposed separately;
+- **Phase 3 — merged via PR #60:** trigger deduplication was implemented separately;
   PR #33 did not itself change trigger configuration.
 
 The proposed graph in section 5 is **exactly** the Phase 2 graph. No
@@ -703,7 +869,7 @@ syntax. Include local validation and test the resulting required
 check state, which may remain pending, rather than pretending the
 aggregate job always runs.
 
-## 8. Small implementation PR sequence (none applied here)
+## 8. Historical design: original small implementation PR sequence (now applied)
 
 1. **Workflow hygiene:** add pinned `actionlint`, move cheap policy
    validation earlier within the existing Validation job, run the
