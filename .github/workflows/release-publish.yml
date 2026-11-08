@@ -75,6 +75,20 @@ jobs:
         run: |
           set -euo pipefail
           python scripts/release_publication.py bundle --source-sha "$SOURCE_SHA" --r4-run-id "$R4_RUN_ID"
+      - name: Require gh CLI with exact signer-workflow matching
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh_version="$(gh --version | head -n1 | awk '{print $3}')"
+          python - "$gh_version" <<'PY'
+          import sys
+          try:
+              version = tuple(int(x) for x in sys.argv[1].split(".")[:3])
+          except (ValueError, IndexError) as exc:
+              raise SystemExit("Unrecognized gh CLI version; publication blocked") from exc
+          if version < (2, 102, 0):
+              raise SystemExit("gh 2.102.0 or newer required for exact signer identity")
+          PY
       - name: Verify published GHCR manifest identities and signed provenance/SBOM
         shell: bash
         run: |
@@ -137,6 +151,20 @@ jobs:
           set -euo pipefail
           gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" \
             --name r5-validated-evidence --dir release-evidence
+      - name: Require gh CLI with exact signer-workflow matching
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh_version="$(gh --version | head -n1 | awk '{print $3}')"
+          python - "$gh_version" <<'PY'
+          import sys
+          try:
+              version = tuple(int(x) for x in sys.argv[1].split(".")[:3])
+          except (ValueError, IndexError) as exc:
+              raise SystemExit("Unrecognized gh CLI version; publication blocked") from exc
+          if version < (2, 102, 0):
+              raise SystemExit("gh 2.102.0 or newer required for exact signer identity")
+          PY
       - name: Revalidate latest main, statuses, R4 evidence and owner comment
         shell: bash
         run: |
