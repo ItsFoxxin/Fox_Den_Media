@@ -90,12 +90,14 @@ This contract is consumed, **not generated**, by this PR's verifier. It
 currently rejects nonempty exception lists until a separately approved,
 expiring, issue-linked exception policy is wired in.
 
-Separate R4 security coverage is still required for **all enabled upstream**
-images. The initial R4 consumer verifies three first-party digest subjects;
-it is not a standalone release-approval gate for upstream supply-chain
-risks. Final release-lock acceptance also needs a vetted upstream scanner
-contract, full no-build profile rendering and independently retained
-evidence for each upstream digest.
+The R4 consumer now requires pass decisions, provenance verification and
+checksummed SPDX/Trivy evidence for **every enabled upstream image**, in
+addition to the three first-party subjects. No upstream exceptions are
+implicitly accepted. Because the separate digest-security producer does
+not yet exist, these are required input conditions, **not completed scans**.
+Final release-lock approval needs the owner-approved vulnerability exception
+process, any required full-profile acceptance and independently retained
+evidence for each digest.
 
 ## Package presentation, permissions and release boundaries
 
