@@ -41,6 +41,40 @@ are untouched. Source of truth for time-bounded exceptions remains
    another independently authenticated provenance scheme; marking it
    `verified` without proof is prohibited.
 
+## Exact upstream provenance blockers (not fabricated)
+
+`security/upstream-provenance.json` remains `{"schema_version": 1, "upstream": {}}`.
+The producer **cannot currently complete** for any release lock: `nginx`
+is an always-enabled ingress dependency and lacks a reviewed digest-specific
+GitHub signer entry. This is **missing evidence**, not a proven absence of
+all possible upstream signatures. No signer, upstream source SHA, OCI
+attestation or reviewed manifest has been authenticated by this draft PR.
+
+| R2 component | Registry identity | Enabled by | Current state |
+| --- | --- | --- | --- |
+| `nginx` | `docker.io/library/nginx` | always (ingress) | **Blocking in every release lock**: no validated exact-digest signer |
+| `browser` | `docker.io/jlesage/firefox` | browser profile (+music) | Blocking when enabled: no validated signer |
+| `jellyfin` | `docker.io/jellyfin/jellyfin` | jellyfin profile | Blocking when enabled: no validated signer |
+| `gluetun` | `docker.io/qmcgaw/gluetun` | managed profile | Blocking when enabled: no validated signer |
+| `qbittorrent` | `lscr.io/linuxserver/qbittorrent` | managed profile | Blocking when enabled: no validated signer |
+
+The **registry named in the lock is material**: an attestation on a related
+GitHub Container Registry package does not automatically authenticate a
+Docker Hub or LSCR image digest. `gh attestation verify oci://<exact-lock-ref>
+--repo <trusted-source-repo> --source-ref ... --source-digest ...
+--signer-workflow ...` must succeed for that **same** locked image,
+with the pinned workflow identity. Verify real evidence first; if an
+upstream does not offer this mode of GitHub-signed provenance, arrange a
+separately reviewed, independently authenticated alternative in a
+**versioned producer + consumer change**. Do not add guessed source
+repositories/digests or mark provenance verified from a successful pull.
+
+Single-platform upstream image manifests are structurally supported:
+`platform_digest` must equal the locked top-level digest, and the
+post-pull image architecture must independently be `linux/amd64`.
+Multi-platform indexes still require a unique matching amd64 child digest.
+Neither rule waives missing provenance.
+
 ## Manual environment and operator inputs
 
 Set a **required-reviewer** GitHub environment named `ghcr-security`,
