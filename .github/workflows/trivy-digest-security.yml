@@ -182,7 +182,11 @@ jobs:
       - name: Attest exact passing security contract through GitHub OIDC
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
-          subject-path: security/security-contract.json
+          subject-path: |
+            security/security-contract.json
+            security/release-lock.json
+            security/rendered-release-compose.json
+            security/scanner.json
           # File attestations persist in GitHub; storage records are OCI-only.
           create-storage-record: false
       - name: Upload authenticated contract and raw evidence for R4
