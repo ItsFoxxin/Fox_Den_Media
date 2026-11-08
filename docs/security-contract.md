@@ -29,6 +29,10 @@ Every existing per-image Trivy artifact gains security-contract.json with:
 
 Do not confuse the Docker image config ID with a distributable manifest digest. A future GHCR publisher must independently verify artifact ownership, immutable digest, source ancestry, scanner and SBOM hash, upstream-image coverage, database freshness, and actual attestation signatures. The baseline-verified command-line flag is merely a caller assertion; do not treat a downloaded baseline or flag as GitHub provenance. The trusted PR reporter in #74 has separate protected-dev validation.
 
+## Evidence integrity verification
+
+The producer re-reads all four raw evidence files and checks them against the hashes recorded in the contract before uploading the bundle. A future publisher can reuse `verify_evidence_files(contract, payloads)` from `scripts/security_contract.py` to reject tampered or missing vulnerability JSON, CycloneDX SBOM, scanner metadata or exception-ledger bytes. Synthetic tests cover matching content, a modified vulnerability report, missing SBOM bytes and malformed expected digests. Hash equality establishes **internal consistency only**: verify trusted workflow provenance, artifact ownership and signatures separately before release authorization.
+
 ## Policy semantics
 
 Unaccepted HIGH or CRITICAL results fail policy regardless of whether Trivy reports a fix. Existing findings in a baseline do not become exceptions simply because they are old. UNKNOWN severity needs review. Real upstream OS/base-image findings must be triaged like application packages.
