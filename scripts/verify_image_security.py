@@ -6,6 +6,7 @@ GitHub build attestation and registry digest before consuming these fields.
 """
 from __future__ import annotations
 import argparse
+from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
@@ -118,6 +119,37 @@ def validate_contract(contract: dict, candidates: dict, source_sha: str,
                 require(actual == record[field], f"Evidence checksum mismatch: {component}/{field}")
 
 
+def validate_scanner_policy(contract: dict, metadata: dict, ledger: dict,
+                            now: datetime | None = None) -> None:
+    """Cross-check signed raw scanner DB and exact checked-out source policy."""
+    require(type(contract) is dict and type(contract.get("scanner")) is dict,
+            "Missing signed scanner contract")
+    declared = contract["scanner"]
+    require(type(metadata) is dict and type(metadata.get("Version")) is str and
+            declared.get("name") == "trivy" and
+            metadata["Version"] == declared.get("version") == "0.76.2",
+            "Wrong scanner tool or version")
+    db = metadata.get("VulnerabilityDB")
+    require(type(db) is dict and type(db.get("Version")) is int and
+            db["Version"] > 0 and type(db.get("UpdatedAt")) is str and
+            db["UpdatedAt"] == declared.get("db_updated_at"),
+            "Wrong scanner DB schema version or timestamp")
+    try:
+        timestamp = datetime.fromisoformat(db["UpdatedAt"].replace("Z", "+00:00"))
+    except (TypeError, ValueError) as exc:
+        raise SecurityContractError("Invalid signed Trivy DB timestamp") from exc
+    now = now or datetime.now(timezone.utc)
+    require(timestamp.tzinfo is not None and now.tzinfo is not None and
+            0 <= (now - timestamp).total_seconds() <= 14 * 86400,
+            "Stale or future Trivy vulnerability DB")
+    require(type(ledger) is dict and set(ledger) == {"schema_version", "exceptions"} and
+            ledger["schema_version"] == 1 and ledger["exceptions"] == [],
+            "Unapproved or incompatible security exception ledger")
+    hash_value = hashlib.sha256(json.dumps(
+        ledger, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    require(contract.get("policy_version") == "v1:" + hash_value,
+            "Signed security contract differs from reviewed source exception policy")
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--contract", type=Path, required=True)
@@ -125,6 +157,8 @@ def main() -> int:
                         help="Folder with portal.json, music.json and media.json from approved R3 run")
     parser.add_argument("--lock", type=Path, required=True)
     parser.add_argument("--evidence-dir", type=Path, required=True)
+    parser.add_argument("--scanner-metadata", type=Path, required=True)
+    parser.add_argument("--policy", type=Path, required=True)
     parser.add_argument("--source-sha", required=True)
     parser.add_argument("--publisher-run-id", required=True, type=int)
     args = parser.parse_args()
@@ -135,6 +169,8 @@ def main() -> int:
         lock = json.loads(args.lock.read_text())
         validate_contract(contract, candidates, args.source_sha, args.publisher_run_id,
                           lock=lock, evidence_dir=args.evidence_dir)
+        validate_scanner_policy(contract, json.loads(args.scanner_metadata.read_text()),
+                                json.loads(args.policy.read_text()))
     except (OSError, ValueError, TypeError, KeyError) as exc:
         parser.exit(1, f"R4 security contract rejected: {exc}\n")
     print("R4 security evidence structurally aligned with all three candidate digests")
