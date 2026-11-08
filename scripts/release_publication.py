@@ -23,9 +23,9 @@ import urllib.request
 REPOSITORY = "ItsFoxxin/Fox_Den_Media"
 VERSION = "1.0.0"
 TAG = "v1.0.0"
-R4_WORKFLOW = ".github/workflows/release-verify.yml"
-R3_WORKFLOW = "ItsFoxxin/Fox_Den_Media/.github/workflows/release-candidate.yml"
-R4_ARTIFACT = "foxden-r4-release-ready-v1.0.0"
+R4_WORKFLOW = ".github/workflows/ghcr-verify.yml"
+R3_WORKFLOW = "ItsFoxxin/Fox_Den_Media/.github/workflows/ghcr-candidates.yml"
+R4_ARTIFACT = "foxden-r4-release-ready-v1.0.0"  # Required from future R4; absent in PR #81
 SHA = re.compile(r"^[0-9a-f]{40}$")
 DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 FIRST_PARTY = {
