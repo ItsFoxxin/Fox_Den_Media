@@ -75,6 +75,11 @@ def make_bundle(folder: Path) -> tuple[dict, dict]:
         "r4_run_id": R4, "r3_run_id": R3, "decision": "pass",
         "security_policy_result": "pass", "no_rebuild_integration": "passed",
         "security_policy_version": "fixture-policy-1", "high_critical_unaccepted": 0,
+        "source_promotion_approval": {
+            "decision": "approved", "approved_by": "ItsFoxxin",
+            "source_sha": SHA,
+            "record_url": "https://github.com/ItsFoxxin/Fox_Den_Media/issues/123",
+        },
         "github_security_review": "pass", "unapproved_security_findings": 0,
         "exceptions": [], "files": files,
     }
@@ -128,6 +133,24 @@ class BundleTests(unittest.TestCase):
         target.unlink()
         target.symlink_to(self.root / "reports/media-trivy.json")
         self.assert_blocked()
+
+    def test_missing_or_wrong_source_promotion_approval_fails(self):
+        self.update_verification(source_promotion_approval={})
+        self.assert_blocked()
+        self.update_verification(source_promotion_approval={
+            "decision": "approved", "approved_by": "ItsFoxxin",
+            "source_sha": "0" * 40,
+            "record_url": "https://github.com/ItsFoxxin/Fox_Den_Media/issues/123",
+        })
+        self.assert_blocked()
+
+    def test_original_policy_cannot_bypass_adopted_order(self):
+        with self.assertRaises(R5.ReleaseBlocked):
+            R5.validate_adopted_policy("old checklist: stabilize before source promotion")
+        R5.validate_adopted_policy(
+            "PR #63\nBefore source promotion\n"
+            "After independent source-promotion approval\n"
+            "Before NAS production cutover\nAfter authorized cutover\n")
 
     def test_wrong_source_fails(self):
         with self.assertRaises(R5.ReleaseBlocked):
