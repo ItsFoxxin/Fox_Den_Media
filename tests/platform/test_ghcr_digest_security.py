@@ -90,7 +90,7 @@ def plan_fixture():
 
 
 def metadata(date="2026-11-08T00:00:00Z"):
-    return {"Version": "0.76.2", "VulnerabilityDB": {"UpdatedAt": date}}
+    return {"Version": "0.76.2", "VulnerabilityDB": {"Version": 2, "UpdatedAt": date}}
 
 
 def test_positive_complete_contract_and_image_subjects(tmp_path):
