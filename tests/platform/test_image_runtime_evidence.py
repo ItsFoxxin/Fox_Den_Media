@@ -250,6 +250,16 @@ class EvidenceTests(unittest.TestCase):
         self.assertTrue(result["librist_mbed_crypto"]["direct_needed_match"])
         self.assertIn("mbedtls_dhm_init", result["librist_mbed_crypto"]["imported_selected"])
         self.assertEqual(result["libavformat_xml2"]["state"], "not_identified_in_bounded_inventory")
+        # Generic zlib exports alone are not bundled MiniZip implementation evidence.
+        row2 = {"image_path": "/usr/lib/libz.so.1", "needed": [],
+                "imports": {k: [] for k in evidence.SYMBOLS},
+                "symbols": {k: [] for k in evidence.SYMBOLS}}
+        row2["symbols"]["zlib_minizip"] = ["inflate", "deflate"]
+        only_zlib = evidence.related_native_evidence([row2])
+        self.assertEqual(only_zlib["minizip"]["other_binary_symbol_candidates"], [])
+        row2["symbols"]["minizip_api"] = ["unzOpen"]
+        mini = evidence.related_native_evidence([row2])
+        self.assertEqual(mini["minizip"]["other_binary_symbol_candidates"], ["/usr/lib/libz.so.1"])
 
     def test_native_path_bounding_and_symbol_pattern(self):
         self.assertIsNotNone(evidence.SYMBOLS["psa_crypto"].fullmatch("psa_export_public_key"))
