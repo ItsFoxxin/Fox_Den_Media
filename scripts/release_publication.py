@@ -138,8 +138,13 @@ def validate_notes(notes: str, source_sha: str, lock_sha: str, images: list) -> 
                     "Release notes omit a first-party immutable image reference")
     require(not re.search(r"\{\{|TODO|TBD|PLACEHOLDER", notes, flags=re.I),
             "Release notes contain unresolved template placeholders")
-    require(not re.search(r"\b10\.\d{1,3}\.\d{1,3}\.\d{1,3}\b", notes),
-            "Release notes may contain internal infrastructure addresses")
+    require(not re.search(
+        r"\b(?:10|192\\.168|172\\.(?:1[6-9]|2[0-9]|3[01]))"
+        r"\\.\\d{1,3}\\.\\d{1,3}(?:\\.\\d{1,3})?\\b", notes),
+        "Release notes may contain private infrastructure addresses")
+    require(not re.search(r"-----BEGIN [A-Z ]*PRIVATE KEY-----|"
+                          r"(?i:(?:password|api[_-]?key|secret|access[_-]?token)\\s*[=:]\\s*\\S{8,})",
+                          notes), "Release notes may contain credentials")
 
 
 def validate_bundle(root: Path, source_sha: str, r4_id: int) -> dict:
@@ -228,7 +233,14 @@ def validate_bundle(root: Path, source_sha: str, r4_id: int) -> dict:
         needed.update(image[key] for key in ("sbom", "provenance", "vulnerability_report"))
     require(needed.issubset(files), "Release evidence is missing required files")
     require("verification.json" not in files, "Self-referential evidence checksum")
+    for item in root.rglob("*"):
+        require(not item.is_symlink(), "Evidence bundle contains a symlink")
     for path, checksum in files.items():
+        require(path in ("release-lock.json", "release-notes.md")
+                or (isinstance(path, str) and re.fullmatch(
+                    r"(?:sboms|provenance|reports|integration)/[A-Za-z0-9_.-]+\\.json",
+                    path) is not None),
+                "Unexpected or potentially sensitive release evidence path")
         require(isinstance(checksum, str)
                 and re.fullmatch(r"[0-9a-f]{64}", checksum) is not None,
                 "Invalid evidence checksum: " + str(path))
