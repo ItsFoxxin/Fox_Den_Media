@@ -478,6 +478,34 @@ def validate_report(report, *, source, harness, component=None, image_id=None):
             raise ValueError("missing FFmpeg registration family")
         if report["ffmpeg"].get("fixture") not in ("pass", "failed"):
             raise ValueError("missing FFmpeg fixture result")
+    if not isinstance(report["python_xml"], dict) or any(
+            key not in report["python_xml"] for key in
+            ("pyexpat_version", "xml_parsers_expat_version", "libxml2", "libxml2mod", "lxml", "lxml.etree", "lxml.sax")):
+        raise ValueError("missing Python XML binding evidence")
+    if not isinstance(report["sqlite_copy"], dict) or any(
+            report["sqlite_copy"].get(key) != "pass" for key in
+            ("copy_reopen", "integrity_check", "read_only_write_rejected", "trusted_schema_off")):
+        raise ValueError("missing copied SQLite trust boundary")
+    if not isinstance(report["native_relationships"], dict) or report["native_relationships"].keys() != {
+            "minizip", "librist_mbed_crypto", "libavformat_xml2", "gio_gdbus"}:
+        raise ValueError("missing native linkage relationship coverage")
+    if any(not isinstance(row, dict) or "imports" not in row or
+           "package_owners" not in row or "format" not in row for row in report["binaries"]):
+        raise ValueError("incomplete native binary ownership or symbol evidence")
+    targeted = report["targeted_ffmpeg"]
+    if not isinstance(targeted, dict):
+        raise ValueError("incomplete targeted FFmpeg probes")
+    if report["ffmpeg"]["state"] == "present":
+        expected = {"avi_rasc", "avi_cfhd", "avi_magicyuv",
+                    "music_ffprobe_vobsub_mislabel", "music_ffprobe_dash_mislabel"}
+        fixtures = targeted.get("fixtures")
+        if targeted.get("state") != "tested_synthetic_only" or not isinstance(fixtures, dict) or fixtures.keys() != expected:
+            raise ValueError("missing targeted decoder/FFprobe fixtures")
+        for key, row in fixtures.items():
+            if not isinstance(row, dict) or row.get("state") not in ("pass", "failed", "accepted", "rejected", "fixture_unavailable"):
+                raise ValueError("missing targeted decoder/FFprobe outcome")
+    elif targeted != {"state": "not_found_on_PATH", "fixtures": None}:
+        raise ValueError("unexpected targeted FFmpeg output for absent executable")
     if not isinstance(report["interpretation_limits"], list) or len(report["interpretation_limits"]) < 3:
         raise ValueError("missing interpretation limits")
     return True
@@ -493,6 +521,21 @@ def report_markdown(r):
              f"- SQLite: {r['sqlite']['version']}; synthetic memory/FTS5/JSON1: {r['sqlite']['memory']}/{r['sqlite']['fts5']}/{r['sqlite']['json1']}",
              f"- zlib roundtrip: {r['synthetic']['zlib']}; Expat synthetic parse: {r['synthetic']['expat']}",
              f"- FFmpeg: {r['ffmpeg']['state']}; synthetic encoder→muxer→demuxer→decoder: {r['ffmpeg']['fixture']}", ""]
+    lines += ["## Targeted decoder and probe fixtures", ""]
+    probes = r["targeted_ffmpeg"]["fixtures"]
+    if probes is None:
+        lines.append("- FFmpeg not on PATH in this image; targeted probes not run.")
+    else:
+        for key in sorted(probes):
+            lines.append(f"- {key}: {probes[key]['state']}" +
+                         (f" (stage: {probes[key]['stage']})" if probes[key].get("stage") else ""))
+    lines += ["", "## Native linkage and bindings", "",
+              f"- MiniZip named native candidates: {len(r['native_relationships']['minizip']['named_candidates'])}",
+              f"- GDBus/libgio candidate state: {r['native_relationships']['gio_gdbus']['state']}",
+              f"- librist/Mbed crypto relationship: {r['native_relationships']['librist_mbed_crypto']['state']}",
+              f"- libavformat/libxml2 relationship: {r['native_relationships']['libavformat_xml2']['state']}",
+              f"- Python Expat version: {r['python_xml']['pyexpat_version']}",
+              f"- Synthetic copied SQLite read-only / trusted schema checks: {r['sqlite_copy']['read_only_write_rejected']} / {r['sqlite_copy']['trusted_schema_off']}", ""]
     if r['ffmpeg']['registrations']:
         lines += ["## FFmpeg registered feature counts", ""]
         for key, value in r['ffmpeg']['registrations'].items():
