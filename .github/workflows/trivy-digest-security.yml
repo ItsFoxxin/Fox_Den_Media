@@ -1,0 +1,196 @@
+name: Trusted GHCR digest security evidence (R4 producer)
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: 'Exact separately approved main source SHA'
+        required: true
+        type: string
+      publisher_run_id:
+        description: 'Successful, authorized R3 GHCR candidate run'
+        required: true
+        type: string
+
+# Manual + protected environment ONLY. No push/PR/workflow_run trigger,
+# packages:write, release tag, build, deployment or NAS credentials.
+permissions:
+  contents: read
+
+concurrency:
+  group: ghcr-digest-security-${{ inputs.source_sha }}
+  cancel-in-progress: false
+
+jobs:
+  evidence:
+    name: Verify and scan published exact-digest images
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    environment: ghcr-security
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      actions: read
+      packages: read
+      attestations: write
+      id-token: write
+    steps:
+      - name: Checkout exact source with no persisted credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - name: Setup Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+      - name: Verify protected authorization, main HEAD and authenticated R3
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          PUBLISHER_RUN: ${{ inputs.publisher_run_id }}
+          ENABLED: ${{ vars.GHCR_SECURITY_ENABLED }}
+          ENV_PROTECTED: ${{ vars.GHCR_SECURITY_ENV_PROTECTED }}
+          APPROVED_SHA: ${{ vars.GHCR_SECURITY_APPROVED_SOURCE_SHA }}
+        run: |
+          set -euo pipefail
+          test "$ENABLED" = true && test "$ENV_PROTECTED" = true
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$PUBLISHER_RUN" =~ ^[1-9][0-9]*$ ]]
+          test "$SOURCE_SHA" = "$APPROVED_SHA"
+          test "$SOURCE_SHA" = "$GITHUB_SHA"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')" = "$SOURCE_SHA"
+          gh_version="$(gh --version | head -n1 | awk '{print $3}')"
+          python - "$gh_version" <<'PY'
+          import sys
+          try:
+              version = tuple(int(x) for x in sys.argv[1].split(".")[:3])
+          except (ValueError, IndexError) as exc:
+              raise SystemExit("Unknown gh version") from exc
+          if version < (2, 102, 0):
+              raise SystemExit("Require gh >= 2.102 for exact signer-workflow matching")
+          PY
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$PUBLISHER_RUN" > "$RUNNER_TEMP/r3-run.json"
+          jq -e --arg repo "$GITHUB_REPOSITORY" --arg sha "$SOURCE_SHA" '
+            .repository.full_name == $repo and
+            .head_sha == $sha and .head_branch == "main" and
+            .event == "workflow_dispatch" and
+            .path == ".github/workflows/ghcr-candidates.yml" and
+            .status == "completed" and .conclusion == "success"
+          ' "$RUNNER_TEMP/r3-run.json"
+      - name: Load owner-reviewed lock and safe rendered image-only Compose
+        shell: bash
+        env:
+          LOCK_B64: ${{ vars.GHCR_SECURITY_LOCK_B64 }}
+          RENDERED_B64: ${{ vars.GHCR_SECURITY_RENDERED_B64 }}
+          LOCK_SHA256: ${{ vars.GHCR_SECURITY_LOCK_SHA256 }}
+          RENDERED_SHA256: ${{ vars.GHCR_SECURITY_RENDERED_SHA256 }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$LOCK_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$RENDERED_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          test -n "$LOCK_B64" && test -n "$RENDERED_B64"
+          mkdir -p security/reports candidates
+          printf '%s' "$LOCK_B64" | base64 --decode > security/release-lock.json
+          printf '%s' "$RENDERED_B64" | base64 --decode > security/rendered-release-compose.json
+          test "$(sha256sum security/release-lock.json | cut -d' ' -f1)" = "$LOCK_SHA256"
+          test "$(sha256sum security/rendered-release-compose.json | cut -d' ' -f1)" = "$RENDERED_SHA256"
+          # The authoritative R2 validator is delivered by PR #79.
+          # Absence is a hard dependency failure, not permission to skip.
+          python scripts/release_lock.py security/release-lock.json \
+            --compose deploy/compose.yaml \
+            --rendered security/rendered-release-compose.json \
+            --source-sha "$SOURCE_SHA"
+      - name: Download exact candidate artifacts and construct complete scan plan
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          PUBLISHER_RUN: ${{ inputs.publisher_run_id }}
+        run: |
+          set -euo pipefail
+          for name in portal music media; do
+            mkdir -p "candidates/$name"
+            gh run download "$PUBLISHER_RUN" --repo "$GITHUB_REPOSITORY" \
+              --name "ghcr-candidate-$name" --dir "candidates/$name"
+            test -s "candidates/$name/$name.json"
+            cp "candidates/$name/$name.json" "candidates/$name.json"
+          done
+          python scripts/ghcr_digest_security.py prepare \
+            --lock security/release-lock.json \
+            --rendered security/rendered-release-compose.json \
+            --candidates candidates \
+            --upstream-provenance security/upstream-provenance.json \
+            --source-sha "$SOURCE_SHA" --publisher-run-id "$PUBLISHER_RUN" \
+            --output security/scan-plan.json
+      - name: Install existing checksum-verified Trivy
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/install_trivy.sh "$RUNNER_TEMP/trivy-bin"
+          echo "$RUNNER_TEMP/trivy-bin" >> "$GITHUB_PATH"
+      - name: Verify every registry digest, signer and platform, then scan
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Read-only registry authentication; no GHCR write permissions.
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io \
+            --username "$GITHUB_ACTOR" --password-stdin
+          trivy version --format json > security/scanner.json
+          for name in $(jq -r 'keys[]' security/scan-plan.json); do
+            ref="$(jq -er --arg name "$name" '.[$name].ref' security/scan-plan.json)"
+            repo="$(jq -er --arg name "$name" '.[$name].source_repo' security/scan-plan.json)"
+            commit="$(jq -er --arg name "$name" '.[$name].source_sha // .[$name].source_sha' security/scan-plan.json)"
+            # For upstream, the source SHA is carried by the reviewed signer ledger,
+            # not by the release-lock source_sha (which must remain null).
+            source_ref="$(jq -er --arg name "$name" '.[$name].source_ref' security/scan-plan.json)"
+            workflow="$(jq -er --arg name "$name" '.[$name].signer_workflow' security/scan-plan.json)"
+            gh attestation verify "oci://$ref" \
+              --repo "$repo" --source-ref "$source_ref" \
+              --source-digest "$commit" --signer-workflow "$workflow"
+            docker buildx imagetools inspect "$ref" --raw \
+              > "security/reports/$name.manifest.json"
+            python scripts/ghcr_digest_security.py check-manifest \
+              --plan security/scan-plan.json --name "$name" \
+              --manifest "security/reports/$name.manifest.json"
+            docker pull --platform linux/amd64 "$ref"
+            docker image inspect --format '{{.Id}}' "$ref" \
+              > "security/reports/$name.image-id"
+            trivy image --image-src docker --scanners vuln --format json \
+              --exit-code 0 --output "security/reports/$name.vuln.json" "$ref"
+            trivy image --image-src docker --scanners vuln --format spdx-json \
+              --exit-code 0 --output "security/reports/$name.sbom.spdx.json" "$ref"
+          done
+      - name: Enforce reviewed security policy and produce R4-compatible contract
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          PUBLISHER_RUN: ${{ inputs.publisher_run_id }}
+        run: |
+          set -euo pipefail
+          python scripts/ghcr_digest_security.py assemble \
+            --plan security/scan-plan.json --reports security/reports \
+            --scanner security/scanner.json \
+            --policy security/vulnerability-exceptions.json \
+            --source-sha "$SOURCE_SHA" --publisher-run-id "$PUBLISHER_RUN" \
+            --output security/security-contract.json
+          test -s security/security-contract.json
+          echo "Exact digest security evaluation passed; no publishing or NAS access." >> "$GITHUB_STEP_SUMMARY"
+      - name: Attest exact passing security contract through GitHub OIDC
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: security/security-contract.json
+          create-storage-record: true
+      - name: Upload authenticated contract and raw evidence for R4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ghcr-security-contract-v1
+          path: |
+            security/security-contract.json
+            security/release-lock.json
+            security/rendered-release-compose.json
+            security/reports/
+          if-no-files-found: error
+          retention-days: 30
