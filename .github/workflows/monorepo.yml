@@ -1,8 +1,10 @@
 name: Validate Fox Den Media monorepo
 
 on:
+  # Protected branch updates validate automatically; unmerged branches can
+  # be validated via workflow_dispatch before opening a pull request.
   push:
-    branches: [dev, main, 'feature/**', 'security/**']
+    branches: [dev, main]
   pull_request:
     branches: [dev, main, 'feature/**', 'security/**']
   merge_group:
@@ -178,7 +180,8 @@ jobs:
 
   migration:
     name: Migration backup restore and rollback
-    needs: validation
+    # Run isolated heavy checks only after required core tests and security gates pass.
+    needs: [music, applications, audit, sast]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -211,7 +214,8 @@ jobs:
 
   jellyfin:
     name: Optional Jellyfin container
-    needs: validation
+    # Run isolated heavy checks only after required core tests and security gates pass.
+    needs: [music, applications, audit, sast]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:

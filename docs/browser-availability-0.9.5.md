@@ -1,4 +1,4 @@
-# RB-04: optional server-browser availability (0.9.4)
+# RB-04: optional server-browser availability (0.9.5)
 
 ## Root cause and change
 
