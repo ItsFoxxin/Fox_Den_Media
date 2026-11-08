@@ -11,6 +11,7 @@ from starlette.websockets import WebSocketDisconnect
 
 from foxden_portal import browser_ws
 from foxden_portal.app import create_app
+from foxden_portal.oidc import OIDCAccessDenied
 
 from conftest import bootstrap_admin, settings
 
@@ -109,9 +110,10 @@ def test_unauthenticated_wrong_origin_and_unexpected_paths_do_not_reach_firefox(
         for path, headers in [
             ("/websockify", ORIGIN),
             ("/websockify", {"origin": "http://attacker.invalid"}),
+            ("/websockify", {}),
             ("/unrelated-socket", ORIGIN),
         ]:
-            if headers["origin"] == "http://attacker.invalid":
+            if headers.get("origin") == "http://attacker.invalid":
                 # The malicious Origin must be rejected *with* a valid admin cookie.
                 bootstrap_admin(client)
             with pytest.raises(WebSocketDisconnect):
@@ -172,6 +174,8 @@ class RoleChangingOIDC:
 
     def authorize_claims(self, claims):
         role = "admin" if "foxden-admins" in claims["groups"] else "user"
+        if "group-access-denied" in claims["groups"]:
+            raise OIDCAccessDenied("The verified identity lost allowed-group access.")
         return (
             claims["sub"], claims["preferred_username"], claims["name"],
             claims["groups"], role,
@@ -226,3 +230,26 @@ def test_session_database_failure_rejects_handshake(tmp_path, mock_browser, monk
                 pass
         assert closed.value.code == 1008
         assert mock_browser == []
+
+
+def test_verified_oidc_group_access_loss_revokes_open_websocket(tmp_path, mock_browser):
+    identity = RoleChangingOIDC()
+    with TestClient(create_app(settings(tmp_path, auth_mode="hybrid"), oidc_client=identity)) as client:
+        bootstrap_admin(client)
+        assert client.get(
+            "/auth/oidc/callback?state=first&code=test", follow_redirects=False,
+        ).status_code == 303
+        previous_token = client.cookies.get("foxden_portal_session")
+        with client.websocket_connect("/websockify", headers=ORIGIN) as socket:
+            socket.send_bytes(b"active-session")
+            assert socket.receive_bytes() == b"active-session"
+            identity.groups = ["group-access-denied"]
+            denied = client.get(
+                "/auth/oidc/callback?state=denied&code=test", follow_redirects=False,
+            )
+            assert denied.status_code == 401
+            assert client.app.state.store.session(previous_token) is None
+            with pytest.raises(WebSocketDisconnect) as closed:
+                socket.receive_bytes()
+            assert closed.value.code == 1008
+        assert mock_browser[0][2].closed
