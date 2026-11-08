@@ -34,6 +34,8 @@ updates:
       timezone: "America/New_York"
     open-pull-requests-limit: 3
 
+  # Docker runtime policy: retain Python 3.12 and accept only 3.12 patch
+  # updates. Do not broaden the runtime to 3.13+ without separate tests.
   # Application Dockerfile base images. Deployment Compose image references use
   # variable-driven defaults and require a separate image-update policy.
   - package-ecosystem: "docker"
@@ -48,3 +50,8 @@ updates:
       time: "00:15"
       timezone: "America/New_York"
     open-pull-requests-limit: 2
+    ignore:
+      - dependency-name: "python"
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"

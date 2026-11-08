@@ -63,23 +63,78 @@ may contain checks still running or GitHub scheduling delays.
   workflow/PR. That report plumbing belongs to the later CI/event-hub
   work, not the Dependabot foundation.
 
+## Python runtime policy
+
+- Application Dockerfile images remain on **Python 3.12** until a separate,
+  explicitly tested runtime-upgrade issue and PR is approved. Music regression
+  tests additionally run on 3.13, but that does **not** authorize a production
+  Python 3.13 or 3.15 runtime image.
+- Dependabot's Docker entry uses a `python`-specific `ignore` of
+  `version-update:semver-minor` and `version-update:semver-major`. This
+  allows routine 3.12.x patch releases while preventing automated jumps to
+  3.13+ or 4.x. The restriction is limited to the `python` image and does
+  **not** ignore other Dockerfile base images. Explicit security remediation
+  may still require a manually reviewed base-image or runtime upgrade.
+- Docker's tag parsing treats the numeric Python image tag as a SemVer-like
+  version. Confirm future Dependabot output continues proposing 3.12 patches
+  without proposing cross-minor changes; investigate update-job logs on a
+  surprising result. Pinned OS suffix `-slim-bookworm` remains reviewed.
+
+## Processing dependency pull requests
+
+1. Review the upstream release notes and exact diff, compare with the latest
+   `dev`, and inspect all overlapping pins in `pyproject.toml`,
+   `requirements.txt`, `requirements-dev.txt` and CI files. Do not group
+   unrelated changes simply to reduce PR count.
+2. Update an out-of-date Dependabot PR using the GitHub **Update branch**
+   control or a supported Dependabot rebase request, and require the full
+   current required checks on its new revision; stale green checks alone
+   are insufficient. Never bypass failed security checks.
+3. Validate the relevant Python 3.12/3.13 test matrix, Portal and Movies/TV
+   regression tests, CodeQL, Dependency Review, `pip-audit`, Bandit and
+   the isolated container/VPN integration fixture. Review release notes for
+   ASGI request parsing, OIDC/session behavior, worker retry and browser
+   behavior where affected.
+4. Reserve a NAS isolated rehearsal for behavior-sensitive runtime/library
+   changes, including auth/session and Music Worker changes; leave the PR
+   open with explicit test requirements if this cannot be proven. Do not
+   install or deploy dependency updates to production automatically.
+5. Routine development-tool maintenance usually needs no application version
+   bump. For a released application bug/security fix, follow the one issue /
+   one patch release / exact changelog tracking policy.
+6. For conflicts or failed updates, preserve original PR history; inspect
+   the Dependabot update-job logs, request a rebase or resolve manifest pins
+   deliberately, then rerun CI. Do not create duplicate bug issues for
+   routine bot update PRs.
+
 ## Activation and routing
 
-1. Review and merge the Dependabot foundation PR into `dev` only with
-   maintainer approval.
-2. Promote the approved configuration to the repository default branch
-   `main` through the usual tested PR process. Dependabot reads its
-   configuration from **main**; a file on `dev` alone does not activate
-   scheduled updates.
-3. Once active, **routine version-update PRs** are opened against `dev`
+1. The root configuration has been promoted to default `main` and is
+   present on `dev`. Any subsequent config changes must be kept in sync
+   through isolated, reviewed PRs—not a blanket application promotion.
+2. Dependabot reads the configuration from **main** and opens **routine
+   version-update PRs** against `dev`
    and run the existing monorepo/CodeQL checks. Merge only after reviewing
    the dependency diff, release notes, build/test impact, and CI outcomes.
-4. **Dependabot security-update PRs** target default branch `main`.
+3. **Dependabot security-update PRs** target default branch `main`.
    `target-branch: dev` and its associated entry options do not control
    those security PRs. Ensure Dependabot alerts and security updates are
    separately enabled in repository security settings. Review and test
    security PRs before an approved merge to `main`; then sync the
    accepted changes back to `dev` and verify CI there.
+
+## GitHub security setting verification
+
+In repository **Settings → Security and quality → Advanced Security**, check
+**Dependency graph**, **Dependabot alerts**, **Dependabot security updates**
+(and any relevant private alerts), and review notification preferences. In
+**Insights → Dependency graph → Dependabot**, inspect update-job failures and
+run **Check for updates** when GitHub exposes it. The connected repository
+read-only data alone does not establish every toggle's enabled status.
+Security PRs use the default-branch routing; after approved `main` fixes,
+back-sync to `dev`, run all required tests, and avoid unrelated release
+promotion. CI/CodeQL/Dependency Review are complementary, not substitutes
+for GitHub security setting activation.
 
 The repository has **no Dependabot auto-merge workflow** in this foundation.
 A bot PR is a proposal, never an approval to merge or deploy. Solo-maintainer
