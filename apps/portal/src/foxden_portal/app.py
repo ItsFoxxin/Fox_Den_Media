@@ -16,6 +16,7 @@ from foxden_identity import IdentityError, SigningKey
 
 from . import __version__
 from .auth import AuthError, AuthService, RateLimited
+from .browser_ws import register_browser_websockets
 from .config import ConfigError, Settings
 from .contracts import CONTRACT_VERSION, IDENTITY_HEADER
 from .database import PortalStore
@@ -79,6 +80,7 @@ def create_app(settings: Settings | None = None, module_client: ModuleClient | N
     app.state.identity_signer = signer
     app.state.watch_store = watch_store
     app.state.jellyfin = jellyfin
+    register_browser_websockets(app, store, settings.public_url)
     templates = Jinja2Templates(directory=ROOT / "templates")
     app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
 
