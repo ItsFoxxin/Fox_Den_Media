@@ -57,3 +57,7 @@ The prospective [versioning and bug-tracking policy](versioning-and-bug-tracking
 5. Only after successful production acceptance consider a 1.0.0 tag/release.
 
 There is no automatic production deployment in these GitHub workflows, and a repository version label is not proof of a published release. See [1.0.0 checklist](release-1.0-checklist.md).
+
+## Advisory container image scanning
+
+The independent [Trivy image scanning and SBOM guide](trivy.md) documents built-image coverage, 21-day report artifacts, vulnerability triage and manual baseline comparisons. It is not part of the required Monorepo strict gate and does not deploy or publish images.
