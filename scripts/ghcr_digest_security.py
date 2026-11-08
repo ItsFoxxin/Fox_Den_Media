@@ -45,7 +45,7 @@ def ensure(condition: bool, message: str) -> None:
 
 def check_gh_cli_version(version: str) -> None:
     """GitHub CLI <= 2.101 can accept workflow-name prefix matches."""
-    ensure(type(version) is str and bool(re.fullmatch(r"[0-9]+\\.[0-9]+\\.[0-9]+", version)),
+    ensure(type(version) is str and bool(re.fullmatch(r"[0-9]+[.][0-9]+[.][0-9]+", version)),
            "Unrecognized GitHub CLI version")
     ensure(tuple(int(x) for x in version.split(".")) >= (2, 102, 0),
            "GitHub CLI >= 2.102.0 required for exact workflow signer verification")
