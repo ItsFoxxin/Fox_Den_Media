@@ -176,3 +176,191 @@ def trusted_baseline(api, run):
         except (EvidenceError, KeyError, ValueError, urllib.error.HTTPError):
             return "invalid", None, candidate
     return "invalid", None, None
+
+
+def classify(scans, baseline):
+    labels = set()
+    deltas = {}
+    if scans is None or baseline is None:
+        return {"security: review-required"}, deltas
+    for component in COMPONENTS:
+        current = scans[component]["baseline"]
+        original = baseline[component]["baseline"]
+        changes = compare(current, original)
+        old = {row["key"]: row["severity"] for row in original["findings"]}
+        escalated = [row for row in current["findings"]
+                     if row["key"] in old and old[row["key"]] != row["severity"]
+                     and row["severity"] in ("CRITICAL", "HIGH")]
+        changes["escalated"] = escalated
+        deltas[component] = changes
+        if any(row["severity"] == "CRITICAL"
+               for row in changes["new"] + escalated):
+            labels.add("security: new-critical")
+        if any(row["severity"] == "HIGH" for row in changes["new"] + escalated):
+            labels.add("security: new-high")
+    if labels:
+        labels.add("security: review-required")
+    return labels, deltas
+
+
+def render(pr, run, scans, status, baseline_run, deltas):
+    base = "https://github.com/" + run["repository"]["full_name"]
+    body = [MARKER, "### Fox Den Media: Trivy container security (advisory)", "",
+            "- PR: #" + str(pr["number"]) + " (head SHA " + run["head_sha"] + ")",
+            "- [Scan run](" + base + "/actions/runs/" + str(run["id"]) + ")",
+            "- **Advisory only**. A vulnerability finding is not a required status failure.",
+            "- Protected dev baseline: **" + status + "**"]
+    if baseline_run:
+        body[-1] += " ([baseline run](" + base + "/actions/runs/" + str(baseline_run["id"]) + "))"
+    if scans is None:
+        body += ["", "**Scan failed or evidence could not be validated.**",
+                 "Counts and vulnerability deltas unavailable; do not interpret as a clean scan."]
+        return "\n".join(body)
+    body += ["", "**Three image scans completed with valid report artifacts.**", "",
+             "| Image | Critical | High | Medium | Low | Unknown | Fixable | New | Resolved | Artifact |",
+             "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |"]
+    for component in COMPONENTS:
+        scan = scans[component]
+        summary = scan["summary"]
+        severity = [str(summary["by_severity"][item]) for item in SEVERITIES]
+        found = deltas.get(component)
+        added = str(len(found["new"])) if found else "N/A"
+        resolved = str(len(found["resolved"])) if found else "N/A"
+        fixable = str(sum(summary["fix_available"].values()))
+        body.append("| " + component + " | " + " | ".join(severity) + " | "
+                    + fixable + " | " + added + " | " + resolved + " | [JSON + SBOM]("
+                    + scan["url"] + ") |")
+    versions = sorted({s["version"] for s in scans.values()})
+    dates = sorted({str(s["database_updated"]) for s in scans.values()
+                    if s["database_updated"]})
+    body += ["", "- Trivy version: " + ", ".join(versions),
+             "- Vulnerability DB updated: " + (", ".join(dates) if dates else "unknown"),
+             "- Built image identities (image ID, not published registry digest):"]
+    for component in COMPONENTS:
+        summary = scans[component]["summary"]
+        body.append("  - " + component + ": " + summary["image"]
+                    + " / " + summary["image_id"])
+    body += ["", "A finding absent from the earlier scan may reflect a newer vulnerability DB "
+             "or a refreshed mutable base image rather than PR-introduced code.",
+             "Unfixed findings are not automatically ignored. Review detailed evidence in artifacts."]
+    return "\n".join(body)
+
+
+def is_current(api, run, number):
+    pr = api.call("/pulls/" + str(number))
+    if pr.get("state") != "open" or pr.get("head", {}).get("sha") != run["head_sha"]:
+        return False
+    runs = api.call("/actions/workflows/" + str(run["workflow_id"])
+                    + "/runs?head_sha=" + run["head_sha"] + "&event=pull_request&per_page=30")
+    for other in runs.get("workflow_runs", []):
+        assoc = other.get("pull_requests") or []
+        if not any(item.get("number") == number for item in assoc):
+            continue
+        if other.get("created_at", "") > run.get("created_at", ""):
+            return False
+        if (other.get("created_at") == run.get("created_at")
+                and other.get("id", 0) > run["id"]):
+            return False
+    return True
+
+
+def comment_upsert(api, number, body):
+    found = []
+    for page in range(1, 6):
+        batch = api.call("/issues/" + str(number)
+                         + "/comments?per_page=100&page=" + str(page))
+        check(isinstance(batch, list), "GitHub comments were not a list")
+        found.extend(item for item in batch if MARKER in (item.get("body") or "")
+                     and item.get("user", {}).get("login") == "github-actions[bot]")
+        if len(batch) < 100:
+            break
+    if found:
+        previous = max(found, key=lambda item: item["id"])
+        if previous.get("body") != body:
+            api.call("/issues/comments/" + str(previous["id"]), "PATCH",
+                     {"body": body})
+        return "updated"
+    api.call("/issues/" + str(number) + "/comments", "POST", {"body": body})
+    return "created"
+
+
+def labels_update(api, number, desired):
+    issue = api.call("/issues/" + str(number))
+    existing = {item["name"] for item in issue.get("labels", [])}
+    additions = desired - existing
+    removals = (existing & set(LABELS)) - desired
+    for name in sorted(additions):
+        try:
+            api.call("/labels/" + urllib.parse.quote(name, safe=""))
+        except urllib.error.HTTPError as error:
+            if error.code != 404:
+                raise
+            color, description = LABELS[name]
+            api.call("/labels", "POST", {"name": name, "color": color,
+                                         "description": description})
+    if additions:
+        api.call("/issues/" + str(number) + "/labels", "POST",
+                 {"labels": sorted(additions)})
+    for name in sorted(removals):
+        api.call("/issues/" + str(number) + "/labels/"
+                 + urllib.parse.quote(name, safe=""), "DELETE")
+    return additions, removals
+
+
+def process(api, event):
+    run = event["workflow_run"]
+    check(event.get("repository", {}).get("full_name") == api.repo,
+          "Unexpected event repository")
+    check(run.get("repository", {}).get("full_name") == api.repo
+          and run.get("name") == SCANNER_WORKFLOW
+          and run.get("event") == "pull_request"
+          and run.get("status") == "completed",
+          "Not a completed scanner PR workflow")
+    if run.get("head_repository", {}).get("full_name") != api.repo:
+        return "Fork PR: privileged reporting skipped by policy"
+    associations = run.get("pull_requests") or []
+    check(len(associations) == 1, "Ambiguous pull request association")
+    number = associations[0]["number"]
+    if not is_current(api, run, number):
+        return "Closed or superseded PR, no writes"
+    pr = api.call("/pulls/" + str(number))
+    merge_sha = pr.get("merge_commit_sha")
+    check(bool(SHA_RE.fullmatch(merge_sha or "")), "Missing merge test commit identity")
+    protected = api.call("/branches/dev")
+    check(protected.get("protected"), "dev must be protected")
+    scans = None
+    if run.get("conclusion") == "success" and trusted_scanner(
+            api, run, protected["commit"]["sha"]):
+        try:
+            scans = load_scans(api, run, merge_sha)
+        except (EvidenceError, ValueError, KeyError, urllib.error.HTTPError):
+            scans = None
+    baseline_status, baseline_data, baseline_run = "unavailable", None, None
+    if scans is not None:
+        try:
+            baseline_status, baseline_data, baseline_run = trusted_baseline(api, run)
+        except (EvidenceError, KeyError, ValueError, urllib.error.HTTPError):
+            baseline_status = "invalid"
+    labels, deltas = classify(scans, baseline_data)
+    if scans is None:
+        baseline_status = "not evaluated"
+    report = render(pr, run, scans, baseline_status, baseline_run, deltas)
+    if not is_current(api, run, number):
+        return "Superseded while validating, no writes"
+    comment_upsert(api, number, report)
+    labels_update(api, number, labels)
+    return "Published Trivy advisory result for PR #" + str(number)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--event", required=True)
+    args = parser.parse_args()
+    api = Github(os.environ["GITHUB_REPOSITORY"], os.environ["GITHUB_TOKEN"])
+    with open(args.event, encoding="utf-8") as source:
+        event = json.load(source)
+    print(process(api, event))
+
+
+if __name__ == "__main__":
+    main()
