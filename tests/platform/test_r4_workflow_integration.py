@@ -92,3 +92,107 @@ def test_r4_assembler_rejects_duplicate_json_evidence_keys(tmp_path):
     malformed.write_text('{"source_sha": "a", "source_sha": "b"}', encoding="utf-8")
     with pytest.raises(r4.ReleaseEvidenceError, match="Duplicate evidence JSON field"):
         r4.read_json(malformed)
+
+
+def test_r4_authenticates_all_four_security_subjects_with_explicit_source():
+    workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    steps = {step["name"]: step for step in workflow["jobs"]["verify"]["steps"]
+             if "name" in step}
+    security = steps["Download signed shared digest scan and complete release lock"]
+    assert security["env"]["SOURCE_SHA"] == "${{ inputs.source_sha }}"
+    assert security["env"]["SECURITY_RUN"] == "${{ inputs.security_run_id }}"
+    script = security["run"]
+    assert "set -euo pipefail" in script
+    assert script.count("gh attestation verify") == 1
+    for filename in (
+        "security/security-contract.json",
+        "security/release-lock.json",
+        "security/rendered-release-compose.json",
+        "security/scanner.json",
+    ):
+        assert filename in script
+    assert '--source-ref "refs/heads/main"' in script
+    assert '--source-digest "$SOURCE_SHA"' in script
+    assert ('--signer-workflow '
+            '"$GITHUB_REPOSITORY/.github/workflows/trivy-digest-security.yml"'
+            ) in script
+    signed = steps["Cryptographically attest exact R4 release-ready root manifest"]
+    assert signed["with"]["subject-path"] == "release-bundle/release-ready.json"
+    # File subjects use GitHub's attestation API, not OCI storage options.
+    assert "create-storage-record" not in signed["with"]
+    assert "push-to-registry" not in signed["with"]
+
+
+def test_r3_publisher_requires_owner_go_rechecked_under_protected_environment():
+    workflow = yaml.safe_load(
+        (ROOT / ".github/workflows/ghcr-candidates.yml").read_text(encoding="utf-8")
+    )
+    authorize, publish = workflow["jobs"]["authorize"], workflow["jobs"]["publish"]
+    assert authorize["permissions"].get("packages") is None
+    assert publish["permissions"]["packages"] == "write"
+    assert publish["environment"] == "ghcr-candidates"
+    assert publish["needs"] == "authorize"
+    for job in (authorize, publish):
+        scripts = "\n".join(step.get("run", "") for step in job["steps"])
+        assert "scripts/verify_candidate_approval.py" in scripts
+        assert "scripts/verify_publisher_checks.py" in scripts
+        assert "GHCR-CANDIDATES" not in scripts  # no unauthenticated inline GO
+        assert "gh api" in scripts
+        assert "GITHUB_SHA" in scripts
+        assert "GHCR" in str(job["steps"])
+    assert workflow["jobs"]["publish"]["strategy"]["matrix"]["include"]
+    assert "push" not in workflow.get("on", {})  # workflow_dispatch only
+
+
+def test_independent_acceptance_run_rejects_wrong_identity_or_status():
+    valid = {
+        "id": 234,
+        "repository": {"full_name": r4.REPO},
+        "path": r4.ACCEPTANCE_WORKFLOW,
+        "event": "workflow_dispatch",
+        "head_sha": "a" * 40,
+        "head_branch": "main",
+        "status": "completed",
+        "conclusion": "success",
+    }
+    r4.require_successful_acceptance(valid, "a" * 40, 234)
+    for key, value in (
+        ("id", 235),
+        ("repository", {"full_name": "someone/other-repo"}),
+        ("path", ".github/workflows/untrusted.yml"),
+        ("event", "pull_request"),
+        ("head_sha", "b" * 40),
+        ("head_branch", "dev"),
+        ("status", "queued"),
+        ("conclusion", "failure"),
+    ):
+        bad = dict(valid)
+        bad[key] = value
+        with pytest.raises(r4.ReleaseEvidenceError):
+            r4.require_successful_acceptance(bad, "a" * 40, 234)
+    with pytest.raises(r4.ReleaseEvidenceError):
+        r4.require_successful_acceptance({}, "a" * 40, 234)
+
+
+def test_r4_rejects_missing_unsigned_or_mismatched_provenance():
+    image = "ghcr.io/itsfoxxin/fox-den-media-portal"
+    digest = "sha256:" + "b" * 64
+    valid = [{
+        "verificationResult": {
+            "statement": {
+                "subject": [{"name": image, "digest": {"sha256": "b" * 64}}],
+            },
+        },
+    }]
+    r4.verify_attested_provenance(valid, image, digest)
+    for evidence in (
+        [],
+        [{}],
+        [{"statement": valid[0]["verificationResult"]["statement"]}],
+        [{"verificationResult": {"statement": {"subject": []}}}],
+        [{"verificationResult": {"statement": {
+            "subject": [{"name": image, "digest": {"sha256": "c" * 64}}],
+        }}}],
+    ):
+        with pytest.raises(r4.ReleaseEvidenceError):
+            r4.verify_attested_provenance(evidence, image, digest)

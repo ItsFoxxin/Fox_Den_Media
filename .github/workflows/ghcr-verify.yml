@@ -127,6 +127,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           SECURITY_RUN: ${{ inputs.security_run_id }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
         run: |
           set -euo pipefail
           mkdir -p security
@@ -299,7 +300,6 @@ jobs:
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: release-bundle/release-ready.json
-          create-storage-record: false
       - name: Upload signed canonical release-ready artifact for R5
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
