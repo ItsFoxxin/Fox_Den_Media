@@ -1,6 +1,9 @@
 """Synthetic offline R1/R2 positive and negative tests (no GHCR or NAS)."""
 import hashlib
+import json
+from pathlib import Path
 import pytest
+import yaml
 from scripts.release_lock import (
     ReleaseLockError, SERVICE_IMAGE, FIRST_PARTY, UPSTREAM,
     selected_services, validate_lock,
@@ -100,9 +103,9 @@ def test_r1_metadata_validation_fixture(tmp_path):
     (tmp_path / "VERSION").write_text("1.0.0\n")
     (tmp_path / "apps/media/VERSION").write_text("1.0.0\n")
     (tmp_path / "apps/media/Dockerfile").write_text("COPY apps/media/VERSION ./VERSION\n")
-    (tmp_path / "README.md").write_text("Current: **1.0.0**\n")
+    (tmp_path / "README.md").write_text("Current source milestone: **1.0.0**.\n")
     (tmp_path / "CHANGELOG.md").write_text("## 1.0.0 - 2026-11-07\n")
-    (tmp_path / "deploy/compose.yaml").write_text('image: "fox-den-media:1.0.0"\n')
+    (tmp_path / "deploy/compose.yaml").write_text('image: "${MEDIA_IMAGE:-fox-den-media:1.0.0}"\n')
     validate_metadata(tmp_path, SRC, SRC)
     with pytest.raises(ReleaseMetadataError, match="main HEAD"):
         validate_metadata(tmp_path, SRC, "f" * 40)
@@ -112,4 +115,71 @@ def test_r1_metadata_validation_fixture(tmp_path):
     (tmp_path / "CHANGELOG.md").write_text("## 1.0.0 - 2026-11-07\n")
     (tmp_path / "apps/media/VERSION").write_text("0.9.6\n")
     with pytest.raises(ReleaseMetadataError, match="Media VERSION"):
+        validate_metadata(tmp_path, SRC, SRC)
+
+ROOT = Path(__file__).resolve().parents[2]
+
+def test_deployed_compose_service_and_profile_contract():
+    """Catch Compose inventory drift before the release lock is approved."""
+    compose = yaml.safe_load((ROOT / "deploy/compose.yaml").read_text())
+    services = compose["services"]
+    assert set(services) == set(SERVICE_IMAGE)
+    expected = {
+        "ingress": set(), "portal": set(),
+        "music": {"music"}, "music-worker": {"music"},
+        "media": {"media"}, "download-browser": {"browser"},
+        "jellyfin": {"jellyfin"}, "gluetun": {"managed"},
+        "qbittorrent": {"managed"},
+    }
+    for name, profiles in expected.items():
+        assert set(services[name].get("profiles", [])) == profiles
+        assert ("build" in services[name]) == (name in {"portal", "music", "music-worker", "media"})
+    assert services["music"]["image"] == services["music-worker"]["image"]
+    assert services["music"]["build"] == services["music-worker"]["build"]
+    assert services["media"]["build"]["dockerfile"] == "apps/media/Dockerfile"
+    assert services["portal"]["build"]["context"] == "../apps/portal"
+
+def test_versioned_json_schema_matches_runtime_contract():
+    """Schema metadata must not drift away from the enforcing Python validator."""
+    from scripts.release_lock import ROOT_KEYS, IMAGE_KEYS
+    schema = json.loads((ROOT / "docs/release-lock-v1.schema.json").read_text())
+    assert schema["additionalProperties"] is False
+    assert set(schema["required"]) == ROOT_KEYS == set(schema["properties"])
+    image_schema = schema["properties"]["images"]["additionalProperties"]
+    assert set(image_schema["required"]) == IMAGE_KEYS == set(image_schema["properties"])
+    assert schema["properties"]["platform"]["const"] == "linux/amd64"
+
+@pytest.mark.parametrize("profile_set", [
+    (), ("music",), ("media",), ("jellyfin",),
+    ("music", "browser"), ("music", "media", "managed", "jellyfin"),
+])
+def test_supported_profile_release_locks(profile_set):
+    candidate = make_lock(profile_set)
+    validate_lock(candidate, compose=COMPOSE, rendered=render(candidate), expected_source=SRC)
+
+@pytest.mark.parametrize("rollback", ["1.0.0", "1.0.1", "2.0.0"])
+def test_reject_current_or_future_rollback(rollback):
+    candidate = make_lock()
+    candidate["rollback"]["version"] = rollback
+    with pytest.raises(ReleaseLockError, match="Rollback must precede"):
+        validate_lock(candidate)
+
+def test_r1_rejects_fake_or_malformed_metadata(tmp_path):
+    for directory in ("apps/media", "deploy"):
+        (tmp_path / directory).mkdir(parents=True)
+    (tmp_path / "VERSION").write_text("1.0.0\n")
+    (tmp_path / "apps/media/VERSION").write_text("1.0.0\n")
+    (tmp_path / "apps/media/Dockerfile").write_text("COPY apps/media/VERSION ./VERSION\n")
+    (tmp_path / "README.md").write_text("Not the milestone: **1.0.0**\n")
+    (tmp_path / "CHANGELOG.md").write_text("## 1.0.0 - 2026-11-08\n")
+    (tmp_path / "deploy/compose.yaml").write_text('image: "${MEDIA_IMAGE:-fox-den-media:1.0.0}"\n')
+    with pytest.raises(ReleaseMetadataError, match="README current source milestone"):
+        validate_metadata(tmp_path, SRC, SRC)
+    (tmp_path / "README.md").write_text("Current source milestone: **1.0.0**.\n")
+    (tmp_path / "CHANGELOG.md").write_text("## 1.0.0 - 2026-02-30\n")
+    with pytest.raises(ReleaseMetadataError, match="calendar date"):
+        validate_metadata(tmp_path, SRC, SRC)
+    (tmp_path / "CHANGELOG.md").write_text("## 1.0.0 - 2026-11-08\n")
+    (tmp_path / "deploy/compose.yaml").write_text("image: random:1.0.0\n")
+    with pytest.raises(ReleaseMetadataError, match="Compose version"):
         validate_metadata(tmp_path, SRC, SRC)

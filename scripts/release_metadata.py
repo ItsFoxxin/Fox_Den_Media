@@ -1,6 +1,7 @@
 """Read-only R1 release metadata and exact main commit validation."""
 from __future__ import annotations
 import argparse
+from datetime import date
 from pathlib import Path
 import re
 
@@ -21,13 +22,21 @@ def validate_metadata(root: Path, source_sha: str, main_head: str, target: str =
         raise ReleaseMetadataError("Root VERSION mismatch")
     if (root / "apps/media/VERSION").read_text().strip() != target:
         raise ReleaseMetadataError("Media VERSION mismatch")
-    if f"**{target}**" not in (root / "README.md").read_text():
-        raise ReleaseMetadataError("README version mismatch")
+    readme = (root / "README.md").read_text(encoding="utf-8")
+    if not re.search(rf"(?m)^Current source milestone:\s+\*\*{re.escape(target)}\*\*(?:\.|\s|$)", readme):
+        raise ReleaseMetadataError("README current source milestone mismatch")
     changelog = (root / "CHANGELOG.md").read_text()
-    sections = re.findall(r"^## ([0-9]+\.[0-9]+\.[0-9]+) - [0-9]{4}-[0-9]{2}-[0-9]{2}$", changelog, re.M)
-    if sections.count(target) != 1:
-        raise ReleaseMetadataError("Expected exactly one dated target changelog section")
-    if f"fox-den-media:{target}" not in (root / "deploy/compose.yaml").read_text():
+    candidates = re.findall(rf"(?m)^##\s+{re.escape(target)}(?=\s|$).*?$", changelog)
+    if len(candidates) != 1:
+        raise ReleaseMetadataError("Expected exactly one target changelog section")
+    dated = re.fullmatch(rf"## {re.escape(target)} - ([0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}})", candidates[0])
+    if dated is None:
+        raise ReleaseMetadataError("Target changelog heading must contain an ISO date")
+    try:
+        date.fromisoformat(dated.group(1))
+    except ValueError as exc:
+        raise ReleaseMetadataError("Invalid target changelog calendar date") from exc
+    if f"MEDIA_IMAGE:-fox-den-media:{target}" not in (root / "deploy/compose.yaml").read_text():
         raise ReleaseMetadataError("Compose version mismatch")
     if "COPY apps/media/VERSION ./VERSION" not in (root / "apps/media/Dockerfile").read_text():
         raise ReleaseMetadataError("Media Dockerfile must embed VERSION")

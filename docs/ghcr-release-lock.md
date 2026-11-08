@@ -31,8 +31,9 @@ python scripts/release_metadata.py --version 1.0.0 \
   --source-sha "$APPROVED_MAIN_SHA" --main-head "$ACTUAL_MAIN_HEAD"
 ```
 
-Checks: strict version, matching root/Media VERSION, README milestone, one
-dated changelog heading, Compose Media version and Media Dockerfile copy.
+Checks: strict version, matching root/Media VERSION, the current source
+milestone in README, one calendar-valid dated changelog section, the Compose
+MEDIA_IMAGE default, and the Media Dockerfile version copy.
 The caller **must obtain** main HEAD from GitHub, not accept two untrusted
 equal inputs. Release CI/check results and explicit approvals are separate.
 
@@ -46,7 +47,10 @@ The lock contains `schema_version=1`, version, exact source SHA,
 identity and previous rollback lock SHA. For every enabled image it records
 the exact registry digest and linux/amd64 platform digest; first-party images
 must carry the same source SHA. Music and Music Worker map to one image.
-Extra fields are rejected to avoid accidentally storing secrets.
+Extra fields are rejected to avoid accidentally storing secrets. The rollback
+version must predate the candidate release. The CLI requires a verified source
+SHA, the authoritative Compose file, and a build-free rendered Compose JSON;
+synthetic unit fixtures exercise the internal validator without these inputs.
 
 Check a future completed lock against the exact source Compose and a private,
 **build-free**, already-rendered Compose JSON:
@@ -72,8 +76,10 @@ source-promotion approval, required CI and a protected candidate-publisher
 environment. The publisher is never triggered by PRs, Dependabot, or a
 development merge. R4 must verify the same published digests against
 provenance, the shared Trivy/SBOM contract, image architecture, policy, and
-a real image pull + integration without rebuilding. PR #72's advisory
-built-image scan is not yet a release-blocking digest scan.
+a real image pull + integration without rebuilding. The Trivy/SBOM security
+workstream (#72, #74 and #77) is now merged into dev, but its existing
+built-image scans are still advisory; published-digest verification and
+release-blocking security evidence remain separate R4 dependencies.
 
 OCI package metadata should include source URL, revision, release version and
 a concise description; omit a license label pending a licensing decision.
@@ -85,3 +91,17 @@ Public repository visibility does not imply public package visibility.
 
 Separate approvals are required for source promotion, release publication
 and production NAS cutover. These schema/fixture changes grant none of them.
+
+## Compatibility and ownership
+
+This PR intentionally leaves `VERSION=0.9.6`, root/Media Dockerfiles,
+`deploy/compose.yaml`, version-policy rules, deployment profiles, and all
+security workflows unchanged. Offline tests compare lock service/profile
+inventory and shared Music image/build inputs with the live Compose structure.
+The R1 `1.0.0` check is exercised using synthetic fixtures until a separately
+approved source promotion sets exact release metadata on protected main.
+
+The future R5 publication workstream (#80) currently expects a different
+release-lock data layout from this v1 schema. Align the versioned producer and
+consumers in separate coordinated PRs before executing R3/R4/R5. Do not silently
+rewrite the R2 schema or treat an advisory Trivy pass as release authorization.

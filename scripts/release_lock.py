@@ -105,6 +105,9 @@ def validate_lock(data: dict, *, compose: bytes | None = None,
     ensure(type(rollback["version"]) is str and bool(VERSION.fullmatch(rollback["version"])) and
            type(rollback["lock_sha256"]) is str and bool(HASH.fullmatch(rollback["lock_sha256"])),
            "Invalid rollback identity")
+    ensure(tuple(map(int, rollback["version"].split("."))) <
+           tuple(map(int, data["version"].split("."))),
+           "Rollback must precede the candidate release")
     if rendered is not None:
         ensure(type(rendered) is dict and type(rendered.get("services")) is dict,
                "Invalid rendered Compose")
@@ -120,9 +123,9 @@ def validate_lock(data: dict, *, compose: bytes | None = None,
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("lock", type=Path)
-    parser.add_argument("--compose", type=Path)
-    parser.add_argument("--rendered", type=Path, help="Private build-free Compose config JSON")
-    parser.add_argument("--source-sha")
+    parser.add_argument("--compose", type=Path, required=True)
+    parser.add_argument("--rendered", type=Path, required=True, help="Private build-free Compose config JSON")
+    parser.add_argument("--source-sha", required=True)
     args = parser.parse_args()
     try:
         data = json.loads(args.lock.read_text())
