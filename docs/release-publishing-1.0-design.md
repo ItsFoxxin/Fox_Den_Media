@@ -2,7 +2,7 @@
 
 > **DESIGN ONLY — not an approved release or deployment.** No workflow, repository ruleset, tag, package, NAS state, or production environment is changed by this document. Release implementation requires separate maintainer approval and implementation PRs.
 
-Repository: `ItsFoxxin/Fox_Den_Media`. Integration: `dev`. Stable: `main`. Intended milestone: `v1.0.0`. Snapshot refreshed: 2026-11-07, `dev` `bc1e0f1e2f127bb56409848223fbab0a0639cbf8` (VERSION `0.9.5`), `main` VERSION `0.9.1`. Reverify branch SHAs at every future gate.
+Repository: `ItsFoxxin/Fox_Den_Media`. Integration: `dev`. Stable: `main`. Intended milestone: `v1.0.0`. Snapshot refreshed: 2026-11-07, `dev` `7dfbafa858f59a3a53272aaf09421b5a5536869d` (VERSION `0.9.5`), `main` VERSION `0.9.1`. Reverify branch SHAs at every future gate.
 
 ## 1. Current state and ownership boundaries
 
@@ -11,7 +11,7 @@ Repository: `ItsFoxxin/Fox_Den_Media`. Integration: `dev`. Stable: `main`. Inten
 - PRs #34 and #35 are **closed, unmerged disposable probes**; never use their branch heads for a release.
 - PR #36 **merged** into `main`: reviewed Dependabot and advisory Dependency Review configuration is present on the default branch. Dependabot is active, evidenced by its update PRs; routine PRs target `dev`, security PRs target `main` and require reviewed back-sync. PR #36 was **not** an application release promotion.
 - Current `dev` `VERSION` is `0.9.5`, while `main` `VERSION` remains `0.9.1`. Re-evaluate exact commit ancestry and main-only security configuration before any eventual full application promotion; the development milestone is not a published release.
-- Active workflows: `.github/workflows/monorepo.yml`, `codeql.yml`, `dependency-review.yml`. Phase 2 and 3 CI optimizations are merged, with pull-request validation preserved. None of these workflows publishes GHCR packages or deploys. PR #61 is an **independent, open** Phase 3 documentation closeout; it describes future Trivy/SBOM/security-hardening work that this design must reuse rather than duplicate.
+- Active workflows: `.github/workflows/monorepo.yml`, `codeql.yml`, `dependency-review.yml`. Phase 2 and 3 CI optimizations are merged, with pull-request validation preserved. None of these workflows publishes GHCR packages or deploys. PR #61 has **merged** as the Phase 3 documentation closeout; it describes future Trivy/SBOM/security-hardening work that this design must reuse rather than duplicate.
 - Existing `Monorepo strict gate` requires successful Validation, Music 3.12/3.13, Portal/Movies, pip-audit, Bandit, synthetic migration/rollback, isolated Jellyfin, and integrated container/synthetic VPN checks. Independent CodeQL Python and JavaScript/TypeScript are required. Dependency Review is `warn-only: true`, not a security release veto.
 - Active branch rulesets require PRs, strict up-to-date required checks, review-thread resolution, and non-rewrite protections. They currently require **zero formal approving reviews**: a separate documented human release sign-off must not be presented as an already enforced GitHub requirement.
 - `scripts/check_release.py` checks SemVer syntax, Compose Media version, README bold version, dated changelog header, and Media Dockerfile `VERSION` copy. Its `--base` stable-branch version-increase and `--reports` JUnit gates exist but are not invoked by active CI. `scripts/check_version_policy.py` runs on PRs, constrains one-step version increments and one-issue patch fixes. Root version policy is separate from a published release.
@@ -106,7 +106,7 @@ A machine-readable versioned `release-lock.json` and corresponding nonsecret `re
 
 ### Shared security workstream contract — mandatory reuse
 
-[CI Phase 3 closeout PR #61](https://github.com/ItsFoxxin/Fox_Den_Media/pull/61) (still separate and open) identifies **Trivy image scanning, SBOM inputs, fixability/severity policy, expiring exceptions and digest-to-release linkage** as an independent successor security-hardening workstream. **Do not create a second Trivy installation, SBOM generator, severity policy or exception ledger in R4.** The security workstream owns a reusable, versioned scan/policy interface; release gates consume its exact outputs and record its policy version. Its separately approved implementation must be complete before a blocking image-release security gate is accepted.
+[CI Phase 3 closeout PR #61](https://github.com/ItsFoxxin/Fox_Den_Media/pull/61) (merged; its successor security implementation is still a separate, unapproved workstream) identifies **Trivy image scanning, SBOM inputs, fixability/severity policy, expiring exceptions and digest-to-release linkage** as an independent successor security-hardening workstream. **Do not create a second Trivy installation, SBOM generator, severity policy or exception ledger in R4.** The security workstream owns a reusable, versioned scan/policy interface; release gates consume its exact outputs and record its policy version. Its separately approved implementation must be complete before a blocking image-release security gate is accepted.
 
 Minimum shared interface:
 
