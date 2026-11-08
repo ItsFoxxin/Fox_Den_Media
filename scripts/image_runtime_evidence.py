@@ -88,6 +88,7 @@ p=Path("/tmp/foxden-synthetic-copy.db")
 source=sqlite3.connect(":memory:")
 source.execute("create table synthetic_fixture(id integer primary key, sample text not null)")
 source.execute("insert into synthetic_fixture(sample) values ('synthetic-only')")
+source.commit()  # close the write transaction before sqlite3.Connection.backup()
 target=sqlite3.connect(str(p)); source.backup(target); target.close(); source.close()
 readonly=sqlite3.connect("file:/tmp/foxden-synthetic-copy.db?mode=ro", uri=True)
 readonly.execute("pragma trusted_schema=off")
@@ -653,7 +654,10 @@ def main():
             collect(args)
         else:
             verify(args)
-    except (ValueError, OSError, subprocess.TimeoutExpired) as e:
+    except subprocess.TimeoutExpired:
+        # TimeoutExpired includes argv (and embedded Python source). Do not log it.
+        p.exit(2, "evidence collection rejected: bounded probe timeout\n")
+    except (ValueError, OSError) as e:
         # Never expose stderr or collected filesystem contents in CI logs.
         p.exit(2, f"evidence collection rejected: {type(e).__name__}: {e}\n")
 
