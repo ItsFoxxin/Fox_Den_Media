@@ -24,8 +24,10 @@ REPOSITORY = "ItsFoxxin/Fox_Den_Media"
 VERSION = "1.0.0"
 TAG = "v1.0.0"
 R4_WORKFLOW = ".github/workflows/ghcr-verify.yml"
+R4_SIGNER_WORKFLOW = REPOSITORY + "/" + R4_WORKFLOW
+RELEASE_READY_SCHEMA = "foxden.r4.release-ready.v1"
 R3_WORKFLOW = "ItsFoxxin/Fox_Den_Media/.github/workflows/ghcr-candidates.yml"
-R4_ARTIFACT = "foxden-r4-release-ready-v1.0.0"  # Required from future R4; absent in PR #81
+R4_ARTIFACT = "foxden-r4-release-ready-v1.0.0"  # Signed R4-owned artifact
 SHA = re.compile(r"^[0-9a-f]{40}$")
 DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 FIRST_PARTY = {
@@ -57,7 +59,14 @@ def require(condition: bool, reason: str) -> None:
 
 
 def read_json(path: Path) -> dict:
-    data = json.loads(path.read_text(encoding="utf-8"))
+    def reject_duplicate_keys(items):
+        obj = {}
+        for key, value in items:
+            require(key not in obj, "Duplicate JSON key in evidence: " + key)
+            obj[key] = value
+        return obj
+    data = json.loads(path.read_text(encoding="utf-8"),
+                      object_pairs_hook=reject_duplicate_keys)
     require(isinstance(data, dict), "Expected a JSON object: " + str(path))
     return data
 
@@ -201,8 +210,8 @@ def validate_bundle(root: Path, source_sha: str, r4_id: int) -> dict:
             and verification.get("no_rebuild_integration") == "passed",
             "R4 security or no-rebuild integration is not approved")
     require(isinstance(verification.get("security_policy_version"), str)
-            and verification["security_policy_version"].strip(),
-            "Missing approved shared security policy version")
+            and re.fullmatch(r"v1:[0-9a-f]{64}", verification["security_policy_version"]),
+            "Missing or unreviewed signed v1 security policy hash")
     require(verification.get("high_critical_unaccepted") == 0,
             "Unaccepted high/critical vulnerability findings")
     source_approval = verification.get("source_promotion_approval")
@@ -232,17 +241,9 @@ def validate_bundle(root: Path, source_sha: str, r4_id: int) -> dict:
             and re.fullmatch(r"[0-9a-f]{64}", rollback["lock_sha256"]) is not None
             and verification.get("rollback_verified") is True,
             "Verified compatible rollback artifact identity absent")
-    exceptions = verification.get("exceptions", [])
-    require(isinstance(exceptions, list), "Invalid security exceptions")
-    now = dt.datetime.now(dt.timezone.utc)
-    for item in exceptions:
-        require(isinstance(item, dict) and item.get("approved_by") and item.get("issue"),
-                "Security exception lacks owner approval or issue")
-        try:
-            expires = dt.datetime.fromisoformat(str(item["expires_at"]).replace("Z", "+00:00"))
-            require(expires.tzinfo is not None and expires > now, "Expired security exception")
-        except (ValueError, TypeError, KeyError) as err:
-            raise ReleaseBlocked("Invalid or expired security exception") from err
+    # The reviewed R4/Trivy v1 security contract categorically rejects exceptions.
+    require(verification.get("exceptions") == [],
+            "R4 signed security contract v1 rejects all exceptions")
 
     source_images = lock.get("images")
     service_map = lock.get("services")
@@ -276,25 +277,28 @@ def validate_bundle(root: Path, source_sha: str, r4_id: int) -> dict:
         require(isinstance(evidence, dict)
                 and evidence.get("security_decision") == "pass",
                 "Image security policy not approved")
+        require(evidence.get("ref") == ref
+                and evidence.get("platform_digest") == details["platform_digest"],
+                "R4 image evidence has a different digest or platform subject")
         require(isinstance(evidence.get("sbom"), str)
-                and isinstance(evidence.get("vulnerability_report"), str),
-                "Missing digest-bound scan/SBOM evidence paths")
+                and isinstance(evidence.get("vulnerability_report"), str)
+                and isinstance(evidence.get("provenance"), str)
+                and evidence["provenance"],
+                "Missing digest-bound scan, SBOM or provenance evidence")
         image = {
             "component": component, "name": name, "digest": digest,
             "kind": "first-party" if component in FIRST_PARTY else "upstream",
             "platform": details["platform"],
             "sbom": evidence["sbom"],
             "vulnerability_report": evidence["vulnerability_report"],
+            "provenance": evidence["provenance"],
         }
         if component in FIRST_PARTY:
             require(name == FIRST_PARTY[component]
                     and details["source_sha"] == source_sha
                     and evidence.get("candidate_tag") == "sha-" + source_sha
-                    and isinstance(evidence.get("provenance"), str)
-                    and evidence["provenance"],
-                    "First-party source, candidate tag or attestation missing")
+                    , "First-party source or candidate tag missing")
             image["candidate_tag"] = evidence["candidate_tag"]
-            image["provenance"] = evidence["provenance"]
             required_components.discard(component)
         else:
             require(details["source_sha"] is None
@@ -307,12 +311,13 @@ def validate_bundle(root: Path, source_sha: str, r4_id: int) -> dict:
 
     files = verification.get("files")
     require(isinstance(files, dict) and files, "R4 checksum manifest missing")
-    required_files = {"release-lock.json", "release-notes.md"}
+    required_files = {"release-lock.json", "release-notes.md",
+                      "security-contract.json", "scanner.json",
+                      "rendered-release-compose.json"}
     for image in normalized:
         required_files.add(image["sbom"])
         required_files.add(image["vulnerability_report"])
-        if image["kind"] == "first-party":
-            required_files.add(image["provenance"])
+        required_files.add(image["provenance"])
     require(required_files.issubset(files), "Required release evidence missing")
     require("verification.json" not in files, "Self-referential checksum")
     for item in root.rglob("*"):
@@ -329,9 +334,33 @@ def validate_bundle(root: Path, source_sha: str, r4_id: int) -> dict:
                 "Malformed evidence checksum")
         require(hash_file(safe_file(root, rel)) == checksum,
                 "Evidence hash mismatch: " + rel)
+    # verification.json is sealed by the separately signed, versioned root manifest.
+    manifest_path = safe_file(root, "release-ready.json")
+    manifest = read_json(manifest_path)
+    require(set(manifest) == {"schema_version", "version", "repository", "workflow",
+                              "source_sha", "r3_run_id", "r4_run_id", "files"},
+            "Unknown or missing release-ready manifest fields")
+    require(manifest["schema_version"] == RELEASE_READY_SCHEMA
+            and manifest["version"] == VERSION
+            and manifest["repository"] == REPOSITORY
+            and manifest["workflow"] == R4_WORKFLOW
+            and manifest["source_sha"] == source_sha
+            and manifest["r3_run_id"] == publisher["run_id"]
+            and manifest["r4_run_id"] == r4_id,
+            "Signed release-ready manifest source, run or workflow mismatch")
+    manifest_files = manifest["files"]
+    require(isinstance(manifest_files, dict)
+            and set(manifest_files) == set(files) | {"verification.json"}
+            and all(isinstance(v, str) and
+                    re.fullmatch(r"[0-9a-f]{64}", v) for v in manifest_files.values()),
+            "Incomplete or malformed signed release-ready file manifest")
+    require(all(manifest_files[k] == v for k, v in files.items())
+            and manifest_files["verification.json"] == hash_file(
+                safe_file(root, "verification.json")),
+            "Signed release-ready manifest hash differs from R4 evidence")
     actual_files = {str(p.relative_to(root)) for p in root.rglob("*") if p.is_file()}
-    require(actual_files == set(files) | {"verification.json"},
-            "Unexpected or missing evidence files")
+    require(actual_files == set(manifest_files) | {"release-ready.json"},
+            "Unexpected or missing signed release evidence files")
     lock_sha = hash_file(lock_path)
     validate_notes(safe_file(root, "release-notes.md").read_text(encoding="utf-8"),
                    source_sha, lock_sha, normalized)
@@ -339,6 +368,7 @@ def validate_bundle(root: Path, source_sha: str, r4_id: int) -> dict:
         "lock_sha256": lock_sha,
         "lock": lock,
         "verification": verification,
+        "release_ready": manifest,
         "images": normalized,
     }
 
