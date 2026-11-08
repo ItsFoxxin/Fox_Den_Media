@@ -6,6 +6,7 @@ GitHub build attestation and registry digest before consuming these fields.
 """
 from __future__ import annotations
 import argparse
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -26,10 +27,11 @@ def require(ok: bool, message: str) -> None:
         raise SecurityContractError(message)
 
 def validate_contract(contract: dict, candidates: dict, source_sha: str,
-                      publisher_run_id: int) -> None:
+                      publisher_run_id: int, lock: dict | None = None,
+                      evidence_dir: Path | None = None) -> None:
     require(bool(SHA.fullmatch(source_sha)), "Bad approved source SHA")
     required = {"schema_version", "producer", "source_sha", "publisher_run_id",
-                "platform", "scanner", "policy_version", "images"}
+                "platform", "scanner", "policy_version", "images", "upstream"}
     require(type(contract) is dict and set(contract) == required, "Bad security contract schema")
     require(type(contract["schema_version"]) is int and contract["schema_version"] == 1, "Unknown contract")
     require(contract["producer"] == ".github/workflows/trivy-digest-security.yml", "Unapproved scanner producer")
@@ -82,12 +84,47 @@ def validate_contract(contract: dict, candidates: dict, source_sha: str,
                     f"Missing artifact hash: {component}/{field}")
         require(record["decision"] == "pass" and record["exceptions"] == [],
                 f"Vulnerability policy not passed without unreviewed exceptions: {component}")
+    upstream = contract["upstream"]
+    require(type(upstream) is dict and bool(upstream), "Missing upstream security coverage")
+    if lock is not None:
+        expected = set(lock["images"]) - set(COMPONENTS)
+        require(set(upstream) == expected, "Missing/unexpected upstream image scan")
+    for component, record in upstream.items():
+        require(type(record) is dict and set(record) == {
+            "ref", "platform_digest", "scan_subject", "sbom_subject", "sbom_sha256",
+            "vulnerability_report_sha256", "decision", "exceptions", "provenance_status"
+        }, f"Invalid upstream evidence: {component}")
+        require(type(record["ref"]) is str and "@sha256:" in record["ref"], "Upstream must be digest pinned")
+        digest = "sha256:" + record["ref"].rsplit("@sha256:", 1)[1]
+        require(bool(DIGEST.fullmatch(digest)) and record["scan_subject"] == digest and
+                record["sbom_subject"] == digest and record["provenance_status"] == "verified" and
+                record["decision"] == "pass" and record["exceptions"] == [], 
+                f"Upstream verification or policy incomplete: {component}")
+        for field in ("sbom_sha256", "vulnerability_report_sha256", "platform_digest"):
+            require(type(record[field]) is str and bool(DIGEST.fullmatch(record[field])),
+                    f"Bad upstream artifact hash: {component}/{field}")
+        if lock is not None:
+            image = lock["images"][component]
+            require(image["ref"] == record["ref"] and
+                    "sha256:" + image["platform_digest"] == record["platform_digest"],
+                    f"Untrusted upstream lock binding: {component}")
+    if evidence_dir is not None:
+        for component, record in {**contract["images"], **upstream}.items():
+            for filename, field in ((".sbom.spdx.json", "sbom_sha256"),
+                                    (".vuln.json", "vulnerability_report_sha256")):
+                path = evidence_dir / (component + filename)
+                data = path.read_bytes()
+                actual = "sha256:" + hashlib.sha256(data).hexdigest()
+                require(actual == record[field], f"Evidence checksum mismatch: {component}/{field}")
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--contract", type=Path, required=True)
     parser.add_argument("--candidates", type=Path, required=True,
                         help="Folder with portal.json, music.json and media.json from approved R3 run")
+    parser.add_argument("--lock", type=Path, required=True)
+    parser.add_argument("--evidence-dir", type=Path, required=True)
     parser.add_argument("--source-sha", required=True)
     parser.add_argument("--publisher-run-id", required=True, type=int)
     args = parser.parse_args()
@@ -95,7 +132,9 @@ def main() -> int:
         contract = json.loads(args.contract.read_text())
         candidates = {name: json.loads((args.candidates / (name + ".json")).read_text())
                       for name in COMPONENTS}
-        validate_contract(contract, candidates, args.source_sha, args.publisher_run_id)
+        lock = json.loads(args.lock.read_text())
+        validate_contract(contract, candidates, args.source_sha, args.publisher_run_id,
+                          lock=lock, evidence_dir=args.evidence_dir)
     except (OSError, ValueError, TypeError, KeyError) as exc:
         parser.exit(1, f"R4 security contract rejected: {exc}\n")
     print("R4 security evidence structurally aligned with all three candidate digests")
