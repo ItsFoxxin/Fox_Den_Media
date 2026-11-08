@@ -63,6 +63,23 @@ jobs:
           trivy version --format json > "$report_dir/trivy-version.json"
           python scripts/trivy_report.py             --input "$report_dir/vulnerabilities.json"             --output-dir "$report_dir"             --component "${{ matrix.component }}"             --image "${{ steps.image.outputs.ref }}"             --image-id "${{ steps.image.outputs.id }}"             --source-sha "$GITHUB_SHA"
           cat "$report_dir/summary.md" >> "$GITHUB_STEP_SUMMARY"
+      - name: Produce advisory release-facing security evidence contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          report_dir="reports/${{ matrix.component }}"
+          python -m scripts.security_contract \
+            --component "${{ matrix.component }}" \
+            --report "$report_dir/vulnerabilities.json" \
+            --sbom "$report_dir/sbom.cdx.json" \
+            --scanner-metadata "$report_dir/trivy-version.json" \
+            --exceptions security/vulnerability-exceptions.json \
+            --image-ref "${{ steps.image.outputs.ref }}" \
+            --image-id "${{ steps.image.outputs.id }}" \
+            --source-sha "$GITHUB_SHA" --expected-source-sha "$GITHUB_SHA" \
+            --scan-run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            --mode advisory --output "$report_dir/security-contract.json"
+          python -c 'import json,sys; p=json.load(open(sys.argv[1])); print("Assessment:",p["policy"]["decision"],"(advisory, not release approval)")' "$report_dir/security-contract.json" >> "$GITHUB_STEP_SUMMARY"
       - name: Upload per-image vulnerability reports and SBOM
         if: always() && steps.image.outputs.ref != ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

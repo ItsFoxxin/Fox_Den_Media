@@ -127,3 +127,7 @@ Do not open an issue for every CVE. Triage confirmed critical findings, fixable 
 ### Validation boundaries
 
 Phase 2 regression fixtures validate clean/finding scans, high/critical deltas, resolved and escalated CVEs, missing baselines, different image identities, corrupt or duplicated artifacts, comment upserts, label ownership/idempotency, stale and closed PRs, fork rejection, and simulated missing permissions. This is **mock/fixture coverage**, not evidence that the trusted workflow has actually posted a GitHub comment. Real publication requires both workflows on default main and a controlled reviewed PR test; it cannot be marked verified while PR #72 and Phase 2 remain unmerged.
+
+## Shared security contract for future release checks
+
+The per-image artifact also contains `security-contract.json`, generated from the **same** Trivy report, CycloneDX SBOM, scanner metadata and versioned exception ledger. See [security contract and exception policy](security-contract.md). The current decision is **advisory**, even when `policy.decision=fail`: no finding has been implicitly exempted and this is not a release approval. The existing Phase 2 PR reporting and protected-dev baseline checks remain separate and unchanged. Future exact GHCR digest and upstream-image release enforcement is not active.
