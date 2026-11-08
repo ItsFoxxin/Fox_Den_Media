@@ -155,6 +155,7 @@ jobs:
               --plan security/scan-plan.json --name "$name" \
               --manifest "security/reports/$name.manifest.json"
             docker pull --platform linux/amd64 "$ref"
+            test "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$ref")" = "linux/amd64"
             docker image inspect --format '{{.Id}}' "$ref" \
               > "security/reports/$name.image-id"
             trivy image --image-src docker --scanners vuln --format json \
@@ -187,8 +188,8 @@ jobs:
             security/release-lock.json
             security/rendered-release-compose.json
             security/scanner.json
-          # File attestations persist in GitHub; storage records are OCI-only.
-          create-storage-record: false
+          # The action persists signed file attestations to GitHub's API.
+          # create-storage-record applies only to pushed OCI attestations.
       - name: Upload authenticated contract and raw evidence for R4
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
