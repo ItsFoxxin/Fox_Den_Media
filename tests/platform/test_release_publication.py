@@ -29,29 +29,48 @@ COMPONENTS = ["portal", "music", "media"]
 
 
 def make_bundle(folder: Path) -> tuple[dict, dict]:
-    images = []
+    """Representative strict R2 images map plus separate R4 evidence."""
+    images = {}
+    evidence = {}
     for component in COMPONENTS:
-        images.append({
-            "kind": "first-party", "component": component,
-            "name": R5.FIRST_PARTY[component], "digest": DIGESTS[component],
-            "source_sha": SHA, "candidate_tag": "sha-" + SHA,
-            "platform": "linux/amd64", "security_decision": "pass",
+        images[component] = {
+            "ref": R5.FIRST_PARTY[component] + "@" + DIGESTS[component],
+            "platform": "linux/amd64",
+            "platform_digest": component[0] * 64,
+            "source_sha": SHA,
+        }
+        evidence[component] = {
+            "candidate_tag": "sha-" + SHA,
+            "security_decision": "pass",
             "sbom": "sboms/" + component + ".spdx.json",
             "provenance": "provenance/" + component + ".json",
             "vulnerability_report": "reports/" + component + "-trivy.json",
-        })
-    images.append({
-        "kind": "upstream", "component": "nginx",
-        "name": "docker.io/library/nginx", "digest": "sha256:" + "e" * 64,
-        "platform": "linux/amd64", "security_decision": "pass",
-        "approved_upstream": True,
-    })
+        }
+    images["nginx"] = {
+        "ref": "docker.io/library/nginx@sha256:" + "e" * 64,
+        "platform": "linux/amd64",
+        "platform_digest": "e" * 64,
+        "source_sha": None,
+    }
+    evidence["nginx"] = {
+        "approved_upstream": True, "security_decision": "pass",
+        "sbom": "sboms/nginx.spdx.json",
+        "vulnerability_report": "reports/nginx-trivy.json",
+    }
     lock = {
-        "schema_version": 1, "version": "1.0.0", "source_sha": SHA,
-        "r3_run_id": R3, "r4_run_id": R4, "compose_sha256": "f" * 64,
-        "images": images, "music_worker_digest": DIGESTS["music"],
-        "profiles": ["music", "media", "managed", "browser", "jellyfin"],
-        "rollback": {"verified": True, "lock_sha256": "9" * 64},
+        "schema_version": 1, "version": "1.0.0",
+        "source_sha": SHA, "compose_sha256": "f" * 64,
+        "platform": "linux/amd64", "profiles": ["music", "media"],
+        "images": images,
+        "services": {
+            "ingress": "nginx", "portal": "portal", "music": "music",
+            "music-worker": "music", "media": "media",
+        },
+        "publisher": {
+            "workflow": "ghcr-candidates.yml",
+            "run_id": R3, "source_sha": SHA,
+        },
+        "rollback": {"version": "0.9.6", "lock_sha256": "9" * 64},
     }
     (folder / "release-lock.json").write_text(
         json.dumps(lock, indent=2) + "\n", encoding="utf-8")
@@ -63,24 +82,29 @@ def make_bundle(folder: Path) -> tuple[dict, dict]:
     for component in COMPONENTS:
         notes += R5.FIRST_PARTY[component] + "@" + DIGESTS[component] + "\n"
     (folder / "release-notes.md").write_text(notes, encoding="utf-8")
-    for image in images[:3]:
-        for field in ("sbom", "provenance", "vulnerability_report"):
-            dest = folder / image[field]
+    for item in evidence.values():
+        for key in ("sbom", "provenance", "vulnerability_report"):
+            if key not in item:
+                continue
+            dest = folder / item[key]
             dest.parent.mkdir(exist_ok=True)
-            dest.write_text(json.dumps({"fixture": field}), encoding="utf-8")
-    checksum_files = [p for p in folder.rglob("*") if p.is_file()]
-    files = {str(p.relative_to(folder)): R5.hash_file(p) for p in checksum_files}
+            dest.write_text(json.dumps({"fixture": key}), encoding="utf-8")
+    records = [p for p in folder.rglob("*") if p.is_file()]
+    files = {str(p.relative_to(folder)): R5.hash_file(p) for p in records}
     verified = {
         "schema_version": 1, "version": "1.0.0", "source_sha": SHA,
-        "r4_run_id": R4, "r3_run_id": R3, "decision": "pass",
+        "r4_run_id": R4, "r3_run_id": R3,
+        "decision": "pass", "rollback_verified": True,
         "security_policy_result": "pass", "no_rebuild_integration": "passed",
-        "security_policy_version": "fixture-policy-1", "high_critical_unaccepted": 0,
+        "security_policy_version": "fixture-policy-1",
+        "high_critical_unaccepted": 0,
         "source_promotion_approval": {
             "decision": "approved", "approved_by": "ItsFoxxin",
             "source_sha": SHA,
             "record_url": "https://github.com/ItsFoxxin/Fox_Den_Media/issues/123",
         },
         "github_security_review": "pass", "unapproved_security_findings": 0,
+        "image_evidence": evidence,
         "exceptions": [], "files": files,
     }
     (folder / "verification.json").write_text(
@@ -114,7 +138,16 @@ class BundleTests(unittest.TestCase):
 
     def test_clean_verified_artifacts_pass(self):
         summary = R5.validate_bundle(self.root, SHA, R4)
-        self.assertEqual(summary["lock"]["music_worker_digest"], DIGESTS["music"])
+        self.assertEqual(summary["lock"]["services"]["music-worker"], "music")
+
+    def test_legacy_list_shaped_lock_is_not_r2_and_fails(self):
+        self.update_lock(images=list(self.lock["images"].values()))
+        self.assert_blocked()
+
+    def test_missing_upstream_security_evidence_fails(self):
+        del self.verified["image_evidence"]["nginx"]
+        self.update_verification()
+        self.assert_blocked()
 
     def test_missing_release_artifact_fails(self):
         (self.root / "sboms/portal.spdx.json").unlink()
@@ -180,36 +213,37 @@ class BundleTests(unittest.TestCase):
         self.assert_blocked()
 
     def test_invalid_signature_status_fails(self):
-        self.lock["images"][0]["security_decision"] = "unknown"
-        self.update_lock(images=self.lock["images"])
+        self.verified["image_evidence"]["portal"]["security_decision"] = "unknown"
+        self.update_verification()
         self.assert_blocked()
 
     def test_music_web_worker_must_share_digest(self):
-        self.update_lock(music_worker_digest="sha256:" + "0" * 64)
+        self.lock["services"]["music-worker"] = "portal"
+        self.update_lock(services=self.lock["services"])
         self.assert_blocked()
 
     def test_missing_first_party_image_fails(self):
-        self.lock["images"] = self.lock["images"][1:]
+        del self.lock["images"]["portal"]
         self.update_lock(images=self.lock["images"])
         self.assert_blocked()
 
     def test_mutable_digest_fails(self):
-        self.lock["images"][0]["digest"] = "latest"
+        self.lock["images"]["portal"]["ref"] = R5.FIRST_PARTY["portal"] + ":latest"
         self.update_lock(images=self.lock["images"])
         self.assert_blocked()
 
     def test_unapproved_upstream_fails(self):
-        self.lock["images"][-1]["approved_upstream"] = False
-        self.update_lock(images=self.lock["images"])
+        self.verified["image_evidence"]["nginx"]["approved_upstream"] = False
+        self.update_verification()
         self.assert_blocked()
 
     def test_wrong_platform_fails(self):
-        self.lock["images"][0]["platform"] = "linux/armv7"
+        self.lock["images"]["portal"]["platform"] = "linux/armv7"
         self.update_lock(images=self.lock["images"])
         self.assert_blocked()
 
     def test_unverified_rollback_fails(self):
-        self.update_lock(rollback={"verified": False, "lock_sha256": "9" * 64})
+        self.update_verification(rollback_verified=False)
         self.assert_blocked()
 
     def test_expired_security_exception_fails(self):
