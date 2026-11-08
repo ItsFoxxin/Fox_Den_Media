@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.9.6 - 2026-11-07
+
+### Fixed
+
+- Fixes #62: Prevent active Firefox/noVNC WebSocket access from surviving Portal logout, session expiration, account disablement or administrator-role revocation.
+
+### Validation
+
+- Preserve handshake authorization and normal Firefox HTTP routing. Enforce exact public Origin, a live Portal authorization check every 15 seconds, and a one-hour maximum WebSocket lifetime.
+- Cover authorized noVNC text/binary traffic, denial of unauthorized or wrong-Origin connections, invalidated roles and sessions, OIDC verified-login demotion, database errors and bounded connection duration.
+- Full CI and an approved new disposable NAS rehearsal with exact pinned Firefox/noVNC remain mandatory. Upstream Authentik changes without a trusted event or verified new login are not immediately detected. No merge or deployment is authorized.
+
 ## 0.9.5 - 2026-11-07
 
 ### Fixed
