@@ -43,7 +43,7 @@ COMPONENTS = {
     "music": ("apps/music/backend", "apps/music/backend/Dockerfile"),
     "media": (".", "apps/media/Dockerfile"),
 }
-REQUIRED = {"schema", "component", "source_sha", "harness_sha", "image_ref", "image_id", "image", "build", "packages", "binaries", "ffmpeg", "sqlite", "synthetic", "interpretation_limits"}
+REQUIRED = {"schema", "component", "source_sha", "harness_sha", "image_ref", "image_id", "image", "build", "packages", "binaries", "ffmpeg", "targeted_ffmpeg", "sqlite", "sqlite_copy", "python_xml", "native_relationships", "synthetic", "interpretation_limits"}
 FFMPEG_FLAGS = {"encoders": "-encoders", "decoders": "-decoders", "demuxers": "-demuxers", "muxers": "-muxers", "filters": "-filters", "protocols": "-protocols"}
 PY_PROBE = r'''
 import json, sqlite3, zlib, xml.parsers.expat, pyexpat, importlib.util
@@ -297,20 +297,46 @@ def ffmpeg_inventory(image):
 
 
 def find_binary_paths(image):
-    # Fixed system library roots only: no application/source tree enumeration.
-    cmd = "find /usr/lib /usr/local/lib -type f -name '*.so*' -print 2>/dev/null || true"
+    # Inspect only fixed code/library roots, never media/config/user-state paths.
+    cmd = ("find /usr/lib /usr/local/lib /app -maxdepth 9 -type f "
+           "\\( -name '*.so*' -o -name '*.a' \\) -print 2>/dev/null || true")
     out = run(container_cmd(image, "/bin/sh", "-c", cmd), timeout=30).stdout
-    paths = sorted({p for p in out.splitlines() if p.startswith(("/usr/lib/", "/usr/local/lib/"))
-                    and LIB_RE.fullmatch(Path(p).name)})
+    paths = set()
+    app_count = 0
+    for path in out.splitlines():
+        if not path.startswith(("/usr/lib/", "/usr/local/lib/", "/app/")):
+            continue
+        name = Path(path).name
+        if LIB_RE.fullmatch(name):
+            paths.add(path)
+        elif path.startswith("/app/") and (".so" in name or name.endswith(".a")):
+            paths.add(path)
+            app_count += 1
+    if app_count > 24:
+        raise ValueError("bounded application native library inventory exceeded")
     for tool in ("/usr/bin/ffmpeg", "/usr/bin/ffprobe"):
         if run(container_cmd(image, "/bin/sh", "-c", f"test -f {tool}"), ok=False).returncode == 0:
-            paths.append(tool)
+            paths.add(tool)
     if len(paths) > 96:
         raise ValueError("unexpectedly large bounded binary inventory")
-    return sorted(set(paths))
+    return sorted(paths)
 
 
-def host_binary_details(container, paths):
+def package_ownership(image, paths):
+    out = run(container_cmd(image, "dpkg-query", "-S", *paths), timeout=30, ok=False).stdout
+    owned = {}
+    for line in out.splitlines():
+        for path in paths:
+            if line.endswith(": " + path):
+                prefix = line[:-(len(path)+2)]
+                names = {x.strip().split(":", 1)[0] for x in prefix.split(",")}
+                names = sorted(x for x in names if re.fullmatch(r"[a-z0-9][a-z0-9.+-]{0,90}", x))
+                if names:
+                    owned[path] = names[:6]
+    return owned
+
+
+def host_binary_details(container, paths, owners):
     results = []
     with tempfile.TemporaryDirectory(prefix="foxden-elf-") as t:
         for index, path in enumerate(paths):
@@ -319,29 +345,69 @@ def host_binary_details(container, paths):
             if target.stat().st_size > 35_000_000:
                 raise ValueError("extracted library exceeds 35 MB bound")
             data = target.read_bytes()
-            if not data.startswith(b"\x7fELF"):
+            elf = data.startswith(b"\x7fELF")
+            archive = path.endswith(".a") and data.startswith(b"!<arch>\n")
+            if not (elf or archive):
                 continue
-            elf = run(["readelf", "-h", str(target)], timeout=10)
-            dyn = run(["readelf", "-d", str(target)], timeout=10, ok=False)
-            nm = run(["nm", "-D", "--defined-only", str(target)], timeout=20, ok=False)
-            machine = next((line.split(":", 1)[1].strip() for line in elf.stdout.splitlines()
-                            if line.strip().startswith("Machine:")), "unknown")
-            needed = sorted(set(re.findall(r"\(NEEDED\).*?\[(.*?)\]", dyn.stdout))) if dyn.returncode == 0 else []
-            matched = {name: [] for name in SYMBOLS}
-            if nm.returncode == 0:
-                for line in nm.stdout.splitlines():
-                    if not line.strip():
+            needed, machine, linked = [], "static_archive_unknown_machine", False
+            if elf:
+                hdr = run(["readelf", "-h", str(target)], timeout=10)
+                dyn = run(["readelf", "-d", str(target)], timeout=10, ok=False)
+                machine = next((x.split(":", 1)[1].strip() for x in hdr.stdout.splitlines()
+                                if x.strip().startswith("Machine:")), "unknown")
+                linked = dyn.returncode == 0
+                if linked:
+                    needed = sorted(set(re.findall(r"\(NEEDED\).*?\[(.*?)\]", dyn.stdout)))
+            defs = run(["nm", "-D" if elf else "-g", "--defined-only", str(target)], timeout=25, ok=False)
+            imps = run(["nm", "-D", "--undefined-only", str(target)], timeout=25, ok=False) if elf else None
+            matched = {key: [] for key in SYMBOLS}
+            imported = {key: [] for key in SYMBOLS}
+            for probe, destination in ((defs, matched), (imps, imported)):
+                if probe is None or probe.returncode != 0:
+                    continue
+                for line in probe.stdout.splitlines():
+                    bits = line.split()
+                    if not bits:
                         continue
-                    sym = line.split()[-1].split("@", 1)[0]
-                    for family, pattern in SYMBOLS.items():
-                        if pattern.fullmatch(sym):
-                            matched[family].append(sym)
-            results.append({"image_path": path, "sha256": hashlib.sha256(data).hexdigest(),
-                            "bytes": len(data), "machine": machine, "needed": needed,
-                            "symbols": {k: sorted(set(v))[:150] for k, v in matched.items()},
-                            "symbol_status": "inspected" if nm.returncode == 0 else "unknown_nm_failed",
-                            "linkage_status": "inspected" if dyn.returncode == 0 else "unknown_readelf_failed"})
+                    symbol = bits[-1].split("@", 1)[0]
+                    for group, pattern in SYMBOLS.items():
+                        if pattern.fullmatch(symbol):
+                            destination[group].append(symbol)
+            results.append({
+                "image_path": path, "sha256": hashlib.sha256(data).hexdigest(),
+                "bytes": len(data), "format": "ELF" if elf else "static_archive",
+                "machine": machine, "needed": needed,
+                "package_owners": owners.get(path, []),
+                "ownership_status": "dpkg_matched" if path in owners else "not_identified_by_dpkg",
+                "symbols": {k: sorted(set(v))[:150] for k,v in matched.items()},
+                "imports": {k: sorted(set(v))[:150] for k,v in imported.items()},
+                "symbol_status": "inspected" if defs.returncode == 0 else "unknown_nm_failed",
+                "import_status": "inspected" if imps is not None and imps.returncode == 0 else "not_available",
+                "linkage_status": "inspected" if linked else "not_available"})
     return results
+
+
+def related_native_evidence(binaries):
+    def group(prefix, category, dependency):
+        selected = [x for x in binaries if Path(x["image_path"]).name.startswith(prefix)]
+        return {
+            "state": "identified" if selected else "not_identified_in_bounded_inventory",
+            "paths": [x["image_path"] for x in selected][:20],
+            "needed": sorted({n for x in selected for n in x["needed"]})[:40],
+            "imported_selected": sorted({n for x in selected for n in x["imports"].get(category, [])})[:60],
+            "direct_needed_match": any(dependency in n for x in selected for n in x["needed"]),
+            "note": "linkage/symbol observation only; usage is not demonstrated"}
+    mini_names = [x["image_path"] for x in binaries if "minizip" in x["image_path"].lower()]
+    bundled = [x["image_path"] for x in binaries if x["image_path"] not in mini_names and
+               (x["symbols"]["zlib_minizip"] or x["imports"]["zlib_minizip"])]
+    return {
+        "minizip": {"named_candidates": mini_names[:40],
+                    "other_binary_symbol_candidates": bundled[:40],
+                    "limit": "stripped/embedded MiniZip cannot be excluded"},
+        "librist_mbed_crypto": group("librist.so", "mbedtls_crypto_ffdh", "libmbedcrypto"),
+        "libavformat_xml2": group("libavformat.so", "libxml2_parser", "libxml2"),
+        "gio_gdbus": group("libgio-2.0.so", "gio_gdbus", "libglib"),
+    }
 
 
 def package_inventory(image):
@@ -441,8 +507,8 @@ LIMITS = [
     "New --pull build is a reproducible replacement, NOT a preserved historical CI image or immutable OCI manifest digest.",
     "Base tags, apt and pip dependencies may drift; exact layer equivalence to historical images is not established.",
     "Exported symbols show presence only; registration does not establish application invocation or vulnerability reachability.",
-    "Not found in searched system paths/PATH is not proof of global absence; static, bundled or unloaded code may exist.",
-    "Only synthetic SQLite/Expat/zlib and limited FFmpeg fixture paths were exercised; application invocation and exploitability remain unproven.",
+    "Not identified by bounded static/native/dynamic symbol scanning is not proof of global absence or non-applicability.",
+    "Only synthetic SQLite-copy/Expat/zlib and limited FFmpeg/FFprobe fixtures were exercised; application invocation remains unproven.",
 ]
 
 
@@ -465,8 +531,11 @@ def collect(args):
         raise ValueError("unbound image config ID or unsupported OS")
     packages = package_inventory(expected_image_id)
     sqlite = python_probe(expected_image_id)
+    sqlite_copy = sqlite_copy_probe(expected_image_id)
     ffmpeg = ffmpeg_inventory(expected_image_id)
+    targeted = targeted_ffmpeg_probe(expected_image_id, ffmpeg["registrations"])
     paths = find_binary_paths(expected_image_id)
+    owners = package_ownership(expected_image_id, paths)
     # 'docker create' never starts an application; docker cp reads only allowlisted system ELF paths.
     create = run(["docker", "create", "--network", "none", "--read-only", "--cap-drop", "ALL",
                   "--security-opt", "no-new-privileges", "--entrypoint", "/bin/true", expected_image_id], timeout=20)
@@ -474,7 +543,7 @@ def collect(args):
     if not re.fullmatch(r"[a-f0-9]{64}", cid):
         raise ValueError("malformed disposable container ID")
     try:
-        binaries = host_binary_details(cid, paths)
+        binaries = host_binary_details(cid, paths, owners)
     finally:
         run(["docker", "rm", "-f", cid], timeout=15)
     report = {"schema": 1, "component": component, "source_sha": source, "harness_sha": harness,
@@ -483,6 +552,8 @@ def collect(args):
                         "os": inspected.get("Os"), "registry_manifest_digest": None},
               "build": {"context": COMPONENTS[component][0], "dockerfile": COMPONENTS[component][1], "pull": True},
               "packages": packages, "binaries": binaries, "ffmpeg": ffmpeg,
+              "targeted_ffmpeg": targeted, "native_relationships": related_native_evidence(binaries),
+              "sqlite_copy": sqlite_copy, "python_xml": sqlite["python_xml"],
               "sqlite": {k: sqlite[k] for k in ("version", "compile_options", "fts5", "json1", "memory")},
               "synthetic": {"zlib": sqlite["zlib"], "expat": sqlite["expat"]},
               "interpretation_limits": LIMITS}
