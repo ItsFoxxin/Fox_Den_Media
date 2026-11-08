@@ -183,11 +183,16 @@ rejection/acceptance of artificial inputs.
 - Before any main publication, pin and independently review identical
   Python base-image SHA256 digest in all three first-party Dockerfiles,
   verify all required checks on the exact source, and obtain source GO.
-- R5 draft PR #80 expects an additional,
-  separately authenticated `foxden-r4-release-ready-v1.0.0` bundle.
-  R4 currently verifies but **does not produce that R5 artifact**.
-  Agree a canonical schema/bundle with the R5 worker before either
-  workstream can be marked release-ready.
+- **R4-to-R5 handoff is now implemented but not executed.** After every
+  real R4 gate succeeds, `scripts/r4_release_ready.py` stages a canonical
+  `foxden-r4-release-ready-v1.0.0` artifact with `release-ready.json`
+  (`foxden.r4.release-ready.v1`) and SHA-256 bindings for all included
+  evidence files. The R4 workflow authenticates and signs the exact root
+  manifest bytes through GitHub OIDC before uploading that bundle. Draft
+  R5 PR #80 verifies the independent R4 signer, source/workflow/run identity,
+  schema and file hashes under its canonical
+  `docs/r4-r5-release-ready-v1.schema.json` contract. No live R4 bundle or
+  R5 acceptance exists until an authorized run satisfies all prerequisites.
 - `main` currently uses `0.9.1`; a real `1.0.0` source, three
   candidate digests, passing security evidence and NAS/copy-state
   acceptance do not exist yet. Separate source promotion, release

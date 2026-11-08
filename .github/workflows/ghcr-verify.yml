@@ -39,7 +39,6 @@ jobs:
     permissions:
       contents: read
       actions: read
-      attestations: read
       packages: read
       issues: read
       security-events: read
@@ -272,7 +271,7 @@ jobs:
           SOURCE_SHA: ${{ inputs.source_sha }}
         run: |
           set -euo pipefail
-          python scripts/no_rebuild_integration.py --lock security/release-lock.json \
+          python -m scripts.no_rebuild_integration --lock security/release-lock.json \
             --source-sha "$SOURCE_SHA" --r4-run-id "$GITHUB_RUN_ID" \
             --report integration/no-rebuild.json
       - name: Stage canonical R4 v1 release-ready bundle only after all gates pass
@@ -284,7 +283,7 @@ jobs:
           SOURCE_ISSUE: ${{ inputs.source_approval_issue }}
         run: |
           set -euo pipefail
-          python scripts/r4_release_ready.py \
+          python -m scripts.r4_release_ready \
             --source-sha "$SOURCE_SHA" --r3-run-id "$PUBLISHER_RUN" \
             --r4-run-id "$GITHUB_RUN_ID" --acceptance-run-id "$ACCEPTANCE_RUN" \
             --approval-issue "$SOURCE_ISSUE" \
