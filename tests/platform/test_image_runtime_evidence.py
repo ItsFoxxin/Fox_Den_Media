@@ -149,11 +149,11 @@ class EvidenceTests(unittest.TestCase):
                 evidence.ffmpeg_inventory(IDS["portal"])
 
     def test_debian_mbed_and_minizip_package_versions_retained(self):
-        fixture = ("libmbedcrypto7\\t2.28.3-1\\tamd64\\n"
-                   "libmbedx509-1\\t2.28.3-1\\tamd64\\n"
-                   "libmbedtls14\\t2.28.3-1\\tamd64\\n"
-                   "libminizip1\\t1.2.13-1\\tamd64\\n"
-                   "unrelated\\t1.0\\tamd64\\n")
+        fixture = ("libmbedcrypto7\t2.28.3-1\tamd64\n"
+                   "libmbedx509-1\t2.28.3-1\tamd64\n"
+                   "libmbedtls14\t2.28.3-1\tamd64\n"
+                   "libminizip1\t1.2.13-1\tamd64\n"
+                   "unrelated\t1.0\tamd64\n")
         with patch.object(evidence, "run", return_value=type("P", (), {"stdout": fixture})()):
             packages = evidence.package_inventory(IDS["media"])
         self.assertEqual({p["name"] for p in packages},
