@@ -47,3 +47,7 @@ Before updates, stop or quiesce writers, verify the state archive and separate l
 - Bound **total** WebSocket lifetime for an active contained-browser session after Portal revocation (existing Nginx inactivity timeouts do not guarantee a maximum lifetime).
 
 These are operator gates, not claims that features already work in production. Refer to the [release checklist](release-1.0-checklist.md).
+
+## Image vulnerability evidence
+
+For advisory Trivy scans of current first-party Docker-built images, per-image CycloneDX SBOMs, and time-limited finding reviews, see [Trivy image scanning](trivy.md). Image scanning does not replace the operational NAS/VPN security acceptance checks above.

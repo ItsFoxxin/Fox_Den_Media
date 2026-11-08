@@ -1,0 +1,72 @@
+name: Trivy first-party images (advisory)
+
+on:
+  pull_request:
+    branches: [dev, main]
+  push:
+    branches: [dev, main]
+  workflow_dispatch:
+
+# This separate, non-required workflow intentionally does not feed Monorepo strict gate.
+permissions:
+  contents: read
+
+concurrency:
+  group: trivy-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scan:
+    name: Trivy advisory (${{ matrix.component }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - component: portal
+            context: apps/portal
+            dockerfile: apps/portal/Dockerfile
+          - component: music
+            context: apps/music/backend
+            dockerfile: apps/music/backend/Dockerfile
+          - component: media
+            context: .
+            dockerfile: apps/media/Dockerfile
+    steps:
+      - name: Checkout source without persisted credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - name: Install checksum-verified Trivy v0.76.2
+        shell: bash
+        run: |
+          bash scripts/install_trivy.sh "$RUNNER_TEMP/trivy-bin"
+          echo "$RUNNER_TEMP/trivy-bin" >> "$GITHUB_PATH"
+      - name: Build the actual application image once
+        id: image
+        shell: bash
+        run: |
+          set -euo pipefail
+          image_ref="foxden-ci-${{ matrix.component }}:$GITHUB_SHA"
+          docker build --pull --file "${{ matrix.dockerfile }}" --tag "$image_ref" "${{ matrix.context }}"
+          image_id="$(docker image inspect --format '{{.Id}}' "$image_ref")"
+          printf 'ref=%s\nid=%s\n' "$image_ref" "$image_id" >> "$GITHUB_OUTPUT"
+      - name: Scan OS and application packages and generate CycloneDX SBOM
+        shell: bash
+        run: |
+          set -euo pipefail
+          report_dir="reports/${{ matrix.component }}"
+          mkdir -p "$report_dir"
+          trivy image --scanners vuln --format json --exit-code 0             --output "$report_dir/vulnerabilities.json" "${{ steps.image.outputs.ref }}"
+          trivy image --scanners vuln --format cyclonedx --exit-code 0             --output "$report_dir/sbom.cdx.json" "${{ steps.image.outputs.ref }}"
+          python scripts/trivy_report.py             --input "$report_dir/vulnerabilities.json"             --output-dir "$report_dir"             --component "${{ matrix.component }}"             --image "${{ steps.image.outputs.ref }}"             --image-id "${{ steps.image.outputs.id }}"             --source-sha "$GITHUB_SHA"
+          cat "$report_dir/summary.md" >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload per-image vulnerability reports and SBOM
+        if: always() && steps.image.outputs.ref != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: trivy-${{ matrix.component }}-${{ github.run_id }}
+          path: reports/${{ matrix.component }}/
+          if-no-files-found: error
+          retention-days: 21
