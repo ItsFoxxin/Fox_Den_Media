@@ -75,6 +75,7 @@ def make_bundle(folder: Path) -> tuple[dict, dict]:
         "r4_run_id": R4, "r3_run_id": R3, "decision": "pass",
         "security_policy_result": "pass", "no_rebuild_integration": "passed",
         "security_policy_version": "fixture-policy-1", "high_critical_unaccepted": 0,
+        "github_security_review": "pass", "unapproved_security_findings": 0,
         "exceptions": [], "files": files,
     }
     (folder / "verification.json").write_text(
@@ -138,6 +139,13 @@ class BundleTests(unittest.TestCase):
 
     def test_unaccepted_critical_fails(self):
         self.update_verification(high_critical_unaccepted=1)
+        self.assert_blocked()
+
+    def test_native_security_alerts_must_be_dispositioned(self):
+        self.update_verification(github_security_review="unknown")
+        self.assert_blocked()
+        self.update_verification(github_security_review="pass",
+                                 unapproved_security_findings=2)
         self.assert_blocked()
 
     def test_failed_policy_fails(self):
