@@ -61,3 +61,5 @@ There is no automatic production deployment in these GitHub workflows, and a rep
 ## Advisory container image scanning
 
 The independent [Trivy image scanning and SBOM guide](trivy.md) documents built-image coverage, 21-day report artifacts, vulnerability triage and manual baseline comparisons. It is not part of the required Monorepo strict gate and does not deploy or publish images.
+
+The advisory Trivy image artifacts also carry a [versioned security contract](security-contract.md) with unsuppressed findings, exception expiry evaluation, report/SBOM hashes and an explicit distinction between advisory assessments and future release enforcement. It is **not** part of Monorepo strict gate.
