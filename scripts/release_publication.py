@@ -114,6 +114,14 @@ def validate_adopted_policy(content: str) -> None:
             "Current main release checklist does not contain adopted approval policy")
 
 
+def validate_master_acceptance_issue(issue: dict) -> None:
+    """Issue #18 is a hard release gate regardless of label changes."""
+    require(isinstance(issue, dict) and issue.get("number") == 18
+            and issue.get("pull_request") is None
+            and issue.get("state") == "closed",
+            "Master 1.0 NAS acceptance issue #18 is not closed/accepted")
+
+
 def validate_blockers(items: list) -> None:
     require(isinstance(items, list), "Blocker API response must be a list")
     blockers = [x for x in items if isinstance(x, dict)
@@ -351,6 +359,9 @@ def live_check(source_sha: str, r4_id: int, *, approval_issue: int = 0,
     require(isinstance(checks, dict) and checks.get("total_count", 0) <= 100,
             "Cannot attest to complete check history")
     validate_checks(checks, source_sha)
+    # Do not depend only on a mutable label; master acceptance is mandatory.
+    master = api("repos/" + REPOSITORY + "/issues/18")
+    validate_master_acceptance_issue(master)
     blockers = pages("repos/" + REPOSITORY + "/issues?state=open&labels=release-blocker")
     validate_blockers(blockers)
     run = api("repos/" + REPOSITORY + "/actions/runs/" + str(r4_id))
