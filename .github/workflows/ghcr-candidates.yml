@@ -56,8 +56,14 @@ jobs:
           test "$GITHUB_SHA" = "$SOURCE_SHA"
           actual="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')"
           test "$actual" = "$SOURCE_SHA"
-          gh api "repos/$GITHUB_REPOSITORY/issues/$APPROVAL_ISSUE" \
-            --jq 'select(.pull_request == null and .state == "open") | .number' | grep -Fx "$APPROVAL_ISSUE"
+          gh api "repos/$GITHUB_REPOSITORY/issues/$APPROVAL_ISSUE" > "$RUNNER_TEMP/source-issue.json"
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/issues/$APPROVAL_ISSUE/comments?per_page=100" \
+            | jq -e 'add' > "$RUNNER_TEMP/source-comments.json"
+          python scripts/verify_candidate_approval.py \
+            --issue-json "$RUNNER_TEMP/source-issue.json" \
+            --comments-json "$RUNNER_TEMP/source-comments.json" \
+            --repository "$GITHUB_REPOSITORY" --issue-number "$APPROVAL_ISSUE" \
+            --source-sha "$SOURCE_SHA"
           python scripts/check_release.py
           python scripts/check_release_base_images.py
           python scripts/release_metadata.py --source-sha "$SOURCE_SHA" \
@@ -75,6 +81,8 @@ jobs:
     permissions:
       contents: read
       packages: write
+      checks: read
+      issues: read
       id-token: write
       attestations: write
     strategy:
@@ -117,6 +125,17 @@ jobs:
           test "$SOURCE_SHA" = "$APPROVED_SHA"
           test "$APPROVAL_ISSUE" = "$APPROVED_ISSUE"
           test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')" = "$SOURCE_SHA"
+          gh api "repos/$GITHUB_REPOSITORY/issues/$APPROVAL_ISSUE" > "$RUNNER_TEMP/source-issue.json"
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/issues/$APPROVAL_ISSUE/comments?per_page=100" \
+            | jq -e 'add' > "$RUNNER_TEMP/source-comments.json"
+          python scripts/verify_candidate_approval.py \
+            --issue-json "$RUNNER_TEMP/source-issue.json" \
+            --comments-json "$RUNNER_TEMP/source-comments.json" \
+            --repository "$GITHUB_REPOSITORY" --issue-number "$APPROVAL_ISSUE" \
+            --source-sha "$SOURCE_SHA"
+          gh api "repos/$GITHUB_REPOSITORY/commits/$SOURCE_SHA/check-runs?per_page=100" \
+            > "$RUNNER_TEMP/rechecked-source-checks.json"
+          python scripts/verify_publisher_checks.py "$RUNNER_TEMP/rechecked-source-checks.json" "$SOURCE_SHA"
       - name: Login to GHCR with workflow-scoped credentials
         env:
           GH_TOKEN: ${{ github.token }}

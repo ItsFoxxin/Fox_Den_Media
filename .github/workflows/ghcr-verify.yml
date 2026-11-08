@@ -108,12 +108,17 @@ jobs:
           test -s security/security-contract.json
           test -s security/release-lock.json
           test -s security/rendered-release-compose.json
+          test -s security/scanner.json
           test -d security/reports
-          gh attestation verify security/security-contract.json \
-            --repo "$GITHUB_REPOSITORY" \
-            --source-ref "refs/heads/main" \
-            --source-digest "$SOURCE_SHA" \
-            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/trivy-digest-security.yml"
+          # Authenticate every exact, individually attested top-level input.
+          for file in security/security-contract.json security/release-lock.json \
+                      security/rendered-release-compose.json security/scanner.json; do
+            gh attestation verify "$file" \
+              --repo "$GITHUB_REPOSITORY" \
+              --source-ref "refs/heads/main" \
+              --source-digest "$SOURCE_SHA" \
+              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/trivy-digest-security.yml"
+          done
       - name: Verify image provenance, registry identity and release policy
         shell: bash
         env:
@@ -124,6 +129,8 @@ jobs:
           set -euo pipefail
           python scripts/verify_image_security.py --contract security/security-contract.json \
             --lock security/release-lock.json --evidence-dir security/reports \
+            --scanner-metadata security/scanner.json \
+            --policy security/vulnerability-exceptions.json \
             --candidates candidates --source-sha "$SOURCE_SHA" \
             --publisher-run-id "$PUBLISHER_RUN"
           python scripts/release_lock.py security/release-lock.json \
