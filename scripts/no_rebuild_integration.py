@@ -5,7 +5,9 @@ acceptance, production deployment, or a substitute for real client checks.
 """
 from __future__ import annotations
 import argparse
+import hashlib
 import json
+import re
 import os
 from pathlib import Path
 import secrets
@@ -115,10 +117,35 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--lock", type=Path, required=True)
     parser.add_argument("--port", type=int, default=18080)
+    parser.add_argument("--report", type=Path, help="Write source/digest-bound proof ONLY after successful pull integration")
+    parser.add_argument("--source-sha", help="Exact approved source for report subject")
+    parser.add_argument("--r4-run-id", type=int, help="Actual R4 signer run ID")
     args = parser.parse_args()
+    if args.report is not None and (
+        not args.source_sha or re.fullmatch(r"[0-9a-f]{40}", args.source_sha) is None
+        or not args.r4_run_id or args.r4_run_id < 1
+    ):
+        parser.error("An integration proof requires an exact source SHA and R4 run ID")
     if RUNTIME.exists() and any(RUNTIME.iterdir()):
         parser.error("Existing integration runtime would be overwritten")
-    exercise(json.loads(args.lock.read_text()), args.port)
+    lock_bytes = args.lock.read_bytes()
+    lock = json.loads(lock_bytes)
+    exercise(lock, args.port)
+    # A receipt is emitted only when the pulled-digest integration returned
+    # successfully. A fixture, skipped job, or error cannot create a pass.
+    if args.report is not None:
+        if args.report.exists():
+            parser.error("Refuse to overwrite an existing integration proof")
+        payload = {
+            "schema_version": 1, "source_sha": args.source_sha,
+            "r4_run_id": args.r4_run_id,
+            "lock_sha256": hashlib.sha256(lock_bytes).hexdigest(),
+            "decision": "pass", "mode": "pulled-digest-no-build",
+            "images": {name: image["ref"] for name, image in lock["images"].items()},
+        }
+        args.report.parent.mkdir(parents=True, exist_ok=True)
+        args.report.write_text(json.dumps(payload, sort_keys=True, indent=2) + "\\n",
+                               encoding="utf-8")
     print("R4 published-image no-rebuild synthetic integration passed")
     return 0
 
