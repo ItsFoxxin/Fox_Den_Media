@@ -22,10 +22,24 @@ def report(name):
         "build": {"context": evidence.COMPONENTS[name][0],
                   "dockerfile": evidence.COMPONENTS[name][1], "pull": True},
         "packages": [{"name": "zlib1g", "version": "1.2.13", "arch": "amd64"}],
-        "binaries": [{"image_path": "/usr/lib/libz.so.1", "sha256": "1" * 64}],
+        "binaries": [{"image_path": "/usr/lib/libz.so.1", "sha256": "1" * 64,
+                      "format": "ELF", "imports": {k: [] for k in evidence.SYMBOLS},
+                      "package_owners": ["zlib1g"]}],
         "ffmpeg": {"state": "not_found_on_PATH", "registrations": None, "fixture": "not_run"},
         "sqlite": {"version": "3.40.1", "compile_options": [], "fts5": "pass",
                    "json1": "pass", "memory": "pass"},
+        "sqlite_copy": {k: "pass" for k in ("copy_reopen", "integrity_check",
+                      "read_only_write_rejected", "trusted_schema_off")},
+        "python_xml": {"pyexpat_version": "expat_2.5.0",
+                       "xml_parsers_expat_version": "expat_2.5.0",
+                       **{k: "not_importable" for k in
+                          ("libxml2", "libxml2mod", "lxml", "lxml.etree", "lxml.sax")}},
+        "native_relationships": {
+            "minizip": {"named_candidates": [], "other_binary_symbol_candidates": []},
+            "librist_mbed_crypto": {"state": "not_identified_in_bounded_inventory"},
+            "libavformat_xml2": {"state": "not_identified_in_bounded_inventory"},
+            "gio_gdbus": {"state": "not_identified_in_bounded_inventory"}},
+        "targeted_ffmpeg": {"state": "not_found_on_PATH", "fixtures": None},
         "synthetic": {"zlib": "pass", "expat": "pass"},
         "interpretation_limits": list(evidence.LIMITS),
     }
@@ -163,6 +177,89 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual(evidence.parse_ffmpeg(" V..... mpeg4 MPEG-4\n", "encoders"), ["mpeg4"])
         self.assertEqual(evidence.parse_ffmpeg("Input:\n  file\nOutput:\n  pipe\n", "protocols"),
                          {"input": ["file"], "output": ["pipe"]})
+
+
+    def test_missing_followup_coverage_fails_closed(self):
+        for key in ("python_xml", "sqlite_copy", "native_relationships", "targeted_ffmpeg"):
+            r = report("music")
+            r.pop(key)
+            with self.subTest(key=key), self.assertRaisesRegex(ValueError, "incomplete"):
+                evidence.validate_report(r, source=SOURCE, harness=HARNESS)
+        r = report("portal")
+        r["sqlite_copy"]["trusted_schema_off"] = "failed"
+        with self.assertRaisesRegex(ValueError, "SQLite trust"):
+            evidence.validate_report(r, source=SOURCE, harness=HARNESS)
+        r = report("portal")
+        r["binaries"][0].pop("imports")
+        with self.assertRaisesRegex(ValueError, "ownership or symbol"):
+            evidence.validate_report(r, source=SOURCE, harness=HARNESS)
+        r = report("portal")
+        r["python_xml"].pop("pyexpat_version")
+        with self.assertRaisesRegex(ValueError, "Python XML"):
+            evidence.validate_report(r, source=SOURCE, harness=HARNESS)
+
+    def test_targeted_ffmpeg_probe_rejects_malformed_and_missing_fixtures(self):
+        with patch.object(evidence, "run", return_value=type("P", (), {"stdout": "not JSON"})()):
+            with self.assertRaisesRegex(ValueError, "malformed targeted"):
+                evidence.targeted_ffmpeg_probe(IDS["music"], {"decoders": [], "demuxers": []})
+        fake = {
+            "avi_rasc": {"state": "fixture_unavailable"},
+            "avi_cfhd": {"state": "pass", "input_sha256": "e" * 64},
+            "avi_magicyuv": {"state": "pass", "input_sha256": "e" * 64},
+            "music_ffprobe_vobsub_mislabel": {"state": "rejected"},
+            "music_ffprobe_dash_mislabel": {"state": "rejected"}}
+        with patch.object(evidence, "run", return_value=type("P", (), {"stdout": json.dumps(fake)})()):
+            good = evidence.targeted_ffmpeg_probe(IDS["music"], {"decoders": ["rasc"], "demuxers": ["avi"]})
+        self.assertTrue(good["fixtures"]["avi_rasc"]["decoder_registered"])
+        self.assertEqual(good["fixtures"]["avi_rasc"]["state"], "fixture_unavailable")
+        for bad in ({k: v for k,v in fake.items() if k != "avi_rasc"},
+                    {**fake, "avi_cfhd": {"state": "unproven"}},
+                    {**fake, "avi_cfhd": {"state": "pass", "input_sha256": "wrong"}}):
+            with patch.object(evidence, "run", return_value=type("P", (), {"stdout": json.dumps(bad)})()):
+                with self.assertRaises(ValueError):
+                    evidence.targeted_ffmpeg_probe(IDS["music"], {"decoders": [], "demuxers": []})
+
+    def test_targeted_reports_require_every_fixture_when_ffmpeg_present(self):
+        r = report("media")
+        r["ffmpeg"] = {"state": "present", "registrations": {
+            k: {"input": ["file"], "output": ["pipe"]} if k == "protocols" else ["avi"]
+            for k in evidence.FFMPEG_FLAGS}, "fixture": "pass"}
+        r["targeted_ffmpeg"] = {"state": "tested_synthetic_only",
+                                "fixtures": {"avi_cfhd": {"state": "pass"}}}
+        with self.assertRaisesRegex(ValueError, "targeted"):
+            evidence.validate_report(r, source=SOURCE, harness=HARNESS)
+
+    def test_sqlite_copy_fixture_requires_all_trust_boundary_results(self):
+        good = {k: "pass" for k in
+                ("copy_reopen", "integrity_check", "read_only_write_rejected", "trusted_schema_off")}
+        with patch.object(evidence, "run", return_value=type("P", (), {"stdout": json.dumps(good)})()):
+            self.assertEqual(evidence.sqlite_copy_probe(IDS["portal"]), good)
+        for invalid in ("not JSON", json.dumps({"copy_reopen": "pass"}),
+                        json.dumps({**good, "read_only_write_rejected": "failed"})):
+            with patch.object(evidence, "run", return_value=type("P", (), {"stdout": invalid})()):
+                with self.assertRaises(ValueError):
+                    evidence.sqlite_copy_probe(IDS["portal"])
+
+    def test_native_relationships_do_not_infer_non_applicability(self):
+        row = {"image_path": "/usr/lib/librist.so.4", "needed": ["libmbedcrypto.so.7"],
+               "imports": {k: [] for k in evidence.SYMBOLS},
+               "symbols": {k: [] for k in evidence.SYMBOLS}}
+        row["imports"]["mbedtls_crypto_ffdh"] = ["mbedtls_dhm_init"]
+        result = evidence.related_native_evidence([row])
+        self.assertEqual(result["librist_mbed_crypto"]["state"], "identified")
+        self.assertTrue(result["librist_mbed_crypto"]["direct_needed_match"])
+        self.assertIn("mbedtls_dhm_init", result["librist_mbed_crypto"]["imported_selected"])
+        self.assertEqual(result["libavformat_xml2"]["state"], "not_identified_in_bounded_inventory")
+
+    def test_native_path_bounding_and_symbol_pattern(self):
+        self.assertIsNotNone(evidence.SYMBOLS["psa_crypto"].fullmatch("psa_export_public_key"))
+        self.assertIsNotNone(evidence.SYMBOLS["gio_gdbus"].fullmatch("g_dbus_connection_call"))
+        self.assertIsNotNone(evidence.LIB_RE.fullmatch("librist.so.4.2.0"))
+        self.assertIsNotNone(evidence.LIB_RE.fullmatch("libminizip.a"))
+        raw = "\n".join("/app/native/lib-%d.so" % i for i in range(25))
+        with patch.object(evidence, "run", return_value=type("P", (), {"stdout": raw, "returncode": 0})()):
+            with self.assertRaisesRegex(ValueError, "bounded application"):
+                evidence.find_binary_paths(IDS["portal"])
 
 
 if __name__ == "__main__":
