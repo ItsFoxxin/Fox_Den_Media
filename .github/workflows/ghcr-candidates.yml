@@ -202,6 +202,34 @@ jobs:
           subject-digest: ${{ steps.image.outputs.digest }}
           push-to-registry: true
           create-storage-record: false
+      # BuildKit SBOM remains enabled above; this *additional* SPDX document
+      # is signed by the trusted R3 workflow for R5's exact predicate gate.
+      # The existing digest is scanned, never rebuilt or retagged.
+      - name: Generate independently verifiable SPDX predicate for pushed digest
+        shell: bash
+        env:
+          IMAGE: ${{ matrix.repository }}
+          COMPONENT: ${{ matrix.component }}
+          DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          set -euo pipefail
+          bash scripts/install_trivy.sh "$RUNNER_TEMP/trivy-bin"
+          "$RUNNER_TEMP/trivy-bin/trivy" image --image-src docker \
+            --scanners vuln --format spdx-json --exit-code 0 \
+            --output "evidence/$COMPONENT.sbom.spdx.json" "$IMAGE@$DIGEST"
+          jq -e '.spdxVersion == "SPDX-2.3" and
+                 .SPDXID == "SPDXRef-DOCUMENT" and
+                 (.packages | type == "array" and length > 0)' \
+            "evidence/$COMPONENT.sbom.spdx.json" > /dev/null
+          test "$(stat -c %s "evidence/$COMPONENT.sbom.spdx.json")" -le 16777216
+      - name: Attest SPDX v2.3 SBOM to exact immutable OCI subject
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ matrix.repository }}
+          subject-digest: ${{ steps.image.outputs.digest }}
+          sbom-path: evidence/${{ matrix.component }}.sbom.spdx.json
+          push-to-registry: true
+          create-storage-record: false
       - name: Upload digest identity evidence
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
