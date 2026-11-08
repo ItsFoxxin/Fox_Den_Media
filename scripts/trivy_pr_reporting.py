@@ -102,8 +102,12 @@ def verify_artifact(zipped, component, source_sha):
           and baseline.get("image_id") == image_id, "Wrong scan SHA or image ID")
     check(sbom.get("bomFormat") == "CycloneDX"
           and isinstance(sbom.get("components"), list), "Invalid CycloneDX output")
-    check(isinstance(version.get("Version"), str) and version["Version"],
-          "Missing Trivy version")
+    check(isinstance(version.get("Version"), str)
+          and bool(re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?",
+                                version["Version"])), "Invalid Trivy version")
+    reported_version = report.get("Trivy", {}).get("Version")
+    check(not reported_version or reported_version == version["Version"],
+          "Scanner version differs between report and metadata")
     rows = normalized_findings(report)
     check(rows == baseline.get("findings"), "Source findings do not match baseline")
     check(summarize(component, image, image_id, source_sha, rows) == summary,
@@ -173,7 +177,8 @@ def trusted_baseline(api, run):
             return "stale", None, candidate
         try:
             return "valid", load_scans(api, candidate, sha), candidate
-        except (EvidenceError, KeyError, ValueError, urllib.error.HTTPError):
+        except (EvidenceError, KeyError, ValueError, TypeError, zipfile.BadZipFile,
+                urllib.error.HTTPError):
             return "invalid", None, candidate
     return "invalid", None, None
 
@@ -333,7 +338,8 @@ def process(api, event):
             api, run, protected["commit"]["sha"]):
         try:
             scans = load_scans(api, run, merge_sha)
-        except (EvidenceError, ValueError, KeyError, urllib.error.HTTPError):
+        except (EvidenceError, ValueError, KeyError, TypeError, zipfile.BadZipFile,
+                urllib.error.HTTPError):
             scans = None
     baseline_status, baseline_data, baseline_run = "unavailable", None, None
     if scans is not None:
