@@ -31,7 +31,7 @@ SYMBOLS = {
     "libxml2_parser": re.compile(r"^(?:xml|html)(?:Read|Parse|CtxtRead|FreeDoc)\w*$"),
     "expat_parser": re.compile(r"^XML_(?:Parser|Parse|Set)\w*$"),
 }
-PACKAGES = ("zlib", "minizip", "mbed", "ffmpeg", "libav", "libaom", "libsqlite", "libglib", "libxml2", "libexpat", "perl-base")
+PACKAGES = ("zlib", "minizip", "libminizip", "mbed", "libmbed", "ffmpeg", "libav", "libaom", "libsqlite", "libglib", "libxml2", "libexpat", "perl-base")
 COMPONENTS = {
     "portal": ("apps/portal", "apps/portal/Dockerfile"),
     "music": ("apps/music/backend", "apps/music/backend/Dockerfile"),
