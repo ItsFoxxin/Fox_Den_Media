@@ -4,7 +4,7 @@
 
 ## Audited prerequisites
 
-At the latest R5 synchronization, `dev` remained 0.9.6 and `main` remained 0.9.1; the 1.0 blocker register #18 and other release-blocker issues remained open. No GitHub Release was present. R1–R4 release-image and digest-lock workflows are not yet integrated into `dev`: advisory Trivy PR #72 has since **merged into `dev`** (advisory image scans and CycloneDX SBOMs), while successor PR #74 and Dependency Review blocking issue #70 remain open. **Advisory scans are not the R3 digest-pinned publisher or R4 blocking release-verification gate.** Their work is **not duplicated** here.
+At the latest R5 synchronization, `dev` remained 0.9.6 and `main` remained 0.9.1; the 1.0 blocker register #18 and other release-blocker issues remained open. No GitHub Release was present. R1–R4 release-image and digest-lock workflows are not yet integrated into `dev`: advisory Trivy PR #72 has since **merged into `dev`** (advisory image scans and CycloneDX SBOMs), and successor PR #74 has also **merged into `dev`** (PR-reporting and trusted advisory baselines). Dependency Review blocking issue #70, critical/high findings issue #76, and actual R3/R4 release-verification implementation remain outstanding. **Advisory scans are not the R3 digest-pinned publisher or R4 blocking release-verification gate.** Their work is **not duplicated** here.
 
 R5 is deliberately **fail closed** until approved R3 image publication and approved R4 security/evidence verification are available. A green general CI run is not equivalent to R4 release artifacts.
 
