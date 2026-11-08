@@ -1,7 +1,8 @@
 """Synthetic negative testing of release-facing security contract; no dependency changes."""
 import unittest
+import hashlib
 from datetime import date, datetime, timezone
-from scripts.security_contract import InvalidEvidence, assess, exceptions_by_identity
+from scripts.security_contract import InvalidEvidence, assess, exceptions_by_identity, verify_evidence_files
 
 SOURCE = "a" * 40
 IMAGE_ID = "sha256:" + "b" * 64
@@ -152,6 +153,44 @@ class SecurityContractTests(unittest.TestCase):
         s["baseline"] = {"component": "music", "findings": [], "source_sha": SOURCE}
         with self.assertRaises(InvalidEvidence):
             assess(**s)
+
+    def test_raw_evidence_digest_matches_contract(self):
+        payloads = {k: (k + "-verified").encode() for k in
+                    ("trivy_report", "cyclonedx_sbom", "scanner_metadata", "exception_ledger")}
+        digests = {k: "sha256:" + hashlib.sha256(v).hexdigest()
+                   for k, v in payloads.items()}
+        contract = assess(**sample(), evidence_hashes=digests)
+        self.assertTrue(verify_evidence_files(contract, payloads))
+
+    def test_tampered_vulnerability_report_digest_fails_closed(self):
+        payloads = {k: (k + "-verified").encode() for k in
+                    ("trivy_report", "cyclonedx_sbom", "scanner_metadata", "exception_ledger")}
+        digests = {k: "sha256:" + hashlib.sha256(v).hexdigest()
+                   for k, v in payloads.items()}
+        contract = assess(**sample(), evidence_hashes=digests)
+        payloads["trivy_report"] += b"tampered"
+        with self.assertRaisesRegex(InvalidEvidence, "Evidence digest mismatch"):
+            verify_evidence_files(contract, payloads)
+
+    def test_missing_sbom_bytes_fails_closed(self):
+        payloads = {k: (k + "-verified").encode() for k in
+                    ("trivy_report", "cyclonedx_sbom", "scanner_metadata", "exception_ledger")}
+        digests = {k: "sha256:" + hashlib.sha256(v).hexdigest()
+                   for k, v in payloads.items()}
+        contract = assess(**sample(), evidence_hashes=digests)
+        del payloads["cyclonedx_sbom"]
+        with self.assertRaisesRegex(InvalidEvidence, "Missing raw evidence bytes"):
+            verify_evidence_files(contract, payloads)
+
+    def test_invalid_digest_format_fails_closed(self):
+        payloads = {k: (k + "-verified").encode() for k in
+                    ("trivy_report", "cyclonedx_sbom", "scanner_metadata", "exception_ledger")}
+        digests = {k: "sha256:" + hashlib.sha256(v).hexdigest()
+                   for k, v in payloads.items()}
+        digests["exception_ledger"] = "sha256:bad"
+        with self.assertRaisesRegex(InvalidEvidence, "Missing or malformed evidence digest"):
+            verify_evidence_files(assess(**sample(), evidence_hashes=digests), payloads)
+
 
 
 if __name__ == "__main__":
