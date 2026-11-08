@@ -197,7 +197,8 @@ def check_scanner(metadata: dict, now: datetime) -> dict:
            re.fullmatch(r"\d+\.\d+\.\d+", str(metadata.get("Version", ""))) and
            metadata["Version"] == "0.76.2", "Unapproved scanner version")
     db = metadata.get("VulnerabilityDB")
-    ensure(type(db) is dict and type(db.get("Version")) is int and\n           db["Version"] > 0 and type(db.get("UpdatedAt")) is str and
+    ensure(type(db) is dict and type(db.get("Version")) is int and
+           db["Version"] > 0 and type(db.get("UpdatedAt")) is str and
            bool(db["UpdatedAt"]), "Vulnerability DB metadata missing")
     try:
         updated = datetime.fromisoformat(db["UpdatedAt"].replace("Z", "+00:00"))
