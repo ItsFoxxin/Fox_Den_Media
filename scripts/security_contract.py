@@ -37,6 +37,27 @@ def hash_file(path):
     return "sha256:" + hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
+EVIDENCE_KEYS = ("trivy_report", "cyclonedx_sbom", "scanner_metadata", "exception_ledger")
+
+
+def verify_evidence_files(contract, payloads):
+    """Reject changed or missing raw evidence bytes; does not authenticate who created them."""
+    require(isinstance(contract, dict) and contract.get("schema_version") == 1,
+            "Invalid security contract")
+    expected = (contract.get("evidence") or {}).get("files")
+    require(isinstance(expected, dict) and isinstance(payloads, dict),
+            "Missing security evidence manifest")
+    for name in EVIDENCE_KEYS:
+        digest = expected.get(name)
+        value = payloads.get(name)
+        require(isinstance(digest, str) and bool(DIGEST.fullmatch(digest)),
+                "Missing or malformed evidence digest: " + name)
+        require(isinstance(value, bytes), "Missing raw evidence bytes: " + name)
+        computed = "sha256:" + hashlib.sha256(value).hexdigest()
+        require(computed == digest, "Evidence digest mismatch: " + name)
+    return True
+
+
 def exceptions_by_identity(ledger, today):
     require(ledger.get("schema_version") == 1 and isinstance(ledger.get("exceptions"), list),
             "Invalid exception ledger")
@@ -206,6 +227,7 @@ def main():
             baseline_verified=args.baseline_verified, attestation_refs=args.attestation_ref,
             scan_run_url=args.scan_run_url, mode=args.mode,
             evidence_hashes={key: hash_file(path) for key, path in paths.items()})
+        verify_evidence_files(result, {key: path.read_bytes() for key, path in paths.items()})
     except (OSError, ValueError, KeyError, TypeError) as error:
         print("Security evidence rejected: " + str(error), file=sys.stderr)
         return 2
