@@ -502,7 +502,7 @@ def verify_signed_release_ready(root: Path, source_sha: str, r4_id: int) -> None
     require(valid_sha(source_sha) and r4_id > 0, "Invalid signed R4 identity")
     manifest_path = safe_file(root, "release-ready.json")
     version_output = run_command(["gh", "--version"], output=True)
-    match = re.search(r"^gh version (\\d+)\\.(\\d+)\\.(\\d+)", version_output)
+    match = re.search(r"^gh version (\d+)\.(\d+)\.(\d+)", version_output)
     require(match is not None and tuple(map(int, match.groups())) >= (2, 102, 0),
             "gh CLI >= 2.102.0 required for exact signer-workflow verification")
     result = run_command([
