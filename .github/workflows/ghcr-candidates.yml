@@ -59,6 +59,7 @@ jobs:
           gh api "repos/$GITHUB_REPOSITORY/issues/$APPROVAL_ISSUE" \
             --jq 'select(.pull_request == null and .state == "open") | .number' | grep -Fx "$APPROVAL_ISSUE"
           python scripts/check_release.py
+          python scripts/check_release_base_images.py
           python scripts/release_metadata.py --source-sha "$SOURCE_SHA" \
             --main-head "$actual" --version 1.0.0
           gh api "repos/$GITHUB_REPOSITORY/commits/$SOURCE_SHA/check-runs?per_page=100" \
