@@ -139,11 +139,11 @@ def validate_notes(notes: str, source_sha: str, lock_sha: str, images: list) -> 
     require(not re.search(r"\{\{|TODO|TBD|PLACEHOLDER", notes, flags=re.I),
             "Release notes contain unresolved template placeholders")
     require(not re.search(
-        r"\b(?:10|192\\.168|172\\.(?:1[6-9]|2[0-9]|3[01]))"
-        r"\\.\\d{1,3}\\.\\d{1,3}(?:\\.\\d{1,3})?\\b", notes),
+        r"\b(?:10|192\.168|172\.(?:1[6-9]|2[0-9]|3[01]))"
+        r"\.\d{1,3}\.\d{1,3}(?:\.\d{1,3})?\b", notes),
         "Release notes may contain private infrastructure addresses")
     require(not re.search(r"-----BEGIN [A-Z ]*PRIVATE KEY-----|"
-                          r"(?i:(?:password|api[_-]?key|secret|access[_-]?token)\\s*[=:]\\s*\\S{8,})",
+                          r"(?i:(?:password|api[_-]?key|secret|access[_-]?token)\s*[=:]\s*\S{8,})",
                           notes), "Release notes may contain credentials")
 
 
@@ -238,7 +238,7 @@ def validate_bundle(root: Path, source_sha: str, r4_id: int) -> dict:
     for path, checksum in files.items():
         require(path in ("release-lock.json", "release-notes.md")
                 or (isinstance(path, str) and re.fullmatch(
-                    r"(?:sboms|provenance|reports|integration)/[A-Za-z0-9_.-]+\\.json",
+                    r"(?:sboms|provenance|reports|integration)/[A-Za-z0-9_.-]+\.json",
                     path) is not None),
                 "Unexpected or potentially sensitive release evidence path")
         require(isinstance(checksum, str)
