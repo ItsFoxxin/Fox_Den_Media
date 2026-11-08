@@ -209,14 +209,38 @@ class BundleTests(unittest.TestCase):
         self.assert_blocked()
 
     def test_output_assets_with_sha256_sums(self):
-        out = self.root.parent / "staged"
-        out.mkdir()
-        R5.stage_assets(self.root, out)
-        self.assertTrue((out / "assets.sha256").is_file())
-        self.assertTrue((out / "release-lock.json").is_file())
-        self.assertTrue((out / "sboms--portal.spdx.json").is_file())
-        with self.assertRaises(R5.ReleaseBlocked):
+        with tempfile.TemporaryDirectory() as scratch:
+            out = Path(scratch)
             R5.stage_assets(self.root, out)
+            self.assertTrue((out / "assets.sha256").is_file())
+            self.assertTrue((out / "release-lock.json").is_file())
+            self.assertTrue((out / "sboms--portal.spdx.json").is_file())
+            with self.assertRaises(R5.ReleaseBlocked):
+                R5.stage_assets(self.root, out)
+
+    def test_idempotent_existing_release_verification(self):
+        assets = {}
+        for path in self.root.rglob("*"):
+            if path.is_file():
+                assets[str(path.relative_to(self.root)).replace("/", "--")] = R5.hash_file(path)
+        lines = "".join(h + "  " + n + "\n" for n, h in sorted(assets.items()))
+        assets["assets.sha256"] = hashlib.sha256(lines.encode()).hexdigest()
+        tag_ref = {"ref": "refs/tags/v1.0.0",
+                   "object": {"type": "tag", "sha": "f" * 40}}
+        annotated = {"tag": "v1.0.0", "object": {"type": "commit", "sha": SHA}}
+        release = {"tag_name": "v1.0.0", "draft": False, "prerelease": False,
+                   "body": "Main " + SHA,
+                   "assets": [{"name": n, "digest": "sha256:" + h}
+                              for n, h in assets.items()]}
+        R5.verify_published_records(tag_ref, annotated, release, SHA, assets)
+        R5.verify_published_records(tag_ref, annotated, release, SHA, assets)
+        release["assets"][0]["digest"] = "sha256:" + "0" * 64
+        with self.assertRaises(R5.ReleaseBlocked):
+            R5.verify_published_records(tag_ref, annotated, release, SHA, assets)
+        release["assets"][0]["digest"] = "sha256:" + next(iter(assets.values()))
+        annotated["object"]["sha"] = "0" * 40
+        with self.assertRaises(R5.ReleaseBlocked):
+            R5.verify_published_records(tag_ref, annotated, release, SHA, assets)
 
 
 class ExternalGateTests(unittest.TestCase):
