@@ -113,8 +113,15 @@ def verify_artifact(zipped, component, source_sha):
     check(summarize(component, image, image_id, source_sha, rows) == summary,
           "Summary count mismatch")
     db = version.get("VulnerabilityDB") or {}
+    updated = db.get("UpdatedAt")
+    if updated is not None:
+        check(isinstance(updated, str) and len(updated) <= 64, "Invalid DB timestamp")
+        try:
+            datetime.fromisoformat(updated.replace("Z", "+00:00"))
+        except ValueError as error:
+            raise EvidenceError("Unparseable DB timestamp") from error
     return {"summary": summary, "baseline": baseline, "version": version["Version"],
-            "database_updated": db.get("UpdatedAt")}
+            "database_updated": updated}
 
 
 def load_scans(api, run, source_sha):
@@ -223,8 +230,8 @@ def render(pr, run, scans, status, baseline_run, deltas):
                  "Counts and vulnerability deltas unavailable; do not interpret as a clean scan."]
         return "\n".join(body)
     body += ["", "**Three image scans completed with valid report artifacts.**", "",
-             "| Image | Critical | High | Medium | Low | Unknown | Fixable | New | Resolved | Artifact |",
-             "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |"]
+             "| Image | Scan | Critical | High | Medium | Low | Unknown | Fixable | No known fix | New | Resolved | Artifact |",
+             "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |"]
     for component in COMPONENTS:
         scan = scans[component]
         summary = scan["summary"]
@@ -233,8 +240,9 @@ def render(pr, run, scans, status, baseline_run, deltas):
         added = str(len(found["new"])) if found else "N/A"
         resolved = str(len(found["resolved"])) if found else "N/A"
         fixable = str(sum(summary["fix_available"].values()))
-        body.append("| " + component + " | " + " | ".join(severity) + " | "
-                    + fixable + " | " + added + " | " + resolved + " | [JSON + SBOM]("
+        unknown_fix = str(sum(summary["no_known_fix"].values()))
+        body.append("| " + component + " | OK | " + " | ".join(severity) + " | "
+                    + fixable + " | " + unknown_fix + " | " + added + " | " + resolved + " | [JSON + SBOM]("
                     + scan["url"] + ") |")
     versions = sorted({s["version"] for s in scans.values()})
     dates = sorted({str(s["database_updated"]) for s in scans.values()
