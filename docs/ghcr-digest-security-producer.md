@@ -179,17 +179,19 @@ upstream scope, unsupported signer, incomplete SPDX, stale database,
 HIGH/CRITICAL/UNKNOWN and rejected exceptions. They do not claim live GHCR
 scan, signed OCI provenance, protected environment, or R3 publication.
 
-For the PR #81 worker: verify `scripts/verify_image_security.py` accepts
-this exact v1 file layout and `ghcr-verify.yml` fetches the same artifact
-and verifies exact `trivy-digest-security.yml` signature. The consumer
-should additionally verify the separately attested lock, rendered Compose
-and scanner JSON subjects before treating those files as authenticated. The R4 consumer
-currently records only DB update time; the producer also uploads raw
-`scanner.json`, but its DB version cannot be added to the strict
-contract without an approved matching consumer schema revision. Also assess
-whether Docker Hub/LSCR upstream images offer signed provenance that
-`gh attestation verify` can authenticate. Resolve these *as coordination
-items*, not by changing PR #81's branch without its owner's review.
+For the PR #81 worker: the latest consumer head `6e2af6b` already
+verifies **all four** top-level artifacts using exact signer workflow,
+source SHA and `main` source ref, and enforces Trivy `0.76.2`,
+positive DB schema version, nonfuture/<=14-day DB freshness and the
+source-reviewed policy hash in separately signed `scanner.json`.
+The producer's v1 contract schema and canonicalized policy hash agree.
+Keep these checks as-is; do not add duplicate consumer validation.
+The remaining contract decision is **upstream provenance**: exact external
+registry image digests must have independently verifiable signers, or both
+workstreams must review a versioned alternate chain of trust. PR #81 still
+rejects every nonempty exception array, so no release will pass
+HIGH/CRITICAL findings or any unreviewed (or reviewed-but-incompatible)
+waiver. Do not modify PR #81's branch from this workstream.
 
 Real 1.0.0 release readiness remains blocked by source/R3 approval,
 current R2 lock, complete approved upstream signer identities, current
