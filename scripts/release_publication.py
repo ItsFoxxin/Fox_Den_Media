@@ -324,7 +324,9 @@ def validate_bundle(root: Path, source_sha: str, r4_id: int) -> dict:
         require(not item.is_symlink(), "Symlink in release evidence")
     for rel, checksum in files.items():
         require(isinstance(rel, str)
-                and (rel in ("release-lock.json", "release-notes.md")
+                and (rel in ("release-lock.json", "release-notes.md",
+                             "security-contract.json", "scanner.json",
+                             "rendered-release-compose.json")
                      or re.fullmatch(
                          r"(?:sboms|provenance|reports|integration)/[A-Za-z0-9_.-]+\.json",
                          rel) is not None),
