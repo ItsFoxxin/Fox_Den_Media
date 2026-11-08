@@ -11,7 +11,7 @@ on:
         type: string
         required: true
       r4_run_id:
-        description: Successful trusted release-verify.yml run ID
+        description: Successful signed ghcr-verify.yml R4 run ID
         type: string
         required: true
       approval_issue:
@@ -70,13 +70,15 @@ jobs:
           set -euo pipefail
           gh run download "$R4_RUN_ID" --repo "$GITHUB_REPOSITORY" \
             --name foxden-r4-release-ready-v1.0.0 --dir release-evidence
-      - name: Validate evidence, checksum-bound images and policy status
+      - name: Verify signed R4 root manifest, evidence and policy status
         shell: bash
         run: |
           set -euo pipefail
           python scripts/release_publication.py bundle --source-sha "$SOURCE_SHA" --r4-run-id "$R4_RUN_ID"
           python scripts/release_lock.py release-evidence/release-lock.json \
-            --compose deploy/compose.yaml --source-sha "$SOURCE_SHA"
+            --compose deploy/compose.yaml \
+            --rendered release-evidence/rendered-release-compose.json \
+            --source-sha "$SOURCE_SHA"
       - name: Require gh CLI with exact signer-workflow matching
         shell: bash
         run: |
@@ -174,7 +176,9 @@ jobs:
           python scripts/check_release.py
           python scripts/release_publication.py bundle --source-sha "$SOURCE_SHA" --r4-run-id "$R4_RUN_ID"
           python scripts/release_lock.py release-evidence/release-lock.json \
-            --compose deploy/compose.yaml --source-sha "$SOURCE_SHA"
+            --compose deploy/compose.yaml \
+            --rendered release-evidence/rendered-release-compose.json \
+            --source-sha "$SOURCE_SHA"
           python scripts/release_publication.py approval --source-sha "$SOURCE_SHA" \
             --r4-run-id "$R4_RUN_ID" --approval-issue "$APPROVAL_ISSUE"
           printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
