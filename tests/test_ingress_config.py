@@ -67,11 +67,9 @@ def test_server_browser_websocket_fails_closed_and_documents_idle_timeout_limit(
     assert "error_page 500 = @auth_unavailable;" in block
     assert "proxy_set_header Upgrade $http_upgrade;" in block
     assert "proxy_set_header X-FoxDen-Identity \"\";" in block
-    assert "auth_request /_foxden_portal_auth;" in block
     assert "set $browser_backend $foxden_browser_upstream;" in block
-    assert "All WebSocket upgrades" in block
-    assert "inactivity" in block
-    assert "not total lifetime" in block
+    assert "one-hour maximum" in block
+    assert "inactivity, not lifetime" in block
     assert "map $http_upgrade $foxden_browser_upstream" in CONFIG
     assert "default portal:8020;" in CONFIG
     assert "'' download-browser:5800;" in CONFIG

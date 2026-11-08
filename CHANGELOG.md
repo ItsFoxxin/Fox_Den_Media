@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.9.5 - 2026-11-07
+
+### Fixed
+
+- Fixes #37: Suppress Music's server-browser actions when Firefox is disabled, unavailable or unauthorized and block watched-download handoff before state mutation when browser is unavailable.
+
+### Validation
+
+- Add bounded internal HTTP readiness checks, Portal admin and unauthorized regression tests, disabled/available/unavailable scenarios, and explicit Compose/controller browser-profile behavior.
+- Real pinned Firefox/noVNC tests and copied-state NAS acceptance remain pending. No production deployment or cutover is authorized.
+
+## 0.9.4 - 2026-11-07
+
+### Fixed
+
+- Fixes #57: Synchronize linked Authentik OIDC administrator roles on verified login and revoke old Portal sessions when privileges change or allowed-group membership is lost.
+
+### Validation
+
+- Add simulated verified-claims regression coverage for promotion, demotion, missing/invalid groups, allowlist removal, disabled Portal accounts, upstream outages, existing sessions, local emergency administrator isolation and protected routes.
+- A separate upstream Authentik change signal is still required for automatic mid-session revocation; new approved disposable NAS runtime acceptance remains mandatory.
+- This proposed patch version conflicts with the independently drafted #37 patch in PR #41; whichever lands second must be rebased and versioned as the next sequential patch.
+
 ## 0.9.3 - 2026-11-06
 
 ### Fixed
