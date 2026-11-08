@@ -75,6 +75,8 @@ jobs:
         run: |
           set -euo pipefail
           python scripts/release_publication.py bundle --source-sha "$SOURCE_SHA" --r4-run-id "$R4_RUN_ID"
+          python scripts/release_lock.py release-evidence/release-lock.json \
+            --compose deploy/compose.yaml --source-sha "$SOURCE_SHA"
       - name: Require gh CLI with exact signer-workflow matching
         shell: bash
         run: |
@@ -171,6 +173,8 @@ jobs:
           set -euo pipefail
           python scripts/check_release.py
           python scripts/release_publication.py bundle --source-sha "$SOURCE_SHA" --r4-run-id "$R4_RUN_ID"
+          python scripts/release_lock.py release-evidence/release-lock.json \
+            --compose deploy/compose.yaml --source-sha "$SOURCE_SHA"
           python scripts/release_publication.py approval --source-sha "$SOURCE_SHA" \
             --r4-run-id "$R4_RUN_ID" --approval-issue "$APPROVAL_ISSUE"
           printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
