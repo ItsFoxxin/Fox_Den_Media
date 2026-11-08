@@ -36,7 +36,7 @@ def make_bundle(folder: Path) -> tuple[dict, dict]:
         images[component] = {
             "ref": R5.FIRST_PARTY[component] + "@" + DIGESTS[component],
             "platform": "linux/amd64",
-            "platform_digest": component[0] * 64,
+            "platform_digest": DIGESTS[component].split(":", 1)[1],
             "source_sha": SHA,
         }
         evidence[component] = {
