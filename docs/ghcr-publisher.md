@@ -21,23 +21,23 @@ The only trigger is **manual workflow_dispatch on main**, with the exact
 40-digit approved commit SHA and a source-approval issue number. The workflow
 checks the current remote main HEAD, root/Media version and changelog via R1,
 the matching admin-managed authorization values and GitHub's required main
-check-runs. The writer job also requests the \`ghcr-candidates\` GitHub
+check-runs. The writer job also requests the `ghcr-candidates` GitHub
 Environment and rechecks the SHA/authorization before receiving its
-job-specific \`packages: write\` token. It has no deployment credentials.
+job-specific `packages: write` token. It has no deployment credentials.
 
 **Required GitHub settings, not configured by this PR:**
 
-1. Create an environment named \`ghcr-candidates\`. Configure a required
-   human reviewer and restrict permitted branches to protected \`main\`.
+1. Create an environment named `ghcr-candidates`. Configure a required
+   human reviewer and restrict permitted branches to protected `main`.
    Check whether your plan supports required reviewers; if not, leave the
    publisher disabled and choose an independently auditable approval process
    before enabling it. Never infer that naming an environment protects it.
 2. Only after source promotion approval, set repository variables:
-   \`GHCR_CANDIDATES_ENABLED=true\`,
-   \`GHCR_CANDIDATE_ENV_PROTECTED=true\`,
-   \`GHCR_APPROVED_SOURCE_SHA=<approved exact main SHA>\`,
-   \`GHCR_SOURCE_APPROVAL_ISSUE=<source-GO issue number>\`.
-   The \`ENV_PROTECTED\` variable is an operator assertion and **not**
+   `GHCR_CANDIDATES_ENABLED=true`,
+   `GHCR_CANDIDATE_ENV_PROTECTED=true`,
+   `GHCR_APPROVED_SOURCE_SHA=<approved exact main SHA>`,
+   `GHCR_SOURCE_APPROVAL_ISSUE=<source-GO issue number>`.
+   The `ENV_PROTECTED` variable is an operator assertion and **not**
    independent machine verification of environment review settings.
 3. Verify protected main's exact post-merge required checks all passed.
    Check the source approval's scope and that it explicitly authorizes GHCR
@@ -53,16 +53,16 @@ run ID and BuildKit provenance/SBOM. It also creates a GitHub-signed image
 attestation for the *published digest*, preserving package linkage through
 the repo's GITHUB_TOKEN and OCI source metadata.
 
-The only candidate tag is \`sha-<full-source-sha>\`. **Never** use \`latest\`,
-\`1.0.0\` or \`v1.0.0\` here. The digest, not the tag, is the release identity.
+The only candidate tag is `sha-<full-source-sha>`. **Never** use `latest`,
+`1.0.0` or `v1.0.0` here. The digest, not the tag, is the release identity.
 OCI image metadata includes repository/source, revision, description and
 version. No license label is added until the licensing decision.
 
 ## R4 — shared, independently signed security evidence
 
-The read-only \`ghcr-verify.yml\` requires a successful R3 run on the same
+The read-only `ghcr-verify.yml` requires a successful R3 run on the same
 exact source and a successful **trusted**
-\`.github/workflows/trivy-digest-security.yml\` producer run. It downloads
+`.github/workflows/trivy-digest-security.yml` producer run. It downloads
 all three immutable candidate artifacts and the *signed* shared security
 contract plus release lock and nonsecret rendered release Compose file.
 
@@ -100,7 +100,7 @@ evidence for each upstream digest.
 ## Package presentation, permissions and release boundaries
 
 After the **first authorized** candidate push, open each GHCR package page:
-verify that it is linked to \`ItsFoxxin/Fox_Den_Media\`, GitHub Actions has
+verify that it is linked to `ItsFoxxin/Fox_Den_Media`, GitHub Actions has
 only the access needed, and visibility is set deliberately. Public code
 does not make packages automatically public. The connected GitHub tool
 cannot inspect/manage every GHCR package setting or environment reviewer.
