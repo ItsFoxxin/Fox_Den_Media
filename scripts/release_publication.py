@@ -173,6 +173,9 @@ def validate_bundle(root: Path, source_sha: str, r4_id: int) -> dict:
             "Missing shared vulnerability-policy version")
     require(verification.get("high_critical_unaccepted") == 0,
             "Unaccepted high/critical vulnerability findings")
+    require(verification.get("github_security_review") == "pass"
+            and verification.get("unapproved_security_findings") == 0,
+            "Unreviewed native CodeQL, Dependabot or secret-scanning findings")
     require(isinstance(lock.get("compose_sha256"), str)
             and re.fullmatch(r"[0-9a-f]{64}", lock["compose_sha256"]) is not None,
             "Invalid Compose SHA-256")
