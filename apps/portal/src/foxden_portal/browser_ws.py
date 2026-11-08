@@ -34,8 +34,19 @@ def _authorized(store, token: str | None) -> bool:
 def register_browser_websockets(app: FastAPI, store, public_url: str) -> None:
     expected_origin = public_url.rstrip("/")
     parsed = urlsplit(expected_origin)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc or parsed.path not in {"", "/"}:
+    if (parsed.scheme not in {"http", "https"} or not parsed.netloc
+            or parsed.path not in {"", "/"} or parsed.username or parsed.password
+            or parsed.query or parsed.fragment):
         raise ValueError("Portal public URL must be an HTTP(S) origin.")
+
+    async def session_allowed(token: str | None) -> bool:
+        try:
+            # A locked or unavailable session database must fail closed promptly.
+            return await asyncio.wait_for(
+                asyncio.to_thread(_authorized, store, token), timeout=3.0,
+            )
+        except Exception:
+            return False
 
     @app.websocket("/{browser_socket_path:path}")
     async def guarded_browser_socket(websocket: WebSocket, browser_socket_path: str):
@@ -49,7 +60,7 @@ def register_browser_websockets(app: FastAPI, store, public_url: str) -> None:
             await websocket.close(code=1008)
             return
         token = websocket.cookies.get("foxden_portal_session")
-        if not _authorized(store, token):
+        if not await session_allowed(token):
             await websocket.close(code=1008)
             return
 
@@ -108,15 +119,7 @@ def register_browser_websockets(app: FastAPI, store, public_url: str) -> None:
                 if remaining <= 0:
                     return "maximum_lifetime"
                 await asyncio.sleep(min(RECHECK_INTERVAL_SECONDS, remaining))
-                try:
-                    # SQLite can wait for a writer lock; do not let a stalled
-                    # database read extend access for the full lock timeout.
-                    allowed = await asyncio.wait_for(
-                        asyncio.to_thread(_authorized, store, token), timeout=3.0,
-                    )
-                except Exception:
-                    allowed = False
-                if not allowed:
+                if not await session_allowed(token):
                     return "authorization_revoked"
 
         tasks = [

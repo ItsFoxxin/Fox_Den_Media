@@ -1,6 +1,6 @@
-# 1.0 browser-session security — RA-06 / issue #18
+# 1.0 browser-session security — RA-06 / bug #62 (release register #18)
 
-**Reviewed baseline:** dev commit 60cce4e7e4cd73ca20f467af3f9f9e4b84f524f6 (2026-11-07).
+**Reviewed baseline:** dev commit 7dfbafa858f59a3a53272aaf09421b5a5536869d (2026-11-07); includes the merged 0.9.4 OIDC and 0.9.5 RB-04 fixes. Proposed patch: **0.9.6**.
 **Scope:** Portal, NGINX, jlesage Firefox/noVNC WebSockets.
 **Deployment:** source and draft PR only; no NAS, Test51, Test57 or production operations.
 
@@ -44,14 +44,16 @@ with confidentiality and integrity impact. **Severity: Medium** under the existi
 
 ## Remaining threats
 
-**OIDC role revocation is not immediate.** An Authentik account/group change
-does not automatically mutate the Portal session database. Source inspection
-also shows that PortalStore.map_external_identity() refreshes claims on later
-OIDC login without updating the existing user's stored role. An OIDC admin
-group removal may therefore leave a stale stored administrator privilege even
-at subsequent login. This is a distinct identity-sync security finding needing
-a dedicated remedy and explicit 1.0 acceptance. This WebSocket relay uses the
-Portal DB as authority and must not be presented as fixing IdP propagation.
+**Upstream Authentik revocation is not immediate.** The merged 0.9.4 OIDC
+role-sync fix (PR #59) atomically updates a linked Portal user's stored role
+when a *subsequent verified OIDC login* changes group membership. It deletes
+that user's previous Portal sessions on role change or verified loss of
+allowed-group access. The RA-06 relay observes that Portal-side invalidation
+at its next 15-second recheck. However, no trusted provider notification,
+polling or refresh is configured: a change *only* in Authentik between logins
+cannot be detected automatically. It may leave access until expiry or a
+separate explicit Portal-side session revocation. Do not claim instant IdP
+disablement or group removal propagation.
 
 The Firefox desktop/profile is shared between admins. Disconnecting a
 revoked socket does not erase browser tabs, cookies or files. Compromised
@@ -64,8 +66,8 @@ Firefox's internal VNC transport must remain available to noVNC.
 ## Automated coverage and release gates
 
 Regression tests cover successful authorized binary/text relay; logout,
-session expiry, disabled Portal account, local role revocation, wrong Origin,
-non-admin, unknown paths, offline Firefox and an absolute lifetime.
+session expiry, disabled Portal account, local and verified-OIDC role revocation, wrong Origin,
+non-admin, unknown paths, offline Firefox, DB failure and an absolute lifetime.
 NGINX static assertions verify Upgrade routing, preserved HTTP Firefox proxy,
 auth_request and header stripping.
 
@@ -84,8 +86,9 @@ validation and syntax validation. These do not substitute for live-image QA.
    Expect connection termination within 15s plus scheduler/network margin.
 4. Prove hard one-hour closure/reconnection, Firefox restart and Portal
    outage failure, and deny fallback through any other WebSocket path.
-5. Separately test Authentik account/group disablement and remediate the
-   stale OIDC-role mapping; local Portal role changes do not prove IdP revocation.
+5. Separately validate PR #59's verified OIDC sign-in demotion and prior-session
+   invalidation; document that upstream group/account changes without a new
+   trusted event are not detected immediately, and do not conflate these.
 6. Confirm no direct browser port bypass, no RB-04 availability regression,
    no Downloader Home/search regression and no unexpected portal load.
 7. Review shared Firefox desktop privacy and multi-admin behavior.
