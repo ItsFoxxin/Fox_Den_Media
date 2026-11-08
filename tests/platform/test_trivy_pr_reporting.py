@@ -242,5 +242,122 @@ class TrivyPhase2Tests(unittest.TestCase):
             r.classify(original, wrong)
 
 
+
+class TrivyPhase2ProvenanceTests(unittest.TestCase):
+    def test_changed_scanner_report_processor_blocks_trust(self):
+        class API:
+            def call(self, path, *args, **kwargs):
+                if "trivy_report.py" in path and path.endswith(HEAD):
+                    return {"sha": "different"}
+                return {"sha": "trusted"}
+        result = r.trusted_scanner(API(), {"head_sha": HEAD}, BASE)
+        self.assertFalse(result)
+
+    def test_unchanged_scanner_components_are_trusted(self):
+        class API:
+            def call(self, path, *args, **kwargs):
+                return {"sha": "identical"}
+        self.assertTrue(r.trusted_scanner(API(), {"head_sha": HEAD}, BASE))
+
+    def test_missing_protected_dev_baseline(self):
+        class API:
+            repo = "ItsFoxxin/Fox_Den_Media"
+            def call(self, path):
+                if path == "/branches/dev":
+                    return {"protected": True, "commit": {"sha": BASE}}
+                return {"workflow_runs": []}
+        status, baseline, run = r.trusted_baseline(
+            API(), {"workflow_id": 100, "created_at": "2026-11-08T04:00:00Z"})
+        self.assertEqual((status, baseline, run), ("missing", None, None))
+
+    def test_invalid_unprotected_dev_baseline(self):
+        class API:
+            def call(self, path):
+                return {"protected": False, "commit": {"sha": BASE}}
+        with self.assertRaises(r.EvidenceError):
+            r.trusted_baseline(API(), {"workflow_id": 100})
+
+    def test_stale_baseline_rejected(self):
+        class API:
+            repo = "ItsFoxxin/Fox_Den_Media"
+            def call(self, path):
+                if path.startswith("/branches/"):
+                    return {"protected": True, "commit": {"sha": BASE}}
+                if "/runs?" in path:
+                    return {"workflow_runs": [{"event": "push", "head_branch": "dev",
+                        "status": "completed", "conclusion": "success", "workflow_id": 5,
+                        "head_repository": {"full_name": self.repo}, "head_sha": BASE,
+                        "created_at": "2026-10-01T00:00:00Z", "id": 6}]}
+                if "/compare/" in path:
+                    return {"status": "identical", "behind_by": 0}
+                raise AssertionError(path)
+        status, scans_found, baseline_run = r.trusted_baseline(
+            API(), {"workflow_id": 5, "created_at": "2026-11-08T04:00:00Z"})
+        self.assertEqual(status, "stale")
+        self.assertIsNone(scans_found)
+        self.assertEqual(baseline_run["id"], 6)
+
+    def test_valid_baseline_from_protected_dev_push(self):
+        class API:
+            repo = "ItsFoxxin/Fox_Den_Media"
+            def call(self, path):
+                if path.startswith("/branches/"):
+                    return {"protected": True, "commit": {"sha": BASE}}
+                if "/runs?" in path:
+                    return {"workflow_runs": [{"event": "push", "head_branch": "dev",
+                        "status": "completed", "conclusion": "success", "workflow_id": 5,
+                        "head_repository": {"full_name": self.repo}, "head_sha": BASE,
+                        "created_at": "2026-11-07T00:00:00Z", "id": 6}]}
+                if "/compare/" in path:
+                    return {"status": "identical", "behind_by": 0}
+                raise AssertionError(path)
+        with patch.object(r, "load_scans", return_value={"portal": "validated"}) as load:
+            status, result, run = r.trusted_baseline(
+                API(), {"workflow_id": 5, "created_at": "2026-11-08T04:00:00Z"})
+        self.assertEqual(status, "valid")
+        self.assertEqual(result, {"portal": "validated"})
+        self.assertEqual(run["head_sha"], BASE)
+        load.assert_called_once()
+
+    def test_newer_run_for_same_pr_must_not_overwrite_result(self):
+        class API:
+            def call(self, path):
+                if path.startswith("/pulls/"):
+                    return {"state": "open", "head": {"sha": HEAD}}
+                return {"workflow_runs": [{"id": 10, "created_at": "2026-11-08T05:00:00Z",
+                    "pull_requests": [{"number": 7}]}]}
+        self.assertFalse(r.is_current(API(), {"workflow_id": 5, "head_sha": HEAD,
+                                             "created_at": "2026-11-08T04:00:00Z",
+                                             "id": 4}, 7))
+
+    def test_successful_reporting_mock_performs_one_comment_and_label_update(self):
+        class API:
+            repo = "ItsFoxxin/Fox_Den_Media"
+            def call(self, path):
+                if path.startswith("/pulls/"):
+                    return {"number": 74, "state": "open", "merge_commit_sha": MERGE,
+                            "head": {"sha": HEAD}}
+                if path == "/branches/dev":
+                    return {"protected": True, "commit": {"sha": BASE}}
+                raise AssertionError(path)
+        run = {"id": 8, "name": r.SCANNER_WORKFLOW, "event": "pull_request",
+               "status": "completed", "conclusion": "success", "head_sha": HEAD,
+               "repository": {"full_name": API.repo},
+               "head_repository": {"full_name": API.repo},
+               "pull_requests": [{"number": 74}]}
+        event = {"repository": {"full_name": API.repo}, "workflow_run": run}
+        with patch.object(r, "is_current", return_value=True), \
+             patch.object(r, "trusted_scanner", return_value=True), \
+             patch.object(r, "load_scans", return_value=scans()), \
+             patch.object(r, "trusted_baseline", return_value=("missing", None, None)), \
+             patch.object(r, "comment_upsert") as comments, \
+             patch.object(r, "labels_update") as labels:
+            result = r.process(API(), event)
+        self.assertIn("PR #74", result)
+        comments.assert_called_once()
+        self.assertIn(r.MARKER, comments.call_args.args[2])
+        self.assertEqual(labels.call_args.args[2], {"security: review-required"})
+
+
 if __name__ == "__main__":
     unittest.main()
