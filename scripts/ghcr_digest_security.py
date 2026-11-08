@@ -43,6 +43,14 @@ def ensure(condition: bool, message: str) -> None:
         raise EvidenceError(message)
 
 
+def check_gh_cli_version(version: str) -> None:
+    """GitHub CLI <= 2.101 can accept workflow-name prefix matches."""
+    ensure(type(version) is str and bool(re.fullmatch(r"[0-9]+\\.[0-9]+\\.[0-9]+", version)),
+           "Unrecognized GitHub CLI version")
+    ensure(tuple(int(x) for x in version.split(".")) >= (2, 102, 0),
+           "GitHub CLI >= 2.102.0 required for exact workflow signer verification")
+
+
 def load(path: Path) -> dict:
     data = json.loads(path.read_text(encoding="utf-8"))
     ensure(type(data) is dict, f"Expected JSON object: {path}")
@@ -298,6 +306,8 @@ def main() -> None:
     pre.add_argument("--source-sha", required=True)
     pre.add_argument("--publisher-run-id", type=int, required=True)
     pre.add_argument("--output", type=Path, required=True)
+    cli = sub.add_parser("check-gh-version")
+    cli.add_argument("version")
     check = sub.add_parser("check-manifest")
     check.add_argument("--plan", type=Path, required=True)
     check.add_argument("--name", required=True)
@@ -319,6 +329,8 @@ def main() -> None:
                            args.publisher_run_id)
             args.output.parent.mkdir(parents=True, exist_ok=True)
             args.output.write_text(json.dumps(plan, indent=2, sort_keys=True) + "\n")
+        elif args.mode == "check-gh-version":
+            check_gh_cli_version(args.version)
         elif args.mode == "check-manifest":
             check_manifest(args.name, load(args.plan), load(args.manifest))
         else:
