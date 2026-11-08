@@ -22,8 +22,11 @@ are untouched. Source of truth for time-bounded exceptions remains
    `linux/amd64` platform manifests, selected profiles, rollback digest
    and a **sanitized image-only** rendered Compose JSON. All enabled upstream
    images must be digest-locked, not mutable tags or implicit aliases.
-4. Commit `security/upstream-provenance.json` updates for **each enabled
-   upstream lock image** through ordinary reviewed source promotion.
+4. **Before approving/promoting the source SHA to main**, commit reviewed
+   `security/upstream-provenance.json` entries for **each intended upstream
+   image**. Upstream digests and signer identities can be selected before R3;
+   changing this file after R3 would change the approved main SHA and
+   invalidate the R3 run.
    Its default `upstream: {}` is deliberately **non-accepting**: if nginx
    has no exact signer metadata, this workflow stops before scanning.
    Each entry is keyed by `nginx`, `browser`, `jellyfin`, `gluetun` or
@@ -120,6 +123,7 @@ variables afterward. There is no triggered PR/build/push/publishing event.
 | `reports/<name>.vuln.json` | Unsuppressed Trivy findings, bytes hashed as `vulnerability_report_sha256` |
 | `reports/<name>.manifest.json` | Observed OCI index for amd64 platform verification |
 | `reports/<name>.image-id` | Inspected local image config ID; matches Trivy Metadata.ImageID |
+| `scanner.json` | Raw Trivy version/database metadata including database version when present |
 
 Names cover `portal`, `music`, `media`, plus exactly the enabled subset
 of `nginx`, `browser`, `jellyfin`, `gluetun`, `qbittorrent`.
@@ -142,8 +146,8 @@ scan, signed OCI provenance, protected environment, or R3 publication.
 For the PR #81 worker: verify `scripts/verify_image_security.py` accepts
 this exact v1 file layout and `ghcr-verify.yml` fetches the same artifact
 and verifies exact `trivy-digest-security.yml` signature. The R4 consumer
-currently records only DB update time; the producer retains the raw
-`scanner.json` locally but its DB version cannot be added to the strict
+currently records only DB update time; the producer also uploads raw
+`scanner.json`, but its DB version cannot be added to the strict
 contract without an approved matching consumer schema revision. Also assess
 whether Docker Hub/LSCR upstream images offer signed provenance that
 `gh attestation verify` can authenticate. Resolve these *as coordination
