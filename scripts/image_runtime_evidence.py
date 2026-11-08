@@ -19,19 +19,25 @@ LIB_RE = re.compile(
     r"^(?:libz\.so|libminizip\.so|libmbedcrypto\.so|libmbedtls\.so|"
     r"libmbedx509\.so|libavcodec\.so|libavformat\.so|libavfilter\.so|"
     r"libavutil\.so|libswscale\.so|libswresample\.so|libsqlite3\.so|"
-    r"libglib-2\.0\.so|libxml2\.so|libexpat\.so|libaom\.so|"
-    r"_sqlite3\..*\.so|pyexpat\..*\.so)(?:\..*)?\Z"
+    r"libglib-2\.0\.so|libgobject-2\.0\.so|libgio-2\.0\.so|"
+    r"libxml2\.so|libexpat\.so|libaom\.so|librist\.so|"
+    r"libgnutls\.so|libssl\.so|libcrypto\.so|"
+    r"libminizip[^\s/]*\.a|libzip[^\s/]*\.a|librist[^\s/]*\.a|"
+    r"_sqlite3\..*\.so|pyexpat\..*\.so|_etree\..*\.so)"
+    r"(?:\..*)?\Z"
 )
 SYMBOLS = {
-    "zlib_minizip": re.compile(r"^(?:inflate|deflate|crc32|uncompress|unz[A-Z]\w*|zip[A-Z]\w*)$"),
-    "mbedtls_crypto_ffdh": re.compile(r"^mbedtls_(?:dhm|mpi|rsa|ecdh|ctr_drbg|version)_\w+$"),
-    "mbedtls_x509_tls": re.compile(r"^mbedtls_(?:x509|ssl)_\w+$"),
-    "sqlite_fts_session": re.compile(r"^sqlite3(?:session|changeset|_compileoption|_fts5)\w*$"),
-    "glib_parser": re.compile(r"^g_(?:markup|variant_parse|bytes_new)\w*$"),
-    "libxml2_parser": re.compile(r"^(?:xml|html)(?:Read|Parse|CtxtRead|FreeDoc)\w*$"),
-    "expat_parser": re.compile(r"^XML_(?:Parser|Parse|Set)\w*$"),
+    "zlib_minizip": re.compile(r"^(?:inflate|deflate|crc32|uncompress|unz[A-Za-z0-9_]*|zip[A-Za-z0-9_]*|mz_(?:zip|unzip|stream)_[A-Za-z0-9_]*)$"),
+    "mbedtls_crypto_ffdh": re.compile(r"^mbedtls_(?:dhm|mpi|rsa|ecdh|ctr_drbg|version)_[A-Za-z0-9_]+$"),
+    "psa_crypto": re.compile(r"^(?:psa_export_public_key|psa_(?:import|generate|export|destroy|sign|verify|key_derivation|raw_key_agreement)[A-Za-z0-9_]*)$"),
+    "mbedtls_x509_tls": re.compile(r"^(?:mbedtls_(?:x509|ssl)_[A-Za-z0-9_]+|X509_[A-Za-z0-9_]+|SSL_[A-Za-z0-9_]+|gnutls_(?:x509|handshake|certificate)[A-Za-z0-9_]*)$"),
+    "sqlite_fts_session": re.compile(r"^sqlite3(?:session|changeset|_compileoption|_fts5)[A-Za-z0-9_]*$"),
+    "glib_parser": re.compile(r"^g_(?:markup|variant_parse|bytes_new)[A-Za-z0-9_]*$"),
+    "gio_gdbus": re.compile(r"^(?:g_dbus_[A-Za-z0-9_]+|g_bus_(?:get|own|watch)[A-Za-z0-9_]*|g_io_[A-Za-z0-9_]+)$"),
+    "libxml2_parser": re.compile(r"^(?:xml|html)(?:Read|Parse|Ctxt|SAX|CreatePush|XPath|FreeDoc|NewParser)[A-Za-z0-9_]*$"),
+    "expat_parser": re.compile(r"^XML_(?:Parser|Parse|Set)[A-Za-z0-9_]*$"),
 }
-PACKAGES = ("zlib", "minizip", "libminizip", "mbed", "libmbed", "ffmpeg", "libav", "libaom", "libsqlite", "libglib", "libxml2", "libexpat", "perl-base")
+PACKAGES = ("zlib", "minizip", "libminizip", "mbed", "libmbed", "ffmpeg", "libav", "libaom", "libsqlite", "libglib", "libgobject", "libgio", "libxml2", "libexpat", "librist", "libgnutls", "libssl", "openssl", "perl-base")
 COMPONENTS = {
     "portal": ("apps/portal", "apps/portal/Dockerfile"),
     "music": ("apps/music/backend", "apps/music/backend/Dockerfile"),
@@ -40,8 +46,8 @@ COMPONENTS = {
 REQUIRED = {"schema", "component", "source_sha", "harness_sha", "image_ref", "image_id", "image", "build", "packages", "binaries", "ffmpeg", "sqlite", "synthetic", "interpretation_limits"}
 FFMPEG_FLAGS = {"encoders": "-encoders", "decoders": "-decoders", "demuxers": "-demuxers", "muxers": "-muxers", "filters": "-filters", "protocols": "-protocols"}
 PY_PROBE = r'''
-import json, sqlite3, zlib, xml.parsers.expat
-result={"version":sqlite3.sqlite_version,"compile_options":[],"fts5":"unavailable","json1":"unavailable","memory":"pass","zlib":"pass","expat":"pass"}
+import json, sqlite3, zlib, xml.parsers.expat, pyexpat, importlib.util
+result={"version":sqlite3.sqlite_version,"compile_options":[],"fts5":"unavailable","json1":"unavailable","memory":"pass","zlib":"pass","expat":"pass","python_xml":{}}
 con=sqlite3.connect(":memory:")
 try:
     con.execute("create table sample(value text)")
@@ -64,9 +70,144 @@ finally:
     con.close()
 assert zlib.decompress(zlib.compress(b"synthetic zlib"))==b"synthetic zlib"
 p=xml.parsers.expat.ParserCreate(); p.Parse(b"<fixture><safe/></fixture>",True)
+result["python_xml"]["pyexpat_version"]=str(pyexpat.EXPAT_VERSION)
+result["python_xml"]["xml_parsers_expat_version"]=str(xml.parsers.expat.EXPAT_VERSION)
+for name in ("libxml2", "libxml2mod", "lxml", "lxml.etree", "lxml.sax"):
+    try:
+        result["python_xml"][name]="available" if importlib.util.find_spec(name) is not None else "not_importable"
+    except (ImportError, AttributeError, ValueError):
+        result["python_xml"][name]="not_importable"
 print(json.dumps(result,sort_keys=True))
 '''
 
+
+SQLITE_COPY_PROBE = r'''
+import json, sqlite3
+from pathlib import Path
+p=Path("/tmp/foxden-synthetic-copy.db")
+source=sqlite3.connect(":memory:")
+source.execute("create table synthetic_fixture(id integer primary key, sample text not null)")
+source.execute("insert into synthetic_fixture(sample) values ('synthetic-only')")
+target=sqlite3.connect(str(p)); source.backup(target); target.close(); source.close()
+readonly=sqlite3.connect("file:/tmp/foxden-synthetic-copy.db?mode=ro", uri=True)
+readonly.execute("pragma trusted_schema=off")
+readonly.execute("pragma query_only=on")
+value=readonly.execute("select sample from synthetic_fixture where id=1").fetchone()
+integrity=readonly.execute("pragma integrity_check").fetchone()
+try:
+    readonly.execute("insert into synthetic_fixture(sample) values ('rejected')")
+    denied=False
+except sqlite3.OperationalError:
+    denied=True
+result={"copy_reopen":"pass" if value == ("synthetic-only",) else "failed",
+        "integrity_check":"pass" if integrity == ("ok",) else "failed",
+        "read_only_write_rejected":"pass" if denied else "failed",
+        "trusted_schema_off":"pass" if readonly.execute("pragma trusted_schema").fetchone() == (0,) else "failed",
+        "input":"fresh_synthetic_in_memory_database_copied_to_disposable_tmpfs"}
+readonly.close(); p.unlink()
+print(json.dumps(result, sort_keys=True))
+'''
+
+# Runs only innocuous generated color frames, never vulnerability proof-of-concepts.
+# AVI/RASC is deliberately fixture_unavailable until an independently validated
+# non-exploit RASC sample can be supplied. A codec listed as registered is NOT tested.
+TARGET_FFMPEG_PROBE = r'''
+import hashlib, json, shutil, subprocess
+from pathlib import Path
+root=Path("/tmp")
+out={}
+def call(args, limit=15):
+    try:
+        p=subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=limit, check=False)
+        return p.returncode, p.stdout[:8192].decode("utf-8", "replace")
+    except subprocess.TimeoutExpired:
+        return 124, ""
+def fields(text):
+    d={}
+    for line in text.splitlines():
+        if "=" in line:
+            k,v=line.split("=",1)
+            if k in ("codec_name","format_name") and len(v)<100 and all(ch.isascii() and (ch.isalnum() or ch in "_,.") for ch in v):
+                d[k]=v
+    return d
+for codec in ("cfhd","magicyuv"):
+    name="avi_"+codec
+    path=root/("synthetic_"+codec+".avi")
+    rc,_=call(["ffmpeg","-nostdin","-hide_banner","-v","error","-y","-f","lavfi","-i","color=c=black:s=64x64:r=1",
+               "-frames:v","1","-pix_fmt","yuv422p","-c:v",codec,"-f","avi",str(path)])
+    if rc or not path.is_file() or path.stat().st_size > 1000000:
+        out[name]={"state":"failed","stage":"synthetic_encode","input":"one_64x64_black_lavfi_frame"}
+        continue
+    b=path.read_bytes()
+    rc,stdout=call(["ffprobe","-hide_banner","-v","error","-show_entries","stream=codec_name:format=format_name",
+                    "-of","default=noprint_wrappers=1",str(path)])
+    selected=fields(stdout)
+    if rc or selected.get("codec_name") != codec or "avi" not in selected.get("format_name","").split(","):
+        out[name]={"state":"failed","stage":"format_or_codec_selection","selected":selected,
+                   "input_sha256":hashlib.sha256(b).hexdigest()}
+        continue
+    rc,_=call(["ffmpeg","-nostdin","-hide_banner","-v","error","-c:v",codec,"-i",str(path),
+               "-frames:v","1","-f","null","-"])
+    out[name]={"state":"pass" if rc == 0 else "failed",
+               "stage":"forced_decoder_synthetic_roundtrip",
+               "selected":selected,"input_sha256":hashlib.sha256(b).hexdigest(),
+               "input":"synthetic_avi_one_black_frame","forced_decoder":codec}
+base=next((root/("synthetic_"+c+".avi") for c in ("cfhd","magicyuv")
+           if out.get("avi_"+c,{}).get("state") == "pass"),None)
+for suffix,label in ((".sub","music_ffprobe_vobsub_mislabel"),(".mpd","music_ffprobe_dash_mislabel")):
+    if base is None:
+        out[label]={"state":"fixture_unavailable","reason":"no_valid_synthetic_avi_baseline"}
+        continue
+    dest=root/("synthetic_mislabeled"+suffix)
+    shutil.copyfile(base,dest)
+    rc,stdout=call(["ffprobe","-hide_banner","-v","error","-show_entries","format=format_name",
+                    "-of","default=noprint_wrappers=1",str(dest)])
+    out[label]={"state":"accepted" if rc == 0 else "rejected","input":"synthetic_avi_bytes_mislabeled_extension",
+                "input_sha256":hashlib.sha256(dest.read_bytes()).hexdigest(),
+                "selected_format":fields(stdout).get("format_name"),
+                "application_invocation":"not_demonstrated"}
+out["avi_rasc"]={"state":"fixture_unavailable",
+                  "reason":"no_verified_benign_RASC_AVI_fixture_or_RASC_encoder",
+                  "decoder_invocation":"not_demonstrated"}
+print(json.dumps(out, sort_keys=True))
+'''
+
+def sqlite_copy_probe(image):
+    raw = run(container_cmd(image, "python", "-I", "-c", SQLITE_COPY_PROBE, tmpfs=True), timeout=30).stdout
+    try:
+        data = json.loads(raw)
+    except (ValueError, TypeError) as e:
+        raise ValueError("malformed copied SQLite probe output") from e
+    if not isinstance(data, dict) or any(data.get(k) != "pass" for k in
+       ("copy_reopen", "integrity_check", "read_only_write_rejected", "trusted_schema_off")):
+        raise ValueError("incomplete copied SQLite trust-boundary evidence")
+    return data
+
+def targeted_ffmpeg_probe(image, registrations):
+    if registrations is None:
+        return {"state":"not_found_on_PATH", "fixtures": None}
+    raw = run(container_cmd(image, "python", "-I", "-c", TARGET_FFMPEG_PROBE, tmpfs=True),
+              timeout=100).stdout
+    try:
+        fixtures = json.loads(raw)
+    except (ValueError, TypeError) as e:
+        raise ValueError("malformed targeted FFmpeg probe output") from e
+    required = {"avi_rasc", "avi_cfhd", "avi_magicyuv",
+                "music_ffprobe_vobsub_mislabel", "music_ffprobe_dash_mislabel"}
+    if not isinstance(fixtures, dict) or fixtures.keys() != required:
+        raise ValueError("missing targeted FFmpeg fixture report")
+    for key in required:
+        row = fixtures[key]
+        if not isinstance(row, dict) or row.get("state") not in (
+            "pass", "failed", "accepted", "rejected", "fixture_unavailable"):
+            raise ValueError("malformed targeted FFmpeg fixture state")
+        if row.get("input_sha256") is not None and not re.fullmatch(
+                r"[a-f0-9]{64}", row["input_sha256"]):
+            raise ValueError("unbound synthetic fixture hash")
+    # Do not imply decode was tested from registry entries without a valid fixture.
+    fixtures["avi_rasc"]["decoder_registered"] = "rasc" in registrations["decoders"]
+    fixtures["avi_rasc"]["demuxer_registered"] = "avi" in registrations["demuxers"]
+    return {"state":"tested_synthetic_only", "fixtures": fixtures}
 
 def require_sha(value, label):
     if not isinstance(value, str) or not SOURCE_RE.fullmatch(value):
@@ -227,6 +368,8 @@ def python_probe(image):
     required = {"version", "compile_options", "fts5", "json1", "memory", "zlib", "expat"}
     if not isinstance(result, dict) or not required.issubset(result) or not isinstance(result["compile_options"], list):
         raise ValueError("incomplete Python synthetic probe")
+    if not isinstance(result.get("python_xml"), dict) or not result["python_xml"].get("pyexpat_version"):
+        raise ValueError("incomplete Python XML binding/version probe")
     if any(result.get(key) != "pass" for key in ("memory", "zlib", "expat")):
         raise ValueError("required harmless Python fixture failed")
     return result
