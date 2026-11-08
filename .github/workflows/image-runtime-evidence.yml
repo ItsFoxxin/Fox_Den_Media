@@ -1,0 +1,155 @@
+name: Issue 76 isolated image runtime evidence (diagnostic)
+
+on:
+  pull_request:
+    branches: [dev]
+    paths:
+      - scripts/image_runtime_evidence.py
+      - tests/platform/test_image_runtime_evidence.py
+      - .github/workflows/image-runtime-evidence.yml
+      - docs/security/image-runtime-evidence.md
+
+# Isolated PR diagnostic only: no secrets, registry writes, publishing or protected branches.
+permissions:
+  contents: read
+
+concurrency:
+  group: image-runtime-evidence-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  negative-tests:
+    name: Evidence format and identity negative tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout diagnostic harness (PR head, no credentials)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Run bounded evidence validator tests
+        run: python -m unittest discover -s tests/platform -p 'test_image_runtime_evidence.py' -v
+
+  evidence:
+    name: Replacement image evidence (${{ matrix.component }})
+    needs: negative-tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - component: portal
+            context: apps/portal
+            dockerfile: apps/portal/Dockerfile
+          - component: music
+            context: apps/music/backend
+            dockerfile: apps/music/backend/Dockerfile
+          - component: media
+            context: .
+            dockerfile: apps/media/Dockerfile
+    env:
+      APPROVED_SOURCE_SHA: abccc61f6e766a8c01c8ad7ba241747974b1a33f
+      HARNESS_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - name: Checkout diagnostic harness separately (PR head)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: harness
+          persist-credentials: false
+      - name: Checkout approved application source (fixed full commit)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: abccc61f6e766a8c01c8ad7ba241747974b1a33f
+          path: approved-source
+          persist-credentials: false
+      - name: Reject wrong source or harness checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C approved-source rev-parse HEAD)" = "$APPROVED_SOURCE_SHA"
+          test "$(git -C harness rev-parse HEAD)" = "$HARNESS_SHA"
+          test "$APPROVED_SOURCE_SHA" != "$HARNESS_SHA"
+      - name: Build fresh replacement image with existing Trivy context
+        shell: bash
+        env:
+          COMPONENT: ${{ matrix.component }}
+          CONTEXT: ${{ matrix.context }}
+          DOCKERFILE: ${{ matrix.dockerfile }}
+        run: |
+          set -euo pipefail
+          cd approved-source
+          ref="foxden-evidence-${COMPONENT}:${APPROVED_SOURCE_SHA}"
+          docker build --pull --file "$DOCKERFILE" --tag "$ref" "$CONTEXT"
+          id="$(docker image inspect --format '{{.Id}}' "$ref")"
+          test "${id#sha256:}" != "$id"
+          printf 'ref=%s\nid=%s\n' "$ref" "$id" >> "$GITHUB_OUTPUT"
+        id: image
+      - name: Collect read-only symbols and synthetic bounded runtime probes
+        shell: bash
+        env:
+          COMPONENT: ${{ matrix.component }}
+        run: |
+          set -euo pipefail
+          python harness/scripts/image_runtime_evidence.py collect \
+            --component "$COMPONENT" \
+            --source-sha "$APPROVED_SOURCE_SHA" \
+            --harness-sha "$HARNESS_SHA" \
+            --source-dir approved-source --harness-dir harness \
+            --image-ref "${{ steps.image.outputs.ref }}" \
+            --image-id "${{ steps.image.outputs.id }}" \
+            --output "reports/$COMPONENT"
+          cat "reports/$COMPONENT/summary.md" >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload one source/image-bound diagnostic report
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: image-runtime-${{ matrix.component }}-${{ github.run_id }}
+          path: reports/${{ matrix.component }}/
+          if-no-files-found: error
+          retention-days: 21
+
+  bundle:
+    name: Verify complete three-image evidence bundle
+    needs: evidence
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    env:
+      APPROVED_SOURCE_SHA: abccc61f6e766a8c01c8ad7ba241747974b1a33f
+      HARNESS_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - name: Checkout exact diagnostic harness
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Download three diagnostic artifacts from this workflow run
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: image-runtime-*-${{ github.run_id }}
+          path: downloaded
+      - name: Reject missing, malformed, mismatched or unbound component reports
+        shell: bash
+        run: |
+          set -euo pipefail
+          for component in portal music media; do
+            source="downloaded/image-runtime-${component}-${GITHUB_RUN_ID}"
+            test -f "$source/report.json"
+            test -f "$source/summary.md"
+            mkdir -p "bundle/$component"
+            cp "$source/report.json" "bundle/$component/report.json"
+            cp "$source/summary.md" "bundle/$component/summary.md"
+          done
+          python scripts/image_runtime_evidence.py verify \
+            --source-sha "$APPROVED_SOURCE_SHA" \
+            --harness-sha "$HARNESS_SHA" \
+            --reports-dir bundle --output bundle/manifest.json
+          printf 'All three source/harness/image-bound reports verified. Replacement builds only; no historical image equivalence.\n' >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload validated evidence bundle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: image-runtime-bundle-${{ github.run_id }}
+          path: bundle/
+          if-no-files-found: error
+          retention-days: 21
