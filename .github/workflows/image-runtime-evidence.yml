@@ -10,6 +10,7 @@ on:
       - docs/security/image-runtime-evidence.md
 
 # Isolated PR diagnostic only: no secrets, registry writes, publishing or protected branches.
+# Source generation 2: post-#68 dev 46ed8189; earlier run 42525566004 remains bound to abccc61f.
 permissions:
   contents: read
 
@@ -50,7 +51,7 @@ jobs:
             context: .
             dockerfile: apps/media/Dockerfile
     env:
-      APPROVED_SOURCE_SHA: abccc61f6e766a8c01c8ad7ba241747974b1a33f
+      APPROVED_SOURCE_SHA: 46ed8189e2c46f7e0bebbd51c03b60fa0775ba4f
       HARNESS_SHA: ${{ github.event.pull_request.head.sha }}
     steps:
       - name: Checkout diagnostic harness separately (PR head)
@@ -59,10 +60,10 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           path: harness
           persist-credentials: false
-      - name: Checkout approved application source (fixed full commit)
+      - name: Checkout post-PR68 application source (fixed full commit)
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: abccc61f6e766a8c01c8ad7ba241747974b1a33f
+          ref: 46ed8189e2c46f7e0bebbd51c03b60fa0775ba4f
           path: approved-source
           persist-credentials: false
       - name: Reject wrong source or harness checkout
@@ -116,7 +117,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 8
     env:
-      APPROVED_SOURCE_SHA: abccc61f6e766a8c01c8ad7ba241747974b1a33f
+      APPROVED_SOURCE_SHA: 46ed8189e2c46f7e0bebbd51c03b60fa0775ba4f
       HARNESS_SHA: ${{ github.event.pull_request.head.sha }}
     steps:
       - name: Checkout exact diagnostic harness
