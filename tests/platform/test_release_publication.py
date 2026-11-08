@@ -331,6 +331,18 @@ class ExternalGateTests(unittest.TestCase):
             R5.validate_release_absence(
                 None, {"tag_name": "v1.0.0"})
 
+    def test_master_issue_18_cannot_be_bypassed_by_label_removal(self):
+        R5.validate_master_acceptance_issue({"number": 18, "state": "closed"})
+        for issue in (
+            {"number": 18, "state": "open"},
+            {"number": 18, "state": "open", "labels": []},
+            {"number": 19, "state": "closed"},
+            {"number": 18, "state": "closed", "pull_request": {}},
+            {},
+        ):
+            with self.subTest(issue=issue), self.assertRaises(R5.ReleaseBlocked):
+                R5.validate_master_acceptance_issue(issue)
+
     def test_open_release_blocker_fails(self):
         with self.assertRaises(R5.ReleaseBlocked):
             R5.validate_blockers([{"number": 18, "state": "open"}])
