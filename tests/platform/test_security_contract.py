@@ -1,6 +1,6 @@
 """Synthetic negative testing of release-facing security contract; no dependency changes."""
 import unittest
-from datetime import date
+from datetime import date, datetime, timezone
 from scripts.security_contract import InvalidEvidence, assess, exceptions_by_identity
 
 SOURCE = "a" * 40
@@ -132,6 +132,7 @@ class SecurityContractTests(unittest.TestCase):
 
     def test_synthetic_enforcement_success_requires_digest_and_baseline(self):
         s = sample()
+        s["scanner"]["VulnerabilityDB"]["UpdatedAt"] = datetime.now(timezone.utc).isoformat()
         s.update(mode="enforce", baseline_verified=True,
                  baseline={"component": "portal", "source_sha": "d" * 40, "findings": []},
                  image_digest=DIGEST, expected_image_digest=DIGEST)
