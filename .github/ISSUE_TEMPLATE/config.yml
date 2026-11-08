@@ -1,0 +1,6 @@
+# Direct suspected vulnerabilities to private disclosure when GitHub supports it.
+# The public Security tab explains how to request a private channel if unavailable.
+contact_links:
+  - name: "Security vulnerability (private reporting)"
+    url: "https://github.com/ItsFoxxin/Fox_Den_Media/security"
+    about: "Do not open a public issue for a suspected vulnerability. Use 'Report a vulnerability' if available; otherwise request a private channel without disclosing details."

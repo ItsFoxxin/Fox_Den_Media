@@ -15,6 +15,13 @@ Do not use additional closing keywords for other issues in the same patch. -->
 
 Issue: 
 
+## Security and review impact
+
+- [ ] Public diff, evidence, test data and CI logs contain no secrets or private security-report details
+- [ ] Authorization, file permissions, user data, dependency/image provenance and network boundaries have been assessed where relevant
+- [ ] Privileged or release-control changes are identified explicitly for maintainer approval
+- [ ] Security vulnerabilities are handled privately under [SECURITY.md](../SECURITY.md); do not disclose an embargoed finding in this PR
+
 ## Verification
 
 - [ ] Root VERSION, README, Compose image tag and dated CHANGELOG entry agree if releasing
