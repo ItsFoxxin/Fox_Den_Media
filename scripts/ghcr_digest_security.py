@@ -150,16 +150,33 @@ def prepare(lock: dict, rendered: dict, candidates: dict,
 
 
 def check_manifest(name: str, plan: dict, manifest: dict) -> None:
-    ensure(name in plan, "Unknown manifest subject")
-    ensure(type(manifest) is dict and manifest.get("schemaVersion") == 2 and
-           type(manifest.get("manifests")) is list, "Expected OCI index/manifest list")
-    digests = [item.get("digest") for item in manifest["manifests"]
-               if type(item) is dict and type(item.get("platform")) is dict and
-               item["platform"].get("os") == "linux" and
-               item["platform"].get("architecture") == "amd64" and
-               not item["platform"].get("variant")]
-    ensure(len(digests) == 1 and digests[0] == plan[name]["platform_digest"],
-           f"Missing, duplicated or changed amd64 platform digest: {name}")
+    """Validate an OCI index OR a platform-specific single-image manifest.
+
+    A registry digest reference identifies the manifest returned by imagetools;
+    the runner separately checks the pulled image's OS/architecture. A
+    single-manifest upstream has platform_digest == its top-level digest.
+    """
+    ensure(name in plan and type(plan[name]) is dict, "Unknown manifest subject")
+    ensure(type(manifest) is dict and manifest.get("schemaVersion") == 2,
+           "Malformed OCI/Docker manifest")
+    if type(manifest.get("manifests")) is list:
+        entries = manifest["manifests"]
+        digests = [item.get("digest") for item in entries
+                   if type(item) is dict and type(item.get("platform")) is dict and
+                   item["platform"].get("os") == "linux" and
+                   item["platform"].get("architecture") == "amd64" and
+                   not item["platform"].get("variant")]
+        ensure(len(digests) == 1 and digests[0] == plan[name]["platform_digest"],
+               f"Missing, duplicated or changed amd64 platform digest: {name}")
+    else:
+        ensure(manifest.get("mediaType") in {
+            "application/vnd.oci.image.manifest.v1+json",
+            "application/vnd.docker.distribution.manifest.v2+json",
+        } and type(manifest.get("config")) is dict and
+            type(manifest.get("layers")) is list and bool(manifest["layers"]),
+            "Unexpected single-image manifest structure")
+        ensure(plan[name]["digest"] == plan[name]["platform_digest"],
+               f"Single image digest and platform digest differ: {name}")
 
 
 def check_report(report: dict, expected_ref: str, image_id: str) -> None:
@@ -169,10 +186,15 @@ def check_report(report: dict, expected_ref: str, image_id: str) -> None:
            type(report.get("Metadata")) is dict and
            report["Metadata"].get("ImageID") == image_id,
            "Trivy report is not bound to inspected immutable image")
-    ensure(type(report.get("Results")) is list, "Missing Trivy scan results")
+    ensure(type(report.get("Results")) is list and bool(report["Results"]),
+           "Missing or empty Trivy scan results")
     for result in report["Results"]:
-        ensure(type(result) is dict, "Malformed Trivy result")
-        for vuln in result.get("Vulnerabilities") or []:
+        ensure(type(result) is dict and type(result.get("Target")) is str and
+               bool(result["Target"]), "Malformed Trivy scan target")
+        vulnerabilities = result.get("Vulnerabilities", [])
+        ensure(vulnerabilities is None or type(vulnerabilities) is list,
+               "Malformed Trivy vulnerability list")
+        for vuln in vulnerabilities or []:
             ensure(type(vuln) is dict and type(vuln.get("VulnerabilityID")) is str and
                    bool(vuln["VulnerabilityID"]) and
                    type(vuln.get("PkgName")) is str and bool(vuln["PkgName"]) and
