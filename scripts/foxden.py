@@ -383,6 +383,17 @@ def compose_command(mode: str, env_path: Path, *, browser: bool, action: str,
     return command
 
 
+def compose_environment(*, browser: bool) -> dict[str, str]:
+    """Bind Music's browser capability to the selected optional Compose profile.
+
+    An explicit process variable takes precedence over the operator env file.
+    Direct Docker Compose users can set REMOTE_BROWSER_URL themselves.
+    """
+    environment = os.environ.copy()
+    environment["REMOTE_BROWSER_URL"] = "/server-browser/" if browser else ""
+    return environment
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(prog="foxden", description="Fox Den Media deployment control")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -441,7 +452,10 @@ def main() -> int:
         if args.command in {"deploy", "stop"} and not args.execute:
             print("Dry run only. Repeat with --execute after reviewing the command and migration gate.")
             return 0
-        result = subprocess.run(command, cwd=ROOT, check=False)
+        result = subprocess.run(
+            command, cwd=ROOT, check=False,
+            env=compose_environment(browser=args.browser),
+        )
         if result.returncode != 0:
             return result.returncode
         if args.command == "deploy":
@@ -449,7 +463,10 @@ def main() -> int:
             # rename; always refresh only ingress on an explicitly executed
             # deployment, never the other application writers.
             ingress_refresh = command[:-2] + ["up", "-d", "--no-deps", "--force-recreate", "ingress"]
-            return subprocess.run(ingress_refresh, cwd=ROOT, check=False).returncode
+            return subprocess.run(
+                ingress_refresh, cwd=ROOT, check=False,
+                env=compose_environment(browser=args.browser),
+            ).returncode
         return result.returncode
     except (ConfigError, PermissionSetupError, ValueError, OSError) as exc:
         print(f"Configuration error: {exc}", file=sys.stderr)

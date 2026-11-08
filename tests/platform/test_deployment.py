@@ -319,3 +319,9 @@ def test_qbittorrent_s6_init_compatible_with_vpn_kill_switch() -> None:
     assert "ports" not in qbit
     assert "NET_ADMIN" in vpn["cap_add"]
     assert vpn["environment"]["FIREWALL"] == "on"
+
+
+def test_rb04_browser_url_tracks_explicit_controller_profile(monkeypatch) -> None:
+    monkeypatch.setenv("REMOTE_BROWSER_URL", "/server-browser/")
+    assert foxden.compose_environment(browser=False)["REMOTE_BROWSER_URL"] == ""
+    assert foxden.compose_environment(browser=True)["REMOTE_BROWSER_URL"] == "/server-browser/"
