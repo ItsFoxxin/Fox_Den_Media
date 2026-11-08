@@ -48,6 +48,13 @@ job-specific `packages: write` token. It has no deployment credentials.
    re-run with force, retag or silently rebuild.
 5. Immediately disable the authorization variables after the authorized run.
 
+**Build reproducibility prerequisite:** all three current Dockerfiles use the
+mutable parent `python:3.12.13-slim-bookworm`. R3 now runs
+`scripts/check_release_base_images.py` and will **reject** publication until
+all three have been independently verified and updated to the same approved
+`python:3.12.13-slim-bookworm@sha256:<64-hex-digest>` parent.
+Pinning the commit alone does not freeze mutable base-image contents.
+
 The publisher records image, source SHA, linux/amd64 manifest digest, GitHub
 run ID and BuildKit provenance/SBOM. It also creates a GitHub-signed image
 attestation for the *published digest*, preserving package linkage through
