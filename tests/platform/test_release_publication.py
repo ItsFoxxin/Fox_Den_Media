@@ -42,9 +42,11 @@ def make_bundle(folder: Path) -> tuple[dict, dict]:
         evidence[component] = {
             "candidate_tag": "sha-" + SHA,
             "security_decision": "pass",
-            "sbom": "sboms/" + component + ".spdx.json",
+            "ref": images[component]["ref"],
+            "platform_digest": images[component]["platform_digest"],
+            "sbom": "reports/" + component + ".sbom.spdx.json",
             "provenance": "provenance/" + component + ".json",
-            "vulnerability_report": "reports/" + component + "-trivy.json",
+            "vulnerability_report": "reports/" + component + ".vuln.json",
         }
     images["nginx"] = {
         "ref": "docker.io/library/nginx@sha256:" + "e" * 64,
@@ -54,8 +56,11 @@ def make_bundle(folder: Path) -> tuple[dict, dict]:
     }
     evidence["nginx"] = {
         "approved_upstream": True, "security_decision": "pass",
-        "sbom": "sboms/nginx.spdx.json",
-        "vulnerability_report": "reports/nginx-trivy.json",
+        "ref": images["nginx"]["ref"],
+        "platform_digest": images["nginx"]["platform_digest"],
+        "provenance": "provenance/nginx.json",
+        "sbom": "reports/nginx.sbom.spdx.json",
+        "vulnerability_report": "reports/nginx.vuln.json",
     }
     lock = {
         "schema_version": 1, "version": "1.0.0",
@@ -89,6 +94,10 @@ def make_bundle(folder: Path) -> tuple[dict, dict]:
             dest = folder / item[key]
             dest.parent.mkdir(exist_ok=True)
             dest.write_text(json.dumps({"fixture": key}), encoding="utf-8")
+    # Exact producer top-level security inputs (only R4 may declare them passed).
+    for name in ("security-contract.json", "scanner.json",
+                 "rendered-release-compose.json"):
+        (folder / name).write_text(json.dumps({"fixture": name}), encoding="utf-8")
     records = [p for p in folder.rglob("*") if p.is_file()]
     files = {str(p.relative_to(folder)): R5.hash_file(p) for p in records}
     verified = {
@@ -96,7 +105,7 @@ def make_bundle(folder: Path) -> tuple[dict, dict]:
         "r4_run_id": R4, "r3_run_id": R3,
         "decision": "pass", "rollback_verified": True,
         "security_policy_result": "pass", "no_rebuild_integration": "passed",
-        "security_policy_version": "fixture-policy-1",
+        "security_policy_version": "v1:" + "9" * 64,
         "high_critical_unaccepted": 0,
         "source_promotion_approval": {
             "decision": "approved", "approved_by": "ItsFoxxin",
@@ -109,7 +118,26 @@ def make_bundle(folder: Path) -> tuple[dict, dict]:
     }
     (folder / "verification.json").write_text(
         json.dumps(verified, indent=2) + "\n", encoding="utf-8")
+    refresh_manifest(folder, verified)
     return lock, verified
+
+
+def refresh_manifest(folder: Path, verified: dict) -> dict:
+    files = dict(verified["files"])
+    files["verification.json"] = R5.hash_file(folder / "verification.json")
+    manifest = {
+        "schema_version": R5.RELEASE_READY_SCHEMA,
+        "version": "1.0.0",
+        "repository": R5.REPOSITORY,
+        "workflow": R5.R4_WORKFLOW,
+        "source_sha": SHA,
+        "r3_run_id": R3,
+        "r4_run_id": R4,
+        "files": files,
+    }
+    (folder / "release-ready.json").write_text(
+        json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    return manifest
 
 
 class BundleTests(unittest.TestCase):
@@ -123,6 +151,7 @@ class BundleTests(unittest.TestCase):
         self.verified.update(updates)
         (self.root / "verification.json").write_text(
             json.dumps(self.verified), encoding="utf-8")
+        refresh_manifest(self.root, self.verified)
 
     def update_lock(self, **updates):
         self.lock.update(updates)
@@ -150,11 +179,11 @@ class BundleTests(unittest.TestCase):
         self.assert_blocked()
 
     def test_missing_release_artifact_fails(self):
-        (self.root / "sboms/portal.spdx.json").unlink()
+        (self.root / "reports/portal.sbom.spdx.json").unlink()
         self.assert_blocked()
 
     def test_modified_release_artifact_fails(self):
-        (self.root / "reports/media-trivy.json").write_text("tampered")
+        (self.root / "reports/media.vuln.json").write_text("tampered")
         self.assert_blocked()
 
     def test_unlisted_evidence_fails(self):
@@ -162,9 +191,9 @@ class BundleTests(unittest.TestCase):
         self.assert_blocked()
 
     def test_symlink_evidence_fails(self):
-        target = self.root / "reports/music-trivy.json"
+        target = self.root / "reports/music.vuln.json"
         target.unlink()
-        target.symlink_to(self.root / "reports/media-trivy.json")
+        target.symlink_to(self.root / "reports/media.vuln.json")
         self.assert_blocked()
 
     def test_missing_or_wrong_source_promotion_approval_fails(self):
@@ -279,7 +308,7 @@ class BundleTests(unittest.TestCase):
             R5.stage_assets(self.root, out)
             self.assertTrue((out / "assets.sha256").is_file())
             self.assertTrue((out / "release-lock.json").is_file())
-            self.assertTrue((out / "sboms--portal.spdx.json").is_file())
+            self.assertTrue((out / "reports--portal.sbom.spdx.json").is_file())
             with self.assertRaises(R5.ReleaseBlocked):
                 R5.stage_assets(self.root, out)
 
