@@ -22,7 +22,7 @@ from .database import PortalStore
 from .jellyfin import (JellyfinAdapter, JellyfinAuthenticationError, JellyfinError, JellyfinInputError,
                        JellyfinUnavailable)
 from .modules import ModuleClient, ModuleRegistry
-from .oidc import OIDCClient, OIDCError, OIDCUnavailable
+from .oidc import OIDCAccessDenied, OIDCClient, OIDCError, OIDCUnavailable
 from .watch import WatchSessionError, WatchSessionStore
 
 
@@ -274,7 +274,15 @@ def create_app(settings: Settings | None = None, module_client: ModuleClient | N
             return render(request, "error.html", {"message": "The identity provider did not complete login."}, 401)
         try:
             claims, flow = await app.state.oidc.finish(state, code)
-            subject, username, display_name, _groups, role = app.state.oidc.authorize_claims(claims)
+            try:
+                subject, username, display_name, _groups, role = app.state.oidc.authorize_claims(claims)
+            except OIDCAccessDenied:
+                # The validated subject may have older elevated Portal sessions.
+                # No local username/email lookup is ever used for revocation.
+                subject = claims.get("sub")
+                if isinstance(subject, str) and 0 < len(subject) <= 255:
+                    store.revoke_external_permissions(settings.oidc_issuer or "oidc", subject)
+                raise
             user = store.map_external_identity(settings.oidc_issuer or "oidc", subject, username,
                                                display_name, claims, role)
         except OIDCUnavailable as exc:
