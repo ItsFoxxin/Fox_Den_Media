@@ -35,6 +35,15 @@ def sample():
         "scanner": {"name": "trivy", "version": "0.76.2",
                     "db_updated_at": "2026-11-07T00:00:00Z"},
         "policy_version": "1", "images": images,
+        "upstream": {
+            "nginx": {
+                "ref": f"docker.io/library/nginx@{IMAGE_DIGEST}",
+                "platform_digest": PLATFORM_DIGEST, "scan_subject": IMAGE_DIGEST,
+                "sbom_subject": IMAGE_DIGEST, "sbom_sha256": "sha256:" + "d" * 64,
+                "vulnerability_report_sha256": "sha256:" + "e" * 64,
+                "decision": "pass", "exceptions": [], "provenance_status": "verified",
+            },
+        },
     }
     return contract, candidates
 
@@ -59,6 +68,8 @@ def test_exact_digest_contract():
     lambda c, d: d["portal"].update(workflow="untrusted.yml"),
     lambda c, d: d["media"].update(source_sha="f" * 40),
     lambda c, d: c["images"].pop("portal"),
+    lambda c, d: c["upstream"].pop("nginx"),
+    lambda c, d: c["upstream"]["nginx"].update(decision="unknown"),
 ])
 def test_mismatch_or_unverified_contract_fails(mod):
     contract, candidates = sample()
