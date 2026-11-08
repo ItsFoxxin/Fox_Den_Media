@@ -4,11 +4,11 @@
 
 ## Audited prerequisites
 
-At the latest R5 synchronization, `dev` remained 0.9.6 and `main` remained 0.9.1; the 1.0 blocker register #18 and other release-blocker issues remained open. No GitHub Release was present. PR #79's R1/R2 validators **are merged into `dev`**, but no separately authorized `main` 1.0.0 promotion has occurred. R3/R4 PR #81 and the digest-security producer PR #84 remain drafts: advisory Trivy PR #72 has since **merged into `dev`** (advisory image scans and CycloneDX SBOMs), and successor PR #74 has also **merged into `dev`** (PR-reporting and trusted advisory baselines). Dependency Review blocking issue #70, critical/high findings issue #76, and actual R3/R4 release-verification implementation remain outstanding. **Advisory scans are not the R3 digest-pinned publisher or R4 blocking release-verification gate.** Their work is **not duplicated** here.
+At the reviewed integration baseline, `dev` is `9d770faa5427551f76dac504c9e069887d52aba9` (`VERSION=0.9.6`) and `main` remains `0.9.1`; issue #18 and the runtime/security release blockers remain open. No v1.0.0 GitHub Release or authorized source promotion exists. PR #79's R1/R2 validators and advisory Trivy/policy PRs #72/#74/#77 are merged into `dev`. R3/R4 PR #81 and independent digest-security producer PR #84 remain **open drafts**. PR #81 now implements a signed R4-to-R5 artifact producer, but it has not emitted any authorized **live** artifact. High/critical disposition issue #76 remains a release gate; issue #70 (Dependency Review enforcement) is classified as post-1.0 follow-up in issue #18. Advisory scans are not R4 release approval.
 
 R5 is deliberately **fail closed** until approved R3 image publication and approved R4 security/evidence verification are available.
 
-**Cross-PR contract audit (2026-11-08):** PR #79 is merged into dev and its component-keyed R2 release lock is authoritative. The R5 reader now uses that schema and invokes its validator with the **required** sanitized rendered Compose. PR #81 at head `6e2af6b24b4a7e1f1186e485cde093eda06883bf` validates its R4 inputs but **does not produce** a release-ready artifact. R5 now requires a versioned `release-ready.json` root manifest, cryptographically attested by the exact R4 workflow on the approved main SHA, plus an exact byte-hash map that seals every file. No actual R4 artifact or signature is yet available. This is an implementation interface, not release authorization.
+**Cross-PR contract audit (2026-11-08):** Against PR #81 head `2ab274dc60c68eea292171da4c96f0ceaae1e45d`, its `scripts/r4_release_ready.py` constructs the `foxden-r4-release-ready-v1.0.0` artifact and the `foxden.r4.release-ready.v1` root `release-ready.json` with source SHA, R3/R4 run IDs, and raw SHA-256 hashes covering every other file. `.github/workflows/ghcr-verify.yml` signs the exact root bytes with `actions/attest` **after** the R4 checks, then uploads the artifact. R5 consumes the merged PR #79 component-keyed R2 lock, revalidates sanitized rendered Compose, and checks signed root signer/source/subject/file hashes. PR #81 also implements an independently attested SPDX v2.3 predicate for each R3 first-party OCI digest. This is **source-level/synthetic fixture compatibility only**, not real signed R4/R5 interoperability or release authorization.
 
 ## Included
 
@@ -51,7 +51,33 @@ A trusted R4 run must belong to `ItsFoxxin/Fox_Den_Media`, path `.github/workflo
 
 R5 validates the complete evidence set and its subject hashes, verifies each first-party GHCR manifest and SHA-tag resolve to the same immutable digest, and verifies trusted provenance/SPDX attestations using `gh` **2.102.0 or newer** with exact `ghcr-candidates.yml` signing identity. R4 owns genuine security verification, signed policy disposition, actual source-to-digest linkage and full enabled-profile coverage; R5 must not reinvent Trivy or claim a green advisory scan is sufficient.
 
-**Current hard blockers:** PR #79 R2 tooling is not yet merged into approved `main`, and PR #81 R4 currently **does not create** this release-ready artifact. Its R3 implementation creates BuildKit SBOM and default GitHub image provenance; the independently signed SPDX attestation or equivalent verified trust mechanism still needs an explicitly approved contract. No valid R4 evidence or source-promotion/release approval is available, and R5 therefore remains fail-closed.
+**Current hard blockers:** R2 tooling is not yet in an independently approved `main` 1.0.0 source; PR #81's R4 producer and R3's separate SPDX attestation path exist **only in an unmerged draft**, and the upstream signer allowlist in draft PR #84 remains unverified. No real approved R3 digest set or signed R4 output exists. Source-promotion, publication, protected-environment setup, issue #76 security disposition and issue #18 operational acceptance remain outstanding. R5 remains fail-closed.
+
+## Owner/operator pre-dispatch contract (preparation only; no execution)
+
+**Environment requirements:** The owner must independently verify that the GitHub environment `release-publication` actually enforces human required reviewers and only permits protected `main` deployments. Its **environment-only** secret `RELEASE_PUBLICATION_ARMED` must equal `enabled`. Do not set a repository/organization-level secret under that name. A YAML `environment:` declaration or mutable confirmation variable is *not* evidence that GitHub reviewer enforcement is configured; if the GitHub plan/settings cannot enforce it, leave publication disabled. This PR configures none of these protections.
+
+**Manual `workflow_dispatch` on `refs/heads/main` — required inputs:**
+
+| Input | Evidence-only preflight | Separately approved publication |
+| --- | --- | --- |
+| `source_sha` | Exact immutable 40-lowercase-hex `main` SHA, root VERSION=1.0.0 | Same SHA, still current main HEAD |
+| `r4_run_id` | Positive successful `ghcr-verify.yml` run ID for that SHA | Same authenticated run/artifact |
+| `approval_issue` | Dedicated release-approval GitHub Issue number | Same **open** non-PR Issue with owner approval |
+| `publish` | `false` | `true` |
+| `confirmation` | Empty | `PUBLISH v1.0.0` exactly |
+
+GitHub Actions supplies `GH_TOKEN` from `github.token`, plus `GITHUB_REPOSITORY`, `GITHUB_REF`, `GITHUB_SHA` and `GITHUB_RUN_ID`; operators need no personal access token or repository secret. Preflight permissions are `contents/actions/checks/issues/packages/attestations: read`; only the independently environment-gated publication job has `contents: write`, never `packages: write` or NAS credentials.
+
+**Exact independent approval messages (authenticated owner comments, not dispatch inputs):**
+
+- Source-promotion approval on the R4 source authorization Issue: `FOX_DEN_SOURCE_PROMOTION_CONFIRMED <source_sha>`
+- Rollback verification on that same source Issue: `FOX_DEN_ROLLBACK_VERIFIED <source_sha> <previous_lock_sha256> <rollback_report_sha256>`
+- **Separate R5 publication approval** on the dedicated open release-approval Issue **after** successful R4: `APPROVE_FOXDEN_RELEASE v1.0.0 main=<source_sha> lock_sha256=<raw_release_lock_sha256> r4_run_id=<r4_run_id>`
+
+The R5 script authenticates owner login `ItsFoxxin`, exact comment text, and a creation timestamp at least as recent as the successful R4 run's last update. Environment reviewer approval is an **additional** independent gate. These records are not NAS/R6 production authorization.
+
+**Pre-publication read-only checks:** Current `main` SHA and `1.0.0` metadata; Monorepo strict gate, CodeQL (python), CodeQL (javascript-typescript) and CodeQL required contexts on that SHA; merged PR #63 ordering; Issue #18 **closed** and no open `release-blocker`; exact successful R4 run; signed `foxden-r4-release-ready-v1.0.0` root bytes and complete SHA-256 manifest; authoritative R2 lock, rendered Compose, shared Music web/worker digest, each enabled upstream signer and report, accepted security/rollback/no-rebuild and real first-party GHCR manifest/provenance/SPDX. Independently verify `release-publication` reviewers, artifact retention, supported `gh >= 2.102.0`, and **absence** of any existing `v1.0.0` tag or Release. No authorized live R4/R5 handshake exists yet.
 
 ## Manual runbook — when all dependencies are complete
 
@@ -75,8 +101,8 @@ Publication has no production environment, production secrets, NAS runner, SSH/D
 ## Remaining R2–R4 prerequisites (not yet satisfied)
 
 - PR #79 is **merged into dev**; independently approve and promote the exact R2 validator and release code into the intended `main` release source. R5's workflows now pass its mandatory `--rendered` input.
-- The PR #81 worker must add a **post-verification-only** R4 producer for the actual `foxden-r4-release-ready-v1.0.0` artifact, plus SLSA attestation of `release-ready.json` from the exact `ghcr-verify.yml` signer. The R4 job must receive narrowly scoped `id-token: write` and `attestations: write` to attest, with **no** package/tag/production writer permissions. It must copy the real signed PR #84 inputs, verified provenance and integration evidence, and produce verified source promotion/native security/rollback claims or stop without uploading. R5 consumes but cannot author or fabricate these claims. R5 cannot manufacture the missing R4 verification outputs.
-- Agree on and test the cryptographically verifiable SPDX attestation trust chain; do not equate a BuildKit SBOM attachment with an independently verified GitHub SPDX attestation without proving that verification.
+- PR #81 now contains the **post-verification-only** `foxden-r4-release-ready-v1.0.0` producer with SLSA attestation of `release-ready.json` by exact `ghcr-verify.yml` signer. Its scoped `id-token: write` and `attestations: write` permissions do not grant GHCR/package/tag/NAS publication rights. Before real use, require separate PR #84 evidence, independently signed security inputs, reviewed upstream signer evidence, source/rollback/native-alert acceptance, verified no-rebuild reports, and a successful source-bound R4 run. R5 cannot manufacture missing R4 outputs.
+- PR #81 now adds an independently signed SPDX v2.3 predicate in its R3 workflow, in addition to BuildKit SBOM. Verify this chain with actual image digests and the exact R3 signer during an independently authorized R3/R4 run; offline fixtures and green PR CI do not establish live interoperability.
 - Obtain documented source-promotion and publication decisions, clear master issue #18 and all open release-blocker issues, and configure a reviewed, supported protected GitHub publication environment. All remain independent of R5 implementation CI.
 
 A fully green infrastructure PR is **not** authorization to release `v1.0.0`, publish packages, or access NAS production.
