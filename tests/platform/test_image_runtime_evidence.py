@@ -140,6 +140,14 @@ class EvidenceTests(unittest.TestCase):
             path.write_text(original)
             self.assertTrue(evidence.verify(args))
 
+    def test_missing_ffmpeg_is_a_clean_absence_even_with_dash(self):
+        # A no-FFmpeg Portal image must not depend on shell-specific 1/127 codes.
+        with patch.object(evidence, "run", return_value=type("P", (), {"stdout": "absent"})()):
+            self.assertEqual(evidence.ffmpeg_inventory(IDS["portal"])["state"], "not_found_on_PATH")
+        with patch.object(evidence, "run", return_value=type("P", (), {"stdout": "garbage"})()):
+            with self.assertRaisesRegex(ValueError, "malformed FFmpeg presence"):
+                evidence.ffmpeg_inventory(IDS["portal"])
+
     def test_parser_synthetic_registration_samples(self):
         self.assertEqual(evidence.parse_ffmpeg(" V..... mpeg4 MPEG-4\n", "encoders"), ["mpeg4"])
         self.assertEqual(evidence.parse_ffmpeg("Input:\n  file\nOutput:\n  pipe\n", "protocols"),

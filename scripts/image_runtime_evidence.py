@@ -132,11 +132,15 @@ def parse_ffmpeg(text, kind):
 
 
 def ffmpeg_inventory(image):
-    exists = run(container_cmd(image, "/bin/sh", "-c", "command -v ffmpeg >/dev/null 2>&1"), ok=False)
-    if exists.returncode == 1:
+    # Dash uses exit 127 (not 1) for a missing command. Always report a
+    # literal token so absence is not confused with a Docker/exec failure.
+    probe = ("if command -v ffmpeg >/dev/null 2>&1; "
+             "then printf present; else printf absent; fi")
+    state = run(container_cmd(image, "/bin/sh", "-c", probe)).stdout.strip()
+    if state == "absent":
         return {"state": "not_found_on_PATH", "registrations": None, "fixture": "not_run"}
-    if exists.returncode != 0:
-        raise ValueError("FFmpeg presence probe could not start safely")
+    if state != "present":
+        raise ValueError("malformed FFmpeg presence probe output")
     registrations = {}
     for kind, flag in FFMPEG_FLAGS.items():
         out = run(container_cmd(image, "ffmpeg", "-hide_banner", flag), timeout=25)
