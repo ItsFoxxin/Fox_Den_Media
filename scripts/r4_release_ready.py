@@ -220,7 +220,7 @@ def assemble_bundle(*, source: str, r3_id: int, r4_id: int,
             "R2 release version / R3 identity mismatch")
     validate_contract(security, candidates, source, r3_id,
                       lock=lock, evidence_dir=security_dir / "reports")
-    validate_scanner_policy(security, scanner, ledger)
+    validate_scanner_policy(security, scanner, ledger, now=now)
     require(security.get("policy_version") == "v1:" + hashlib.sha256(
         json.dumps(ledger, sort_keys=True, separators=(",", ":")).encode()).hexdigest(),
         "Wrong independently reviewed security policy")
