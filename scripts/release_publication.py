@@ -165,29 +165,44 @@ def validate_notes(notes: str, source_sha: str, lock_sha: str, images: list) -> 
 
 
 def validate_bundle(root: Path, source_sha: str, r4_id: int) -> dict:
+    """Validate the authoritative R2 lock plus separate R4 security evidence.
+
+    The R2 lock has a strict component-keyed images object. Security reports
+    must live in R4 verification.json, never as extra fields in the R2 lock.
+    """
     require(valid_sha(source_sha), "Invalid release source SHA")
-    require(root.is_dir(), "R4 evidence bundle is missing")
+    require(root.is_dir(), "R4 release-ready evidence bundle is missing")
     verification = read_json(safe_file(root, "verification.json"))
     lock_path = safe_file(root, "release-lock.json")
     lock = read_json(lock_path)
-    require(verification.get("schema_version") == 1 and lock.get("schema_version") == 1,
-            "Unrecognized verification or release-lock schema")
-    require(verification.get("version") == VERSION and lock.get("version") == VERSION,
+    require(set(lock) == {
+        "schema_version", "version", "source_sha", "compose_sha256",
+        "platform", "profiles", "images", "services", "rollback", "publisher",
+    }, "R4 release lock is not the authoritative R2 schema")
+    require(verification.get("schema_version") == 1 and lock["schema_version"] == 1,
+            "Unrecognized verification or R2 release-lock schema")
+    require(verification.get("version") == VERSION and lock["version"] == VERSION,
             "Release evidence version mismatch")
-    require(verification.get("source_sha") == source_sha and lock.get("source_sha") == source_sha,
+    require(verification.get("source_sha") == source_sha and lock["source_sha"] == source_sha,
             "Release evidence does not match the approved main source")
-    require(verification.get("r4_run_id") == r4_id and lock.get("r4_run_id") == r4_id,
-            "R4 identity mismatch in evidence or release lock")
-    require(isinstance(lock.get("r3_run_id"), int) and lock["r3_run_id"] > 0
-            and verification.get("r3_run_id") == lock["r3_run_id"],
-            "Missing or mismatched R3 candidate build run identity")
+    require(verification.get("r4_run_id") == r4_id,
+            "R4 verification run identity mismatch")
+    publisher = lock["publisher"]
+    require(isinstance(publisher, dict)
+            and set(publisher) == {"workflow", "run_id", "source_sha"}
+            and publisher["workflow"] == "ghcr-candidates.yml"
+            and isinstance(publisher["run_id"], int)
+            and publisher["run_id"] > 0
+            and publisher["source_sha"] == source_sha
+            and verification.get("r3_run_id") == publisher["run_id"],
+            "R3 candidate publisher identity mismatch")
     require(verification.get("decision") == "pass"
             and verification.get("security_policy_result") == "pass"
             and verification.get("no_rebuild_integration") == "passed",
-            "R4 security policy or no-rebuild integration is not approved")
+            "R4 security or no-rebuild integration is not approved")
     require(isinstance(verification.get("security_policy_version"), str)
             and verification["security_policy_version"].strip(),
-            "Missing shared vulnerability-policy version")
+            "Missing approved shared security policy version")
     require(verification.get("high_critical_unaccepted") == 0,
             "Unaccepted high/critical vulnerability findings")
     source_approval = verification.get("source_promotion_approval")
@@ -198,91 +213,134 @@ def validate_bundle(root: Path, source_sha: str, r4_id: int) -> dict:
             and isinstance(source_approval.get("record_url"), str)
             and source_approval["record_url"].startswith(
                 "https://github.com/ItsFoxxin/Fox_Den_Media/"),
-            "Independent source-promotion approval record missing or mismatched")
-
+            "Independent source-promotion approval record missing/mismatched")
     require(verification.get("github_security_review") == "pass"
             and verification.get("unapproved_security_findings") == 0,
-            "Unreviewed native CodeQL, Dependabot or secret-scanning findings")
+            "Unreviewed native CodeQL, Dependabot or secret-scanning alerts")
+
     require(isinstance(lock.get("compose_sha256"), str)
             and re.fullmatch(r"[0-9a-f]{64}", lock["compose_sha256"]) is not None,
-            "Invalid Compose SHA-256")
+            "Invalid Compose source checksum")
+    require(lock.get("platform") == "linux/amd64", "Unsupported release platform")
+    require(isinstance(lock.get("profiles"), list), "Missing R2 profiles")
     rollback = lock.get("rollback")
-    require(isinstance(rollback, dict) and rollback.get("verified") is True
-            and valid_digest("sha256:" + str(rollback.get("lock_sha256", ""))),
-            "Missing verified rollback artifact identity")
+    require(isinstance(rollback, dict)
+            and set(rollback) == {"version", "lock_sha256"}
+            and isinstance(rollback["version"], str)
+            and bool(re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", rollback["version"]))
+            and isinstance(rollback["lock_sha256"], str)
+            and re.fullmatch(r"[0-9a-f]{64}", rollback["lock_sha256"]) is not None
+            and verification.get("rollback_verified") is True,
+            "Verified compatible rollback artifact identity absent")
     exceptions = verification.get("exceptions", [])
-    require(isinstance(exceptions, list), "Invalid exception records")
+    require(isinstance(exceptions, list), "Invalid security exceptions")
     now = dt.datetime.now(dt.timezone.utc)
     for item in exceptions:
         require(isinstance(item, dict) and item.get("approved_by") and item.get("issue"),
-                "Security exception lacks independent approval or tracked issue")
+                "Security exception lacks owner approval or issue")
         try:
             expires = dt.datetime.fromisoformat(str(item["expires_at"]).replace("Z", "+00:00"))
             require(expires.tzinfo is not None and expires > now, "Expired security exception")
-        except (TypeError, KeyError, ValueError) as error:
-            raise ReleaseBlocked("Invalid or expired security exception") from error
+        except (ValueError, TypeError, KeyError) as err:
+            raise ReleaseBlocked("Invalid or expired security exception") from err
 
-    image_list = lock.get("images")
-    require(isinstance(image_list, list) and image_list, "Release lock has no images")
-    seen, components = set(), {}
-    for image in image_list:
-        require(isinstance(image, dict), "Invalid image lock entry")
-        component = image.get("component")
-        name, digest = image.get("name"), image.get("digest")
-        require(isinstance(name, str) and name and valid_digest(digest), "Missing immutable image")
-        require((name, digest) not in seen, "Duplicate image in release lock")
-        seen.add((name, digest))
-        require(image.get("platform") == "linux/amd64", "Unapproved image architecture")
-        require(image.get("security_decision") == "pass", "Image security decision not approved")
-        if image.get("kind") == "first-party":
-            require(component in FIRST_PARTY and name == FIRST_PARTY[component],
-                    "Unexpected first-party image")
-            require(component not in components, "Duplicate first-party component")
-            require(image.get("source_sha") == source_sha
-                    and image.get("candidate_tag") == "sha-" + source_sha,
-                    "First-party image has wrong SHA identity")
-            require(all(isinstance(image.get(key), str) and image[key]
-                        for key in ("sbom", "provenance", "vulnerability_report")),
-                    "First-party SBOM/provenance/Trivy reports missing")
-            components[component] = image
-        elif image.get("kind") == "upstream":
-            require(image.get("approved_upstream") is True,
-                    "Upstream image was not independently reviewed")
+    source_images = lock.get("images")
+    service_map = lock.get("services")
+    evidence_map = verification.get("image_evidence")
+    require(isinstance(source_images, dict) and source_images,
+            "R2 images must be a component-keyed object")
+    require(isinstance(service_map, dict) and service_map
+            and service_map.get("music") == "music"
+            and service_map.get("music-worker") == "music",
+            "Music web and worker must map to one image")
+    require(isinstance(evidence_map, dict)
+            and set(evidence_map) == set(source_images),
+            "Missing security evidence for one or more enabled images")
+    normalized = []
+    required_components = set(FIRST_PARTY)
+    for component, details in source_images.items():
+        require(isinstance(details, dict) and set(details) == {
+            "ref", "platform", "platform_digest", "source_sha",
+        }, "Unknown image fields in R2 lock")
+        ref = details["ref"]
+        require(isinstance(ref, str)
+                and re.fullmatch(r"[a-z0-9./_-]+@sha256:[0-9a-f]{64}", ref) is not None,
+                "R2 image is missing immutable digest")
+        name, digest_hex = ref.rsplit("@sha256:", 1)
+        digest = "sha256:" + digest_hex
+        require(details["platform"] == "linux/amd64"
+                and isinstance(details["platform_digest"], str)
+                and re.fullmatch(r"[0-9a-f]{64}", details["platform_digest"]) is not None,
+                "Invalid image architecture/platform digest")
+        evidence = evidence_map[component]
+        require(isinstance(evidence, dict)
+                and evidence.get("security_decision") == "pass",
+                "Image security policy not approved")
+        require(isinstance(evidence.get("sbom"), str)
+                and isinstance(evidence.get("vulnerability_report"), str),
+                "Missing digest-bound scan/SBOM evidence paths")
+        image = {
+            "component": component, "name": name, "digest": digest,
+            "kind": "first-party" if component in FIRST_PARTY else "upstream",
+            "platform": details["platform"],
+            "sbom": evidence["sbom"],
+            "vulnerability_report": evidence["vulnerability_report"],
+        }
+        if component in FIRST_PARTY:
+            require(name == FIRST_PARTY[component]
+                    and details["source_sha"] == source_sha
+                    and evidence.get("candidate_tag") == "sha-" + source_sha
+                    and isinstance(evidence.get("provenance"), str)
+                    and evidence["provenance"],
+                    "First-party source, candidate tag or attestation missing")
+            image["candidate_tag"] = evidence["candidate_tag"]
+            image["provenance"] = evidence["provenance"]
+            required_components.discard(component)
         else:
-            raise ReleaseBlocked("Unknown image kind")
-    require(set(components) == set(FIRST_PARTY), "Missing a first-party container")
-    require(lock.get("music_worker_digest") == components["music"]["digest"],
-            "Music worker and web must share exactly one image digest")
-    require(isinstance(lock.get("profiles"), list) and lock["profiles"],
-            "Selected Compose profiles missing from lock")
+            require(details["source_sha"] is None
+                    and evidence.get("approved_upstream") is True,
+                    "Unapproved upstream image or impersonated source identity")
+        normalized.append(image)
+    require(not required_components, "Missing required first-party image")
+    require(set(service_map.values()) == set(source_images),
+            "Service mapping and enabled release images differ")
 
     files = verification.get("files")
-    require(isinstance(files, dict) and files, "R4 checksum manifest absent")
-    needed = {"release-lock.json", "release-notes.md"}
-    for image in components.values():
-        needed.update(image[key] for key in ("sbom", "provenance", "vulnerability_report"))
-    require(needed.issubset(files), "Release evidence is missing required files")
-    require("verification.json" not in files, "Self-referential evidence checksum")
+    require(isinstance(files, dict) and files, "R4 checksum manifest missing")
+    required_files = {"release-lock.json", "release-notes.md"}
+    for image in normalized:
+        required_files.add(image["sbom"])
+        required_files.add(image["vulnerability_report"])
+        if image["kind"] == "first-party":
+            required_files.add(image["provenance"])
+    require(required_files.issubset(files), "Required release evidence missing")
+    require("verification.json" not in files, "Self-referential checksum")
     for item in root.rglob("*"):
-        require(not item.is_symlink(), "Evidence bundle contains a symlink")
-    for path, checksum in files.items():
-        require(path in ("release-lock.json", "release-notes.md")
-                or (isinstance(path, str) and re.fullmatch(
-                    r"(?:sboms|provenance|reports|integration)/[A-Za-z0-9_.-]+\.json",
-                    path) is not None),
-                "Unexpected or potentially sensitive release evidence path")
+        require(not item.is_symlink(), "Symlink in release evidence")
+    for rel, checksum in files.items():
+        require(isinstance(rel, str)
+                and (rel in ("release-lock.json", "release-notes.md")
+                     or re.fullmatch(
+                         r"(?:sboms|provenance|reports|integration)/[A-Za-z0-9_.-]+\.json",
+                         rel) is not None),
+                "Unapproved or private release evidence path")
         require(isinstance(checksum, str)
                 and re.fullmatch(r"[0-9a-f]{64}", checksum) is not None,
-                "Invalid evidence checksum: " + str(path))
-        require(hash_file(safe_file(root, path)) == checksum,
-                "Evidence checksum mismatch: " + str(path))
-    actual_files = {str(x.relative_to(root)) for x in root.rglob("*") if x.is_file()}
+                "Malformed evidence checksum")
+        require(hash_file(safe_file(root, rel)) == checksum,
+                "Evidence hash mismatch: " + rel)
+    actual_files = {str(p.relative_to(root)) for p in root.rglob("*") if p.is_file()}
     require(actual_files == set(files) | {"verification.json"},
-            "Unexpected or missing evidence bundle files")
+            "Unexpected or missing evidence files")
     lock_sha = hash_file(lock_path)
     validate_notes(safe_file(root, "release-notes.md").read_text(encoding="utf-8"),
-                   source_sha, lock_sha, image_list)
-    return {"lock_sha256": lock_sha, "lock": lock, "verification": verification}
+                   source_sha, lock_sha, normalized)
+    return {
+        "lock_sha256": lock_sha,
+        "lock": lock,
+        "verification": verification,
+        "images": normalized,
+    }
 
 
 def validate_approval(comments: list, owner: str, main_sha: str,
@@ -507,7 +565,7 @@ def main() -> int:
         elif args.command in ("bundle", "registry", "assets"):
             summary = validate_bundle(args.evidence_dir, args.source_sha, args.r4_run_id)
             if args.command == "registry":
-                verify_registry(summary["lock"], args.source_sha)
+                verify_registry({"images": summary["images"]}, args.source_sha)
             elif args.command == "assets":
                 stage_assets(args.evidence_dir, args.assets_dir)
         print("R5 " + args.command + " checks passed")
