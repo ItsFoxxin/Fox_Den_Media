@@ -141,7 +141,8 @@ def load_scans(api, run, source_sha):
 
 def trusted_scanner(api, run, dev_sha):
     """Do not privilege PR results when its scanner workflow or installer was edited."""
-    for file_path in (".github/workflows/trivy.yml", "scripts/install_trivy.sh"):
+    for file_path in (".github/workflows/trivy.yml", "scripts/install_trivy.sh",
+                      "scripts/trivy_report.py"):
         path = "/contents/" + urllib.parse.quote(file_path, safe="/") + "?ref="
         approved = api.call(path + dev_sha)
         submitted = api.call(path + run["head_sha"])
