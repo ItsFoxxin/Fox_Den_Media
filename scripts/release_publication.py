@@ -168,8 +168,7 @@ def validate_bundle(root: Path, source_sha: str, r4_id: int) -> dict:
             "Missing shared vulnerability-policy version")
     require(verification.get("high_critical_unaccepted") == 0,
             "Unaccepted high/critical vulnerability findings")
-    require(valid_sha(lock.get("compose_sha256")) is False
-            and isinstance(lock.get("compose_sha256"), str)
+    require(isinstance(lock.get("compose_sha256"), str)
             and re.fullmatch(r"[0-9a-f]{64}", lock["compose_sha256"]) is not None,
             "Invalid Compose SHA-256")
     rollback = lock.get("rollback")
@@ -379,9 +378,61 @@ def stage_assets(root: Path, target: Path) -> None:
         encoding="utf-8")
 
 
+
+def verify_published_records(tag_ref: dict, annotated_tag: dict, release: dict,
+                             source_sha: str, expected_assets: dict[str, str]) -> None:
+    """Pure idempotent release verification; never creates/changes remote refs."""
+    require(tag_ref.get("ref") == "refs/tags/" + TAG
+            and tag_ref.get("object", {}).get("type") == "tag",
+            "Expected an existing annotated release tag")
+    require(annotated_tag.get("tag") == TAG
+            and annotated_tag.get("object", {}).get("type") == "commit"
+            and annotated_tag["object"].get("sha") == source_sha,
+            "Annotated tag does not point at approved main commit")
+    require(release.get("tag_name") == TAG
+            and release.get("draft") is False and release.get("prerelease") is False,
+            "GitHub Release identity or publication state differs")
+    require(source_sha in str(release.get("body", "")),
+            "Release notes omit exact approved main SHA")
+    assets = release.get("assets")
+    require(isinstance(assets, list), "Release assets are unavailable")
+    actual = {}
+    for item in assets:
+        require(isinstance(item, dict) and isinstance(item.get("name"), str),
+                "Malformed release asset metadata")
+        name = item["name"]
+        require(name not in actual, "Duplicate release asset name")
+        actual[name] = item.get("digest")
+    require(set(actual) == set(expected_assets),
+            "Release asset list differs from approved R4 evidence")
+    for name, expected in expected_assets.items():
+        require(actual[name] == "sha256:" + expected,
+                "Published release asset digest drift: " + name)
+
+
+def check_published(source_sha: str, root: Path, r4_id: int) -> None:
+    """Verify an already-published release safely and repeatedly."""
+    summary = validate_bundle(root, source_sha, r4_id)
+    tag_ref = api("repos/" + REPOSITORY + "/git/ref/tags/" + TAG)
+    require(tag_ref["object"].get("type") == "tag", "Release tag is not annotated")
+    tag = api("repos/" + REPOSITORY + "/git/tags/" + tag_ref["object"]["sha"])
+    release = api("repos/" + REPOSITORY + "/releases/tags/" + TAG)
+    expected = {}
+    for item in sorted(root.rglob("*")):
+        if item.is_file():
+            name = str(item.relative_to(root)).replace("/", "--")
+            require(name not in expected, "Release asset filename collision")
+            expected[name] = hash_file(item)
+    checksums = "".join(value + "  " + name + "\n"
+                        for name, value in sorted(expected.items()))
+    expected["assets.sha256"] = hashlib.sha256(checksums.encode("utf-8")).hexdigest()
+    verify_published_records(tag_ref, tag, release, source_sha, expected)
+    require(summary["lock_sha256"] == hash_file(root / "release-lock.json"),
+            "Release lock changed since validation")
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("live", "bundle", "registry", "assets", "approval"))
+    parser.add_argument("command", choices=("live", "bundle", "registry", "assets", "approval", "published"))
     parser.add_argument("--source-sha", required=True)
     parser.add_argument("--r4-run-id", required=True, type=int)
     parser.add_argument("--evidence-dir", type=Path, default=Path("release-evidence"))
@@ -391,7 +442,9 @@ def main() -> int:
     try:
         require(valid_sha(args.source_sha) and args.r4_run_id > 0,
                 "Invalid source commit or R4 run ID")
-        if args.command in ("live", "approval"):
+        if args.command == "published":
+            check_published(args.source_sha, args.evidence_dir, args.r4_run_id)
+        elif args.command in ("live", "approval"):
             summary = None
             if args.command == "approval":
                 summary = validate_bundle(args.evidence_dir, args.source_sha, args.r4_run_id)
