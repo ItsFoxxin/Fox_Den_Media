@@ -6,6 +6,8 @@ body:
     attributes:
       value: |
         **One issue per bug/root cause.** Do not include credentials, private paths, tokens, or unredacted logs. A dedicated fix PR must link this issue and increment PATCH by one.
+
+        **Potential security vulnerability? STOP.** Do not use this public form for exploitable behavior, privilege bypass, secret exposure or a proof of concept. Read [SECURITY.md](https://github.com/ItsFoxxin/Fox_Den_Media/blob/main/SECURITY.md), open the [Security tab](https://github.com/ItsFoxxin/Fox_Den_Media/security), and choose **Report a vulnerability** if available. Otherwise request a private reporting channel without revealing technical details.
   - type: textarea
     id: defect
     attributes:
@@ -50,8 +52,8 @@ body:
       options:
         - "Low - cosmetic or minor behavior"
         - "Medium - workflow broken or unreliable"
-        - "High - security, data integrity or major outage"
-        - "Critical - active exploit or risk to production state"
+        - "High - data integrity or major outage (not security disclosure)"
+        - "Critical - major production risk (do not report exploits publicly)"
     validations:
       required: true
   - type: textarea
