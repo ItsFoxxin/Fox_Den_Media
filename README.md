@@ -2,7 +2,7 @@
 
 **Fox Den Media** is a modular, self-hosted platform that brings a Portal, Music management, Movies/TV requests and imports, and optional Jellyfin and download services behind one Nginx ingress. Each application retains its own processes and state. The repository preserves the original Music lineage and imported unique Media history.
 
-Current source milestone: **0.9.3**. This is a security-hardened **copied-state rehearsal candidate**, **not a production-validated release**. Passing CI alone does not authorize a NAS migration, torrent cutover, or a 1.0.0 release. See [production readiness](docs/production-readiness.md).
+Current source milestone: **0.9.4**. This is a security-hardened **copied-state rehearsal candidate**, **not a production-validated release**. Passing CI alone does not authorize a NAS migration, torrent cutover, or a 1.0.0 release. See [production readiness](docs/production-readiness.md).
 
 ![Fox Den Midnight Portal with optional Jellyfin entry](docs/foxden-midnight-portal-desktop.png)
 
@@ -89,7 +89,7 @@ Portal supports local, OIDC and hybrid authentication. It signs short-lived inte
 
 - `main` is protected, default and stable; `dev` is protected integration. Use reviewable feature/docs/security PRs into `dev`; promote reviewed `dev` to `main` separately.
 - CI covers tests, Compose modes, container smoke, real audio, migration fixtures, dependency auditing, Bandit, secret scanning and CodeQL. Its aggregate check is **Monorepo strict gate**.\n- [Versioning and bug tracking](docs/versioning-and-bug-tracking.md) uses one-step major/minor/patch releases; each future patch must fix one tracked GitHub bug issue, with a dedicated release increment, regression test and PR.
-- `VERSION` and `CHANGELOG.md` record the `0.9.2` milestone, **not** production acceptance or proof of a published GitHub release. CI never deploys the NAS.
+- `VERSION` and `CHANGELOG.md` record the current development milestone, **not** production acceptance or proof of a published GitHub release. CI never deploys the NAS.
 
 See [CI/development](docs/ci.md), [validation evidence](docs/validation.md), and the [1.0.0 checklist](docs/release-1.0-checklist.md).
 
