@@ -142,7 +142,7 @@ jobs:
           for name in $(jq -r 'keys[]' security/scan-plan.json); do
             ref="$(jq -er --arg name "$name" '.[$name].ref' security/scan-plan.json)"
             repo="$(jq -er --arg name "$name" '.[$name].source_repo' security/scan-plan.json)"
-            commit="$(jq -er --arg name "$name" '.[$name].source_sha // .[$name].source_sha' security/scan-plan.json)"
+            commit="$(jq -er --arg name "$name" '.[$name].source_sha' security/scan-plan.json)"
             # For upstream, the source SHA is carried by the reviewed signer ledger,
             # not by the release-lock source_sha (which must remain null).
             source_ref="$(jq -er --arg name "$name" '.[$name].source_ref' security/scan-plan.json)"
@@ -191,6 +191,7 @@ jobs:
             security/security-contract.json
             security/release-lock.json
             security/rendered-release-compose.json
+            security/scanner.json
             security/reports/
           if-no-files-found: error
           retention-days: 30
