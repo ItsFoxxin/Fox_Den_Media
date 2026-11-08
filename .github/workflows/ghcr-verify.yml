@@ -99,7 +99,7 @@ jobs:
           test -d security/reports
           gh attestation verify security/security-contract.json \
             --repo "$GITHUB_REPOSITORY" \
-            --signer-workflow ".github/workflows/trivy-digest-security.yml"
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/trivy-digest-security.yml"
       - name: Verify image provenance, registry identity and release policy
         shell: bash
         env:
@@ -130,12 +130,25 @@ jobs:
               ), "Platform digest differs"
           print("Candidate images match complete release lock")
           PY
+          # gh <= 2.101.0 allowed prefix matches for --signer-workflow.
+          gh_version="$(gh --version | head -n1 | awk '{print $3}')"
+          python - "$gh_version" <<'PY'
+          import sys
+          try:
+              parts = tuple(int(x) for x in sys.argv[1].split(".")[:3])
+          except ValueError as exc:
+              raise SystemExit("Unknown gh version; fail closed") from exc
+          if parts < (2, 102, 0):
+              raise SystemExit("gh 2.102+ required for exact workflow signer validation")
+          PY
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io \
+            --username "$GITHUB_ACTOR" --password-stdin
           for component in portal music media; do
             image="$(jq -er .image "candidates/$component.json")"
             digest="$(jq -er .digest "candidates/$component.json")"
             gh attestation verify "oci://$image@$digest" \
               --repo "$GITHUB_REPOSITORY" \
-              --signer-workflow ".github/workflows/ghcr-candidates.yml"
+              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/ghcr-candidates.yml"
             docker buildx imagetools inspect "$image@$digest" --raw > "$RUNNER_TEMP/$component-oci.json"
             test "$(jq -er '[.manifests[] | select(.platform.os == "linux" and .platform.architecture == "amd64") | .digest] | unique | length' "$RUNNER_TEMP/$component-oci.json")" = 1
             test "$(jq -er '[.manifests[] | select(.platform.os == "linux" and .platform.architecture == "amd64") | .digest] | first' "$RUNNER_TEMP/$component-oci.json")" = "$(jq -er .platform_digest "candidates/$component.json")"
