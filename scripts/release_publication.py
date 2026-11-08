@@ -105,6 +105,15 @@ def validate_checks(payload: dict, source_sha: str) -> None:
                     for c in matches), "Required check not successful: " + name)
 
 
+def validate_adopted_policy(content: str) -> None:
+    require("PR #63" in content
+            and "Before source promotion" in content
+            and "After independent source-promotion approval" in content
+            and "Before NAS production cutover" in content
+            and "After authorized cutover" in content,
+            "Current main release checklist does not contain adopted approval policy")
+
+
 def validate_blockers(items: list) -> None:
     require(isinstance(items, list), "Blocker API response must be a list")
     blockers = [x for x in items if isinstance(x, dict)
@@ -173,6 +182,16 @@ def validate_bundle(root: Path, source_sha: str, r4_id: int) -> dict:
             "Missing shared vulnerability-policy version")
     require(verification.get("high_critical_unaccepted") == 0,
             "Unaccepted high/critical vulnerability findings")
+    source_approval = verification.get("source_promotion_approval")
+    require(isinstance(source_approval, dict)
+            and source_approval.get("decision") == "approved"
+            and source_approval.get("source_sha") == source_sha
+            and str(source_approval.get("approved_by", "")).casefold() == "itsfoxxin"
+            and isinstance(source_approval.get("record_url"), str)
+            and source_approval["record_url"].startswith(
+                "https://github.com/ItsFoxxin/Fox_Den_Media/"),
+            "Independent source-promotion approval record missing or mismatched")
+
     require(verification.get("github_security_review") == "pass"
             and verification.get("unapproved_security_findings") == 0,
             "Unreviewed native CodeQL, Dependabot or secret-scanning findings")
@@ -323,6 +342,8 @@ def live_check(source_sha: str, r4_id: int, *, approval_issue: int = 0,
             "Workflow ref does not match exact approved main SHA")
     require(Path("VERSION").read_text(encoding="utf-8").strip() == VERSION,
             "main has not been approved/promoted to VERSION 1.0.0")
+    validate_adopted_policy(
+        Path("docs/release-1.0-checklist.md").read_text(encoding="utf-8"))
     branch = api("repos/" + REPOSITORY + "/branches/main")
     require(branch["commit"]["sha"] == source_sha, "main advanced since approval")
     checks = api("repos/" + REPOSITORY +
