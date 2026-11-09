@@ -39,6 +39,17 @@ Timestamps are UTC second precision ending Z. Creation <= review <= now < expiry
 
 disposition-verification.json contains exactly schema_version:1, decision:"pass", disposition_document_sha256, lifecycle_sha256, source_sha, release_lock_sha256, r3_run_id, scan_run_id, reviewed_at, expires_at, cleared_finding_count and image_count. This file is an attested result, not unilateral authority from the scan producer.
 
+## Non-cyclic R4 dependency order (mandatory #84 design handoff)
+
+The current single-pass #84 v1 scan workflow cannot produce a passing security contract while original HIGH/CRITICAL findings exist. The new #92 review cannot consume a finished v2 security contract that itself needs #92 review: that would be a circular dependency. The existing #84 Worker must therefore implement two separately authenticated stages, without changing original reports:
+
+1. **Collect scan input (run A):** approved R3 immutable candidates, signed full source/lock/platform context, complete unmodified Trivy JSON, SPDX and scanner evidence. This collection run may complete SUCCESSFULLY as evidence collection despite unresolved severe findings, but MUST NOT claim a security pass. Sign security/context.json via GitHub OIDC, upload original evidence artifact **ghcr-security-contract-v2-inputs**. This run is the disposition context's scan_run_id and its authenticated actor is producer_actor.
+2. **Independent reviewer (run B):** this #92 main-only security-disposition-review.yml downloads ONLY run A plus separately trusted human-review submission, authenticates both and emits signed artifact **security-disposition-review-v1**. B is review_run_id. A and B must have different authenticated actors; reviewer signer is separately authorized by owner-managed Ed25519 trust.
+3. **Finalize v2 (run C):** existing #84 producer separately consumes exact signed B and the original signed A inputs, verifies every byte/run/source/digest/expiry and creates final fully signed **ghcr-security-contract-v2** with security-contract.json schema_version=2 (including disposition_review). A collection SUCCESS is never a policy-pass. C must not manufacture a disposition or rewrite A findings.
+4. **R4 acceptance (#81)** independently authenticates R3, A, B and C, verifies new lifecycle and full original artifacts, then signs outer foxden.r4.release-ready.v1. **R5 (#80)** verifies that signed R4 file map and independently revalidates current reviews/lifecycle at publication.
+
+All A/B/C runs are on the same separately approved immutable main SHA and R3/lock/image identities; a changed source/image requires new collection and review. An external independently authenticated review-submission uploader remains a separate owner-approved prerequisite. This is an integration interface ONLY: #92 does not modify or execute #84, #81 or #80 workflows. No partial A/B/C run is release security acceptance.
+
 ## Cross-Worker integration contract
 
 PR #84: retain current v1 raw report hashes/lock/OCI source/provenance/scanner and exception-policy hash semantics. Its scan-security contract schema_version=2 adds disposition_review with exact keys schema_version:1, artifact_name:"security-disposition-review-v1", verification_file:"disposition-verification.json", verification_sha256 (raw), dispositions_sha256 (canonical), review_workflow:".github/workflows/security-disposition-review.yml", review_run_id (positive integer), verified_at (UTC). Each image decision is pass only after #92 verifies every severe occurrence and no UNKNOWN, with all original reports preserved.
