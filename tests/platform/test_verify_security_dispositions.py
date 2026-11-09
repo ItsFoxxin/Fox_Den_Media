@@ -417,3 +417,61 @@ def test_security_producer_cannot_sign_own_disposition(tmp_path):
     resign_document(c)
     with pytest.raises(v.DispositionError, match="cannot approve own"):
         check(c)
+
+
+def test_same_cve_two_independent_image_occurrences(tmp_path):
+    c = case_factory(tmp_path, status="FIXED", severity="CRITICAL")
+    image2 = copy.deepcopy(c["context"]["images"]["portal"])
+    image2["image_repository"] = "ghcr.io/example/music"
+    image2["manifest_digest"] = "sha256:" + "9" * 64
+    image2["platform_digest"] = "sha256:" + "8" * 64
+    report2 = copy.deepcopy(c["report"])
+    report2["ArtifactName"] = image2["image_repository"] + "@" + image2["manifest_digest"]
+    reportpath = tmp_path / "security/reports/music.vuln.json"
+    spdxpath = tmp_path / "security/reports/music.sbom.spdx.json"
+    put(reportpath, report2)
+    put(spdxpath, c["sbom"])
+    image2["trivy_report_sha256"] = v.raw_digest(reportpath)
+    image2["spdx_sbom_sha256"] = v.raw_digest(spdxpath)
+    c["context"]["images"]["music"] = image2
+    subject2 = v.finding_subject(
+        "music", 0, 0, report2["Results"][0],
+        report2["Results"][0]["Vulnerabilities"][0], image2)
+    proof2 = copy.deepcopy(c["proof"])
+    for field in ("image_repository", "manifest_digest", "platform_digest",
+                  "finding_sha256", "installed_version"):
+        proof2[field] = subject2[field]
+    proofpath = tmp_path / "review/proofs/music.json"
+    put(proofpath, proof2)
+    c["doc"]["records"].append({
+        "status": "FIXED", "subject": subject2,
+        "proof_path": "proofs/music.json", "proof_sha256": v.raw_digest(proofpath),
+        "reviewer_id": "github:independent-reviewer"})
+    resign_document(c)
+    assert check(c)["cleared_finding_count"] == 2
+    c["doc"]["records"][1]["subject"]["platform_digest"] = PLATFORM
+    resign_document(c)
+    with pytest.raises(v.DispositionError, match="Changed CVE"):
+        check(c)
+
+
+def test_v1_contract_never_passes_as_v2(tmp_path):
+    c = case_factory(tmp_path)
+    result = check(c)
+    raw = v.canonical(result) + b"\n"
+    binding = {
+        "schema_version": 1, "artifact_name": "security-disposition-review-v1",
+        "verification_file": "disposition-verification.json",
+        "verification_sha256": "sha256:" + __import__("hashlib").sha256(raw).hexdigest(),
+        "dispositions_sha256": result["disposition_document_sha256"],
+        "review_workflow": v.REVIEW_WORKFLOW,
+        "review_run_id": 404, "verified_at": utc(NOW)}
+    contract = {"schema_version": 2, "disposition_review": binding}
+    v.require_r4_contract_v2(contract, result, raw)
+    contract["schema_version"] = 1
+    with pytest.raises(v.DispositionError, match="no v1-to-v2 fallback"):
+        v.require_r4_contract_v2(contract, result, raw)
+    contract["schema_version"] = 2
+    contract["disposition_review"]["verification_sha256"] = "sha256:" + "f" * 64
+    with pytest.raises(v.DispositionError, match="Changed signed review"):
+        v.require_r4_contract_v2(contract, result, raw)
