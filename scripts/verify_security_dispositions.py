@@ -240,6 +240,47 @@ def validate_lifecycle(lifecycle: dict, signature_text: str, trust: dict,
     return canonical_digest(lifecycle)
 
 
+
+def validate_lock_coverage(lock: dict, context: dict) -> None:
+    """Check independently authenticated R2 lock against *every* scan subject."""
+    keys(lock, {"schema_version", "version", "source_sha", "compose_sha256",
+                "platform", "profiles", "images", "services", "rollback",
+                "publisher"}, "release lock")
+    require(lock["schema_version"] == 1 and lock["version"] == "1.0.0" and
+            lock["platform"] == "linux/amd64" and
+            lock["source_sha"] == context["source_sha"],
+            "R2 release lock source/version/platform mismatch")
+    publisher = keys(lock["publisher"], {"workflow", "run_id", "source_sha"},
+                     "R3 publisher identity")
+    require(publisher["workflow"] == "ghcr-candidates.yml" and
+            publisher["run_id"] == context["r3_run_id"] and
+            publisher["source_sha"] == context["source_sha"],
+            "R3 publisher is not bound to review context")
+    locked = lock["images"]
+    require(type(locked) is dict and len(locked) > 0 and
+            set(locked) == set(context["images"]),
+            "Missing, extra or unscanned locked image")
+    services = lock["services"]
+    require(type(services) is dict and
+            set(services.values()) == set(locked),
+            "Locked image coverage differs from enabled services")
+    for component, record in locked.items():
+        keys(record, {"ref", "platform", "platform_digest", "source_sha"},
+             "locked OCI image")
+        image = context["images"][component]
+        require(record["platform"] == "linux/amd64" and
+                record["ref"] == image["image_repository"] + "@" +
+                image["manifest_digest"] and
+                "sha256:" + record["platform_digest"] == image["platform_digest"],
+                "Lock/scan OCI repository, manifest or platform mismatch")
+        if component in {"portal", "music", "media"}:
+            require(record["source_sha"] == context["source_sha"],
+                    "First-party image not built from approved source")
+        else:
+            require(record["source_sha"] is None,
+                    "Unexpected first-party source on upstream image")
+
+
 def finding_subject(component: str, index: int, ordinal: int, result: dict,
                     vuln: dict, image: dict) -> dict:
     return {
@@ -383,6 +424,7 @@ def verify(*, context: dict, dispositions: dict, signatures: dict, lifecycle: di
             "Modified release lock or scanner metadata")
     require(type(context["images"]) is dict and len(context["images"]) > 0,
             "No authenticated image subjects")
+    validate_lock_coverage(load_json(lock_path), context)
     keys(exceptions, {"schema_version", "exceptions"}, "security exceptions")
     require(exceptions["schema_version"] == 1 and exceptions["exceptions"] == [],
             "Nonempty or unsupported security exceptions")
