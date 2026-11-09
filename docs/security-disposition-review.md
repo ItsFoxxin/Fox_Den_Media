@@ -4,7 +4,7 @@
 
 ## Inputs and paths
 
-Producer #84 provides immutable, authenticated evidence in security/: context.json, release-lock.json, scanner.json, vulnerability-exceptions.json, reports/<component>.vuln.json and reports/<component>.sbom.spdx.json. No filtering, suppression, or edits to raw reports or SPDX. Every enabled image must be represented; music web/worker share one digest. Each JSON byte hash is SHA-256 over original bytes, independent of canonical document hashing.
+Producer #84 provides immutable, authenticated evidence in security/: context.json, release-lock.json, scanner.json, vulnerability-exceptions.json, reports/<component>.vuln.json and reports/<component>.sbom.spdx.json. No filtering, suppression, or edits to raw reports or SPDX. Every enabled image must be represented; music web/worker share one digest. The verifier independently parses the complete unchanged R2 release-lock.json, requires exact equality of locked image components and scanned context components and enabled service coverage, exact manifest/platform repositories, R3 run and source, and fails if a locked image is omitted even when no report is supplied for it. Each JSON byte hash is SHA-256 over original bytes, independent of canonical document hashing.
 
 Independent reviewer supplies review/dispositions.json, review/signatures.json, and review/proofs/<slug>.json. A separately owner-authorized, fresh review/lifecycle.json and detached review/lifecycle.sig provide revocation/supersession. review/trust.json is an OWNER-MANAGED protected input, NEVER producer-controlled or accepted from an untrusted review artifact. Human private signing keys are never handled in CI.
 
