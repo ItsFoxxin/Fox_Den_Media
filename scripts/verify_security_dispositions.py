@@ -454,6 +454,40 @@ def verify(*, context: dict, dispositions: dict, signatures: dict, lifecycle: di
     }
 
 
+
+REVIEW_BINDING_FIELDS = {"schema_version", "artifact_name", "verification_file",
+                         "verification_sha256", "dispositions_sha256",
+                         "review_workflow", "review_run_id", "verified_at"}
+
+
+def require_r4_contract_v2(contract: dict, review_result: dict,
+                           verification_raw_bytes: bytes) -> None:
+    """Consumer adapter: reject all v1 fallbacks; upstream still verifies OIDC."""
+    require(type(contract) is dict and type(contract.get("schema_version")) is int
+            and contract["schema_version"] == 2,
+            "R4 v2 required: no v1-to-v2 fallback")
+    binding = keys(contract.get("disposition_review"), REVIEW_BINDING_FIELDS,
+                   "R4 v2 independent review binding")
+    require(binding["schema_version"] == 1 and
+            binding["artifact_name"] == "security-disposition-review-v1" and
+            binding["verification_file"] == "disposition-verification.json" and
+            binding["review_workflow"] == REVIEW_WORKFLOW and
+            review_result.get("schema_version") == 1 and
+            review_result.get("decision") == "pass",
+            "Unapproved or unverified R4 disposition review")
+    integer(binding["review_run_id"], "independent review run ID")
+    timestamp(binding["verified_at"])
+    digest(binding["verification_sha256"], "review result hash")
+    digest(binding["dispositions_sha256"], "disposition document hash")
+    require(binding["verification_sha256"] ==
+            "sha256:" + hashlib.sha256(verification_raw_bytes).hexdigest() and
+            binding["dispositions_sha256"] ==
+            review_result.get("disposition_document_sha256"),
+            "Changed signed review result/disposition hash")
+    # A cryptographically authentic review-run attestation is still required
+    # independently, including the exact source SHA and trusted run workflow.
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
