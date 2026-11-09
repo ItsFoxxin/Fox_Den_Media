@@ -1,0 +1,50 @@
+# Independent R4 security-disposition interface v1 — Issue #92
+
+**Integration contract; no real CVE has been cleared.** Disposition documents use schema v1 (docs/security-dispositions-v1.schema.json); the R4 scan security contract becomes v2. The signed outer foxden.r4.release-ready.v1 envelope stays v1. Reject v1 scan-security contracts in the v2 path. The exception ledger remains {"schema_version":1,"exceptions":[]} and retains its existing hash semantics.
+
+## Inputs and paths
+
+Producer #84 provides immutable, authenticated evidence in security/: context.json, release-lock.json, scanner.json, vulnerability-exceptions.json, reports/<component>.vuln.json and reports/<component>.sbom.spdx.json. No filtering, suppression, or edits to raw reports or SPDX. Every enabled image must be represented; music web/worker share one digest. Each JSON byte hash is SHA-256 over original bytes, independent of canonical document hashing.
+
+Independent reviewer supplies review/dispositions.json, review/signatures.json, and review/proofs/<slug>.json. A separately owner-authorized, fresh review/lifecycle.json and detached review/lifecycle.sig provide revocation/supersession. review/trust.json is an OWNER-MANAGED protected input, NEVER producer-controlled or accepted from an untrusted review artifact. Human private signing keys are never handled in CI.
+
+CLI:
+python scripts/verify_security_dispositions.py verify --context security/context.json --evidence-dir security --dispositions review/dispositions.json --proofs-dir review --signatures review/signatures.json --lifecycle review/lifecycle.json --lifecycle-signature review/lifecycle.sig --trust review/trust.json --lock security/release-lock.json --scanner security/scanner.json --exceptions security/vulnerability-exceptions.json --expected-source-sha <sha> --expected-r3-run-id <id> --expected-scan-run-id <id> --output security/disposition-verification.json
+
+Exit zero means only a complete local *verification result*; failure is nonzero, with no passing output. Both R4 and R5 must re-run with a fresh lifecycle/clock and independently authenticated input provenance. This CLI is not a standalone GitHub run authentication service.
+
+## Context and identity
+
+security/context.json has exactly schema_version (1), repository (ItsFoxxin/Fox_Den_Media), source_sha (40 lowercase hex), release_lock_sha256, r3_run_id, scan_run_id, scanner_metadata_sha256, and images. Images maps every selected component to exactly image_repository, manifest_digest, platform_digest, trivy_report_sha256, spdx_sbom_sha256. SHA values use sha256: plus 64 lowercase hex. R4 MUST authenticate this context against locked source, R3 candidate provenance, approved release-lock raw bytes, and the exact independent scanner run; producer JSON alone is never such proof.
+
+Every HIGH/CRITICAL occurrence in original UNSUPPRESSED Trivy Results must have exactly one record, matched by component, result_index, vulnerability_index, CVE, Target, Type/ecosystem, PkgName, InstalledVersion and canonical hash of the entire vulnerability object; manifest/platform/raw report/SBOM hash binds the same component. A duplicate ambiguous underlying finding identity is fatal even if two indices differ. UNKNOWN fails unconditionally, LOW/MEDIUM do not qualify for dispositions. No records for nonexistent findings. A changed Trivy report or SPDX fails raw-byte hash validation.
+
+dispositions.json exact field names are in the schema. Each record has status, subject, proof_path, proof_sha256, reviewer_id. Status is only FIXED or NOT_AFFECTED. The proof file has exactly schema_version (1), kind (same as status), source_sha, release_lock_sha256, r3_run_id, scan_run_id, image_repository, manifest_digest, platform_digest, finding_sha256, reference_url, reference_sha256, verification_method, binary_sha256, installed_version, technical_basis. All proof files are raw-byte hashed. FIXED requires technical_basis=authoritative-remediation-and-installed-image and a reviewer-confirmed authoritative remediation, installed package and exact-image binary hash. NOT_AFFECTED requires CVE-specific verified vulnerable-implementation-absent or non-bypassable-exclusion; exploit non-reproduction, ordinary passing tests, unseen application calls and compensating controls are not sufficient. The verifier checks these mandatory claims and signed hashes, but no automated parser can independently prove external technical assertions; independent reviewer must inspect the retained real binary and advisory evidence before approval.
+
+## Canonical encoding and independent signatures
+
+Reject duplicate JSON keys, unknown schema keys, floats, NaN/Infinity, wildcard identities, non-UTC/fractional timestamps, malformed hashes and malformed signatures. Canonical bytes: json.dumps(obj, sort_keys=True, separators=(",",":"), ensure_ascii=True, allow_nan=False).encode("utf-8"). Canonical identity: sha256: plus hex SHA-256 of those bytes. Raw source files instead retain their ORIGINAL byte SHA-256. The signed disposition message is ASCII "foxden.dispositions.v1" followed by newline then the 32 raw bytes of the canonical disposition hash. The lifecycle signature uses "foxden.lifecycle.v1" newline then the 32 raw bytes of its canonical hash. Ed25519 signatures use standard base64 encoding of exactly 64 signature bytes.
+
+review/signatures.json exact keys: schema_version (1), document_sha256 (canonical hash), signatures array of exactly role, identity, key_id, signature_base64. Every reviewer_id in a record must have an approved, cryptographically validated reviewer signature. Each CRITICAL NOT_AFFECTED requires a separate owner signature over the SAME exact entire disposition document hash. Reviewer and owner must use different authorized identities and keys, and reviewers must not be the security producer. Never accept a JSON approved boolean as authentication. A reviewer identity is github:<login>; trust must bind it to a key with independent custody.
+
+review/trust.json exact fields: schema_version (1), repository, review_workflow, producer_workflow, reviewers (map of identities to {key_id, public_key_pem}), owner ({identity,key_id,public_key_pem}). The expected review and producer workflow paths are fixed by verifier. Protected owner-managed trust distribution, key custody, approved reviewer membership and independent GitHub workflow/environment permissions must be verified separately before live execution.
+
+review/lifecycle.json exact fields: schema_version (1), issued_at, expires_at, revoked_document_sha256 (unique list), superseded_document_sha256 (unique list). review/lifecycle.sig contains base64 of an owner Ed25519 signature. Missing, expired, revoked and superseded records reject. A valid lifecycle document is at most 24 hours old, signed separately by owner. A trusted latest-ledger publication channel and anti-rollback check remain REQUIRED: within 24 hours an older genuine ledger could otherwise be replayed. R4 and R5 must independently confirm the newest authoritative ledger and re-evaluate at actual acceptance/publication.
+
+Timestamps are UTC second precision ending Z. Creation <= review <= now < expiry; expiry−review > 0 and <= 30 days. Scanner Trivy version 0.76.2, positive integer DB Version, and nonfuture <=14 day DB UpdatedAt are separate required gates.
+
+## Independent workflow and signed output
+
+.github/workflows/security-disposition-review.yml is manual, main-only and must be gated by owner-verified, required-reviewer, branch-restricted security-disposition-review GitHub Environment. The independent submission artifact name is security-disposition-submission-v1, from an owner-approved separately authenticated review submission run. Security producer artifacts are read-only inputs and cannot supply the trust policy or reviewer signatures. This workflow emits security-disposition-review-v1 and signs the exact disposition-verification.json through GitHub OIDC actions/attest. In R4/R5, verify GitHub attestation subject, repository, exact source SHA, signing workflow .github/workflows/security-disposition-review.yml and review run identity, plus verified Ed25519 signatures and the newest owner lifecycle.
+
+disposition-verification.json contains exactly schema_version:1, decision:"pass", disposition_document_sha256, lifecycle_sha256, source_sha, release_lock_sha256, r3_run_id, scan_run_id, reviewed_at, expires_at, cleared_finding_count and image_count. This file is an attested result, not unilateral authority from the scan producer.
+
+## Cross-Worker integration contract
+
+PR #84: retain current v1 raw report hashes/lock/OCI source/provenance/scanner and exception-policy hash semantics. Its scan-security contract schema_version=2 adds disposition_review with exact keys schema_version:1, artifact_name:"security-disposition-review-v1", verification_file:"disposition-verification.json", verification_sha256 (raw), dispositions_sha256 (canonical), review_workflow:".github/workflows/security-disposition-review.yml", review_run_id (positive integer), verified_at (UTC). Each image decision is pass only after #92 verifies every severe occurrence and no UNKNOWN, with all original reports preserved.
+
+PR #81: independently authenticate the review workflow/run and signing attestations for the exact file, require v2 without fallback, re-check dispositions and owner lifecycle at actual R4 acceptance, preserve signed foxden.r4.release-ready.v1 envelope and carry an explicit review hash/run binding for R5.
+
+PR #80: verify the R4 signed-envelope review binding and independently re-check dispositions, signer trust, newest lifecycle and expiry at actual R5 publication; an earlier R4 pass does not suffice.
+
+Current owner-managed blockers: verify protected environment settings, approved reviewer/owner Ed25519 public keys and private key custody, independent reviewer artifact submission transport, trusted latest-state lifecycle distribution and rollback protection, exact #84 R3/Trivy provenance, and separate #84/#81/#80 integration. Fail closed if absent; no fabricated signer, exceptions, release pass or production approval.
