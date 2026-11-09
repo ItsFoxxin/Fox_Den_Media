@@ -475,3 +475,10 @@ def test_v1_contract_never_passes_as_v2(tmp_path):
     contract["disposition_review"]["verification_sha256"] = "sha256:" + "f" * 64
     with pytest.raises(v.DispositionError, match="Changed signed review"):
         v.require_r4_contract_v2(contract, result, raw)
+
+
+def test_unauthorized_owner_identity_even_with_valid_key(tmp_path):
+    c = case_factory(tmp_path, status="NOT_AFFECTED", severity="CRITICAL")
+    c["trust"]["owner"]["identity"] = "github:someone-else"
+    with pytest.raises(v.DispositionError, match="Unrecognized repository owner"):
+        check(c)
