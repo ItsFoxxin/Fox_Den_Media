@@ -30,12 +30,12 @@ CVE = re.compile(r"CVE-[0-9]{4}-[0-9]{4,}\Z")
 COMPONENT = re.compile(r"[a-z][a-z0-9_-]{0,39}\Z")
 PROOF = re.compile(r"proofs/[a-z0-9_-]+\.json\Z")
 SEVERITIES = {"CRITICAL", "HIGH", "MEDIUM", "LOW", "UNKNOWN"}
-CONTEXT_FIELDS = {"schema_version", "repository", "source_sha",
+CONTEXT_FIELDS = {"schema_version", "repository", "source_sha", "producer_actor",
                   "release_lock_sha256", "r3_run_id", "scan_run_id",
                   "scanner_metadata_sha256", "images"}
 IMAGE_FIELDS = {"image_repository", "manifest_digest", "platform_digest",
                 "trivy_report_sha256", "spdx_sbom_sha256"}
-DOCUMENT_FIELDS = {"schema_version", "repository", "source_sha",
+DOCUMENT_FIELDS = {"schema_version", "repository", "source_sha", "producer_actor",
                    "release_lock_sha256", "r3_run_id", "scan_run_id",
                    "created_at", "reviewed_at", "expires_at", "records"}
 SUBJECT_FIELDS = {"component", "result_index", "vulnerability_index",
@@ -197,9 +197,13 @@ def validate_signatures(document: dict, signatures: dict, trust: dict,
             require(identity in reviewers, "Unauthorized reviewer")
             info = reviewers[identity]
             require(entry["key_id"] == info["key_id"], "Reviewer key mismatch")
-            key_bytes = verify_sig(info["public_key_pem"], entry["signature_base64"],
-                                   domain, signatures["document_sha256"])
+            key_bytes = serialization.load_pem_public_key(
+                info["public_key_pem"].encode("ascii")).public_bytes(
+                    encoding=serialization.Encoding.Raw,
+                    format=serialization.PublicFormat.Raw)
             require(key_bytes != owner_key_bytes, "Reviewer shares owner key")
+            verify_sig(info["public_key_pem"], entry["signature_base64"],
+                       domain, signatures["document_sha256"])
             valid_reviewers.add(identity)
         else:
             require(identity == owner["identity"] and
@@ -355,7 +359,7 @@ def verify(*, context: dict, dispositions: dict, signatures: dict, lifecycle: di
            lifecycle_signature: str, trust: dict, evidence_dir: Path,
            proofs_dir: Path, lock_path: Path, scanner: dict, scanner_path: Path,
            exceptions: dict, expected_source_sha: str, expected_r3_run_id: int,
-           expected_scan_run_id: int, now: datetime | None = None) -> dict:
+           expected_scan_run_id: int, expected_producer_actor: str, now: datetime | None = None) -> dict:
     now = now or datetime.now(timezone.utc)
     require(now.tzinfo is not None, "Validation clock must have timezone")
     now = now.astimezone(timezone.utc)
@@ -365,8 +369,11 @@ def verify(*, context: dict, dispositions: dict, signatures: dict, lifecycle: di
             context["source_sha"] == expected_source_sha and
             bool(SHA.fullmatch(expected_source_sha)) and
             context["r3_run_id"] == expected_r3_run_id and
-            context["scan_run_id"] == expected_scan_run_id,
-            "Wrong source/R3/scan identity")
+            context["scan_run_id"] == expected_scan_run_id and
+            context["producer_actor"] == expected_producer_actor and
+            type(context["producer_actor"]) is str and
+            bool(re.fullmatch(r"github:[A-Za-z0-9-]{1,39}", context["producer_actor"])),
+            "Wrong source/R3/scan/producer identity")
     integer(context["r3_run_id"], "R3 run")
     integer(context["scan_run_id"], "scan run")
     digest(context["release_lock_sha256"], "lock digest")
@@ -392,7 +399,7 @@ def verify(*, context: dict, dispositions: dict, signatures: dict, lifecycle: di
     require(dispositions["schema_version"] == 1 and
             dispositions["repository"] == context["repository"],
             "Unsupported disposition schema or repository")
-    for field in ("source_sha", "release_lock_sha256", "r3_run_id", "scan_run_id"):
+    for field in ("source_sha", "release_lock_sha256", "r3_run_id", "scan_run_id", "producer_actor"):
         require(dispositions[field] == context[field],
                 "Disposition source/lock/R3/scan mismatch")
     created = timestamp(dispositions["created_at"])
@@ -426,6 +433,8 @@ def verify(*, context: dict, dispositions: dict, signatures: dict, lifecycle: di
         require(record["proof_path"] not in paths, "Duplicate proof path")
         paths.add(record["proof_path"])
         nonempty(record["reviewer_id"], "reviewer identity")
+        require(record["reviewer_id"] != context["producer_actor"],
+                "Security producer cannot approve own disposition")
         validate_proof(record, proofs_dir, context)
         needs_owner |= severity == "CRITICAL" and record["status"] == "NOT_AFFECTED"
     require(seen == required, "Unresolved HIGH or CRITICAL finding")
@@ -452,7 +461,7 @@ def main() -> int:
     for name in ("context", "evidence-dir", "dispositions", "proofs-dir",
                  "signatures", "lifecycle", "lifecycle-signature", "trust",
                  "lock", "scanner", "exceptions", "expected-source-sha",
-                 "expected-r3-run-id", "expected-scan-run-id", "output"):
+                 "expected-r3-run-id", "expected-scan-run-id", "expected-producer-actor", "output"):
         p.add_argument("--" + name, required=True)
     args = parser.parse_args()
     out = Path(args.output)
@@ -472,6 +481,7 @@ def main() -> int:
             expected_source_sha=args.expected_source_sha,
             expected_r3_run_id=int(args.expected_r3_run_id),
             expected_scan_run_id=int(args.expected_scan_run_id),
+            expected_producer_actor=args.expected_producer_actor,
         )
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_bytes(canonical(result) + b"\n")
