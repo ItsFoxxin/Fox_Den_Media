@@ -161,7 +161,7 @@ def validate_trust(trust: dict) -> tuple[dict, dict]:
         require(info["key_id"] not in seen_keys, "Duplicate trusted key ID")
         seen_keys.add(info["key_id"])
     owner = keys(trust["owner"], {"identity", "key_id", "public_key_pem"}, "owner trust")
-    nonempty(owner["identity"], "owner identity")
+    require(owner["identity"] == "github:ItsFoxxin", "Unrecognized repository owner")
     nonempty(owner["key_id"], "owner key ID")
     nonempty(owner["public_key_pem"], "owner public key")
     require(owner["identity"] not in reviewers and owner["key_id"] not in seen_keys,
