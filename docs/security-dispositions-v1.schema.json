@@ -13,7 +13,8 @@
     "created_at",
     "reviewed_at",
     "expires_at",
-    "records"
+    "records",
+    "producer_actor"
   ],
   "properties": {
     "schema_version": {
@@ -162,6 +163,10 @@
         }
       },
       "uniqueItems": true
+    },
+    "producer_actor": {
+      "type": "string",
+      "pattern": "^github:[A-Za-z0-9-]{1,39}$"
     }
   }
 }
