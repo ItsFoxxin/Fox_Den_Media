@@ -52,6 +52,7 @@ def refresh(case, *, resign=True):
     case["context"]["scanner_metadata_sha256"] = v.raw_digest(p / "security/scanner.json")
     case["context"]["release_lock_sha256"] = v.raw_digest(p / "security/release-lock.json")
     case["doc"]["source_sha"] = case["context"]["source_sha"]
+    case["doc"]["producer_actor"] = case["context"]["producer_actor"]
     case["doc"]["release_lock_sha256"] = case["context"]["release_lock_sha256"]
     case["doc"]["r3_run_id"] = case["context"]["r3_run_id"]
     case["doc"]["scan_run_id"] = case["context"]["scan_run_id"]
@@ -107,14 +108,14 @@ def case_factory(tmp_path, status="FIXED", severity="HIGH"):
                     "VulnerabilityDB": {"Version": 2, "UpdatedAt": utc(NOW)}},
         "lock": {"schema_version": 1, "source_sha": SOURCE, "images": {}},
         "context": {"schema_version": 1, "repository": v.REPOSITORY,
-                    "source_sha": SOURCE, "release_lock_sha256": "",
+                    "source_sha": SOURCE, "producer_actor": "github:security-producer", "release_lock_sha256": "",
                     "r3_run_id": 101, "scan_run_id": 202,
                     "scanner_metadata_sha256": "",
                     "images": {"portal": {"image_repository": "ghcr.io/example/portal",
                                           "manifest_digest": IMG, "platform_digest": PLATFORM,
                                           "trivy_report_sha256": "", "spdx_sbom_sha256": ""}}},
         "doc": {"schema_version": 1, "repository": v.REPOSITORY,
-                "source_sha": SOURCE, "release_lock_sha256": "", "r3_run_id": 101,
+                "source_sha": SOURCE, "producer_actor": "github:security-producer", "release_lock_sha256": "", "r3_run_id": 101,
                 "scan_run_id": 202, "created_at": utc(NOW - timedelta(hours=2)),
                 "reviewed_at": utc(NOW - timedelta(hours=1)),
                 "expires_at": utc(NOW + timedelta(days=20)), "records": []},
@@ -160,7 +161,8 @@ def check(c, *, now=NOW):
         lock_path=p / "security/release-lock.json",
         scanner=c["scanner"], scanner_path=p / "security/scanner.json",
         exceptions=c["exceptions"], expected_source_sha=SOURCE,
-        expected_r3_run_id=101, expected_scan_run_id=202, now=now)
+        expected_r3_run_id=101, expected_scan_run_id=202,
+        expected_producer_actor=c["context"]["producer_actor"], now=now)
 
 
 @pytest.mark.parametrize("status,severity", [
@@ -406,3 +408,12 @@ def test_expiration_between_r4_and_r5(tmp_path):
                                        c["lifecycle"])
     with pytest.raises(v.DispositionError):
         check(c, now=NOW + timedelta(hours=2))
+
+
+def test_security_producer_cannot_sign_own_disposition(tmp_path):
+    c = case_factory(tmp_path)
+    c["context"]["producer_actor"] = "github:independent-reviewer"
+    c["doc"]["producer_actor"] = "github:independent-reviewer"
+    resign_document(c)
+    with pytest.raises(v.DispositionError, match="cannot approve own"):
+        check(c)
