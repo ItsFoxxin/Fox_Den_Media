@@ -106,7 +106,17 @@ def case_factory(tmp_path, status="FIXED", severity="HIGH"):
                  "packages": [{"SPDXID": "SPDXRef-Package-a"}]},
         "scanner": {"Version": "0.76.2",
                     "VulnerabilityDB": {"Version": 2, "UpdatedAt": utc(NOW)}},
-        "lock": {"schema_version": 1, "source_sha": SOURCE, "images": {}},
+        "lock": {"schema_version": 1, "version": "1.0.0",
+                 "source_sha": SOURCE, "compose_sha256": "f" * 64,
+                 "platform": "linux/amd64", "profiles": [],
+                 "images": {"portal": {"ref": "ghcr.io/example/portal@" + IMG,
+                                       "platform": "linux/amd64",
+                                       "platform_digest": PLATFORM[7:],
+                                       "source_sha": SOURCE}},
+                 "services": {"portal": "portal"},
+                 "rollback": {"version": "0.9.6", "lock_sha256": "e" * 64},
+                 "publisher": {"workflow": "ghcr-candidates.yml",
+                               "run_id": 101, "source_sha": SOURCE}},
         "context": {"schema_version": 1, "repository": v.REPOSITORY,
                     "source_sha": SOURCE, "producer_actor": "github:security-producer", "release_lock_sha256": "",
                     "r3_run_id": 101, "scan_run_id": 202,
@@ -434,6 +444,12 @@ def test_same_cve_two_independent_image_occurrences(tmp_path):
     image2["trivy_report_sha256"] = v.raw_digest(reportpath)
     image2["spdx_sbom_sha256"] = v.raw_digest(spdxpath)
     c["context"]["images"]["music"] = image2
+    c["lock"]["images"]["music"] = {
+        "ref": image2["image_repository"] + "@" + image2["manifest_digest"],
+        "platform": "linux/amd64", "platform_digest": image2["platform_digest"][7:],
+        "source_sha": SOURCE}
+    c["lock"]["services"]["music"] = "music"
+    refresh(c)
     subject2 = v.finding_subject(
         "music", 0, 0, report2["Results"][0],
         report2["Results"][0]["Vulnerabilities"][0], image2)
@@ -481,4 +497,41 @@ def test_unauthorized_owner_identity_even_with_valid_key(tmp_path):
     c = case_factory(tmp_path, status="NOT_AFFECTED", severity="CRITICAL")
     c["trust"]["owner"]["identity"] = "github:someone-else"
     with pytest.raises(v.DispositionError, match="Unrecognized repository owner"):
+        check(c)
+
+
+def test_omitted_or_tampered_locked_image_fails(tmp_path):
+    c = case_factory(tmp_path)
+    c["lock"]["images"]["nginx"] = {
+        "ref": "docker.io/library/nginx@sha256:" + "e" * 64,
+        "platform": "linux/amd64", "platform_digest": "f" * 64,
+        "source_sha": None}
+    c["lock"]["services"]["nginx"] = "nginx"
+    put(tmp_path / "security/release-lock.json", c["lock"])
+    c["context"]["release_lock_sha256"] = v.raw_digest(
+        tmp_path / "security/release-lock.json")
+    c["doc"]["release_lock_sha256"] = c["context"]["release_lock_sha256"]
+    c["proof"]["release_lock_sha256"] = c["context"]["release_lock_sha256"]
+    put(tmp_path / "review/proofs/proof.json", c["proof"])
+    c["doc"]["records"][0]["proof_sha256"] = v.raw_digest(
+        tmp_path / "review/proofs/proof.json")
+    resign_document(c)
+    with pytest.raises(v.DispositionError, match="unscanned locked image"):
+        check(c)
+    c = case_factory(tmp_path)
+    c["lock"]["images"]["portal"]["platform_digest"] = "f" * 64
+    put(tmp_path / "security/release-lock.json", c["lock"])
+    c["context"]["release_lock_sha256"] = v.raw_digest(
+        tmp_path / "security/release-lock.json")
+    with pytest.raises(v.DispositionError):
+        check(c)
+
+
+def test_r3_source_lock_tampering_rejected(tmp_path):
+    c = case_factory(tmp_path)
+    c["lock"]["publisher"]["run_id"] = 999
+    put(tmp_path / "security/release-lock.json", c["lock"])
+    c["context"]["release_lock_sha256"] = v.raw_digest(
+        tmp_path / "security/release-lock.json")
+    with pytest.raises(v.DispositionError, match="R3 publisher"):
         check(c)
