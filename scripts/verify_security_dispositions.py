@@ -267,7 +267,7 @@ def validate_lock_coverage(lock: dict, context: dict) -> None:
     for component, record in locked.items():
         keys(record, {"ref", "platform", "platform_digest", "source_sha"},
              "locked OCI image")
-        image = context["images"][component]
+        image = keys(context["images"][component], IMAGE_FIELDS, "locked scan image")
         require(record["platform"] == "linux/amd64" and
                 record["ref"] == image["image_repository"] + "@" +
                 image["manifest_digest"] and
