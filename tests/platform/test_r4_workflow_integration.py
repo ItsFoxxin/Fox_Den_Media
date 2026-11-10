@@ -74,8 +74,15 @@ def test_r4_assembler_rejects_signed_scanner_failure_before_staging(
     output = tmp_path / "release-bundle"
     with pytest.raises(SecurityContractError, match="stale signed scanner"):
         r4.assemble_bundle(
-            source="a" * 40, r3_id=7, r4_id=8, acceptance_id=9,
-            approval_issue=18, security_dir=security, candidates_dir=candidates,
+            source="a" * 40, r3_id=7, r4_id=8, scan_id=10,
+            review_id=11, scan_actor="github:synthetic", acceptance_id=9,
+            approval_issue=18, security_dir=security,
+            scan_dir=tmp_path / "scan-inputs",
+            review_dir=tmp_path / "review-evidence",
+            trust_path=tmp_path / "trust.json",
+            lifecycle_path=tmp_path / "lifecycle.json",
+            lifecycle_signature_path=tmp_path / "lifecycle.sig",
+            candidates_dir=candidates,
             provenance_dir=tmp_path / "provenance",
             integration_path=tmp_path / "integration.json",
             acceptance_dir=tmp_path / "acceptance",
@@ -98,12 +105,17 @@ def test_r4_authenticates_all_four_security_subjects_with_explicit_source():
     workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
     steps = {step["name"]: step for step in workflow["jobs"]["verify"]["steps"]
              if "name" in step}
-    security = steps["Download signed shared digest scan and complete release lock"]
+    security = steps["Authenticate exact A B C signed artifact subjects"]
     assert security["env"]["SOURCE_SHA"] == "${{ inputs.source_sha }}"
     assert security["env"]["SECURITY_RUN"] == "${{ inputs.security_run_id }}"
     script = security["run"]
     assert "set -euo pipefail" in script
     assert script.count("gh attestation verify") == 1
+    for artifact in ("ghcr-security-contract-v2-inputs",
+                     "security-disposition-review-v1", "ghcr-security-contract-v2"):
+        assert artifact in script
+    assert "security-disposition-review.yml" in script
+    assert 'test "$(jq -er .schema_version security/security-contract.json)" = 2' in script
     for filename in (
         "security/security-contract.json",
         "security/release-lock.json",
@@ -114,7 +126,7 @@ def test_r4_authenticates_all_four_security_subjects_with_explicit_source():
     assert '--source-ref "refs/heads/main"' in script
     assert '--source-digest "$SOURCE_SHA"' in script
     assert ('--signer-workflow '
-            '"$GITHUB_REPOSITORY/.github/workflows/trivy-digest-security.yml"'
+            '"$GITHUB_REPOSITORY/.github/workflows/$signer"'
             ) in script
     signed = steps["Cryptographically attest exact R4 release-ready root manifest"]
     assert signed["with"]["subject-path"] == "release-bundle/release-ready.json"
