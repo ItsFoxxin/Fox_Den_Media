@@ -178,8 +178,7 @@ jobs:
         run: |
           set -euo pipefail
           # Original raw scanner and exception policy bytes are preserved.
-          cp security/vulnerability-exceptions.json security/vulnerability-exceptions.json.tmp
-          mv security/vulnerability-exceptions.json.tmp security/vulnerability-exceptions.json
+          test -s security/vulnerability-exceptions.json
           python scripts/ghcr_digest_security.py collect-v2 \
             --plan security/scan-plan.json --reports security/reports \
             --scanner security/scanner.json --policy security/vulnerability-exceptions.json \
@@ -282,6 +281,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p security reviewed
+          cp security/vulnerability-exceptions.json "$RUNNER_TEMP/source-vulnerability-exceptions.json"
           gh run download "$SCAN_RUN" --repo "$GITHUB_REPOSITORY" \
             --name ghcr-security-contract-v2-inputs --dir security
           gh run download "$REVIEW_RUN" --repo "$GITHUB_REPOSITORY" \
@@ -340,9 +340,7 @@ jobs:
               --signer-workflow "$workflow"
           done
           # Policy is read from independently checked-out approved source.
-          cmp security/vulnerability-exceptions.json security/vulnerability-exceptions.json
-          test "$(sha256sum security/vulnerability-exceptions.json | cut -d' ' -f1)" = \
-               "$(sha256sum security/vulnerability-exceptions.json | cut -d' ' -f1)"
+          cmp security/vulnerability-exceptions.json "$RUNNER_TEMP/source-vulnerability-exceptions.json"
       - name: Load ONLY owner-managed trust and current signed lifecycle
         shell: bash
         env:
@@ -410,7 +408,10 @@ jobs:
           cp reviewed/security/disposition-verification.json security/review/disposition-verification.json
           cp reviewed/review/dispositions.json security/review/dispositions.json
           cp reviewed/review/signatures.json security/review/signatures.json
-          cp -a reviewed/review/proofs security/review/proofs
+          mkdir -p security/review/proofs
+          if [ -d reviewed/review/proofs ]; then
+            cp -a reviewed/review/proofs/. security/review/proofs/
+          fi
           echo "All signed v2 producer checks completed; no release/publication approval implied." >> "$GITHUB_STEP_SUMMARY"
       - name: Attest exact v2 contract and independently bound evidence
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
