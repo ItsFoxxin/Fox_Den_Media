@@ -92,8 +92,9 @@ volumes are destroyed; no NAS or production credentials are used.
 *advisory, locally built image* scans, not release-digest acceptance.
 Separate draft security producer PR #84 / issue #83 implements the
 `trivy-digest-security.yml` interface; it has **not** been merged or
-run against real R3 candidate images. This remains a hard release dependency. R4 remains blocked until the separate security workstream creates
-and tests it. Do not weaken that gate, forge "pass" records or treat an
+run against real R3 candidate images. Its draft A/C implementation
+must pass independent review and be integrated into the separately approved
+main source before R4 can consume real signed release evidence. Do not weaken that gate, forge "pass" records or treat an
 R4 structural test as security acceptance.
 
 The mandatory `schema_version: 2` scan-security contract retains every
@@ -107,11 +108,10 @@ The source exception-policy hash semantics remain `v1:` without waivers.
 The R4 consumer now requires pass decisions, provenance verification and
 checksummed SPDX/Trivy evidence for **every enabled upstream image**, in
 addition to the three first-party subjects. No upstream exceptions are
-implicitly accepted. Because the separate digest-security producer does
-not yet exist, these are required input conditions, **not completed scans**.
-Final release-lock approval needs the owner-approved vulnerability exception
-process, any required full-profile acceptance and independently retained
-evidence for each digest.
+implicitly accepted. These are required input conditions, **not completed
+scans or dispositions**. A full signed A/B/C chain, original findings,
+reviewed proofs, newest owner lifecycle and separate full-profile
+acceptance remain mandatory.
 
 ## PR #93 — Independent v2 disposition integration
 
@@ -163,6 +163,14 @@ file hashes cover the **raw original bytes**. Missing, duplicate, extra or
 altered proofs, or missing signed-map entries, fail closed. No unsigned
 sidecar and no competing R5 schema are introduced.
 
+**Latest owner-state anti-rollback:** R4 requires an independently
+provisioned protected read-only environment secret
+`SECURITY_DISPOSITION_STATE_READ_TOKEN` to re-fetch GitHub Actions
+repository variables and compare the latest owner-managed trust/lifecycle
+snapshots immediately before acceptance. A missing credential, changed
+newest state or inaccessible API fails closed. This PR provisions none of
+these settings or credentials.
+
 **External blockers:** PR #93's `scripts.verify_security_dispositions`
 is not merged onto this branch, so R4 deliberately refuses real acceptance
 until its independently reviewed verifier is available. PR #84 owns the
@@ -189,9 +197,11 @@ not publish or deploy, and this PR does not introduce R5 or R6.
 ## Exact independent security-producer handoff (PR #84 / issue #83)
 
 The separate `.github/workflows/trivy-digest-security.yml` (not modified
-by this PR) must be a successful, owner-approved, completed manual run on
-the **same current main SHA and authenticated R3 run**. R4 downloads its
-`ghcr-security-contract-v2` artifact. Expected relative paths:
+by this PR) requires separately authorized original scan collection A
+(`ghcr-security-contract-v2-inputs`) and finalized C
+(`ghcr-security-contract-v2`), on the **same main SHA and authenticated R3**,
+with independently signed review B (`security-disposition-review-v1`).
+Expected C-relative paths:
 
 | File | Required consumer binding |
 | --- | --- |
@@ -199,8 +209,8 @@ the **same current main SHA and authenticated R3 run**. R4 downloads its
 | `release-lock.json` | R2 v1 lock with full profile/service set and immutable SHA256 images |
 | `rendered-release-compose.json` | **Sanitized** image-only Compose, no builds or sensitive environment values; maps exactly to lock |
 | `scanner.json` | Trivy `Version=0.76.2`, positive integer `VulnerabilityDB.Version`, parseable UTC `UpdatedAt`, not future or older than 14 days |
-| `reports/<name>.sbom.spdx.json` | SPDX package evidence; SHA-256 checksum matches signed v1 image entry |
-| `reports/<name>.vuln.json` | Unsuppressed vulnerabilities; SHA-256 checksum matches signed v1 image entry |
+| `reports/<name>.sbom.spdx.json` | SPDX package evidence; SHA-256 checksum matches signed v2 image entry |
+| `reports/<name>.vuln.json` | Unsuppressed vulnerabilities; SHA-256 checksum matches signed v2 image entry |
 
 `<name>` is exactly `portal`, `music`, `media` plus all enabled
 upstreams from `nginx`, `browser`, `jellyfin`, `gluetun`,
@@ -210,15 +220,17 @@ as both `scan_subject` and `sbom_subject` and report `decision=pass`,
 `exceptions=[]` and separately verified provenance. An upstream image
 without independently authenticated signer provenance is not accepted.
 
-The producer's attestation step signs four separate top-level JSON files:
-contract, lock, sanitized Compose and raw scanner metadata. R4 now verifies
-the exact downloaded bytes of **all four** using
-`gh attestation verify` (GitHub CLI >= 2.102.0, exact signed workflow,
-source ref and SHA). The security contract's
+Final C attests seven JSON subjects: contract, context, lock, sanitized
+Compose, scanner, exception ledger and the copied B verification result.
+A separately signs its collection context, lock, rendered Compose, scanner
+and policy; B signs its reviewed result. R4 authenticates exact signed
+subjects via `gh attestation verify` (GitHub CLI >= 2.102.0), approved
+source/workflow/run invocation, then reconstructs the complete review
+against unchanged raw A/C Trivy/SPDX and owner-managed lifecycle. The security contract's
 `policy_version` must be `v1:` plus the SHA256 of sorted-key,
 compact-serialized `security/vulnerability-exceptions.json` checked out
 at the approved source commit. No security exceptions, including otherwise
-approved time-limited exceptions, are compatible with v1. R4 checks raw DB
+approved time-limited exceptions, are compatible with v2. R4 checks raw DB
 schema version and matches the signed updated timestamp/version to the
 contract; malformed or old DBs fail closed. This avoids inventing an
 unreviewed contract v2 DB-version field while still verifying DB version.
