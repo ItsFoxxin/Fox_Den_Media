@@ -549,8 +549,9 @@ def validate_release_absence(tag_ref: object, published_release: object) -> None
     require(published_release is None, "GitHub Release already exists; reject publication")
 
 
-def api(path: str, *, missing_ok: bool = False) -> dict | list | None:
-    token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
+def api(path: str, *, missing_ok: bool = False,
+        token: str | None = None) -> dict | list | None:
+    token = token or os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
     require(bool(token), "Missing GitHub Actions API token")
     request = urllib.request.Request(
         "https://api.github.com/" + path.lstrip("/"),
@@ -628,6 +629,208 @@ def run_command(command: list[str], *, output: bool = False) -> str:
     result = subprocess.run(command, text=True, capture_output=True, check=False)
     require(result.returncode == 0, "External image/attestation verifier failed: " + command[0:3].__repr__())
     return result.stdout if output else ""
+
+
+
+def validate_authenticated_run(data: dict, source_sha: str, run_id: int,
+                               workflow: str) -> None:
+    require(type(run_id) is int and run_id > 0
+            and isinstance(data, dict) and data.get("id") == run_id
+            and data.get("repository", {}).get("full_name", "").casefold()
+            == REPOSITORY.casefold()
+            and str(data.get("path", "")).split("@")[0] == workflow
+            and data.get("head_branch") == "main"
+            and data.get("head_sha") == source_sha
+            and data.get("event") == "workflow_dispatch"
+            and data.get("status") == "completed"
+            and data.get("conclusion") == "success"
+            and type(data.get("run_attempt")) is int
+            and data["run_attempt"] > 0,
+            "Untrusted, failed, wrong-run or wrong-source disposition producer")
+
+
+def verify_attested_review_file(path: Path, source_sha: str,
+                                workflow: str, run: dict) -> None:
+    """Validate GitHub's verified SLSA subject *and* exact workflow run.
+
+    An arbitrary successful run next to an attestation from another run is
+    insufficient; require signed SLSA invocationId identifying this run.
+    """
+    version = run_command(["gh", "--version"], output=True)
+    match = re.search(r"^gh version (\d+)\.(\d+)\.(\d+)", version)
+    require(match is not None and tuple(map(int, match.groups())) >= (2, 102, 0),
+            "gh CLI >= 2.102 required for exact disposition attestation identity")
+    payload = run_command([
+        "gh", "attestation", "verify", str(path),
+        "--repo", REPOSITORY, "--source-ref", "refs/heads/main",
+        "--source-digest", source_sha,
+        "--signer-workflow", REPOSITORY + "/" + workflow,
+        "--predicate-type", "https://slsa.dev/provenance/v1",
+        "--format", "json",
+    ], output=True)
+    try:
+        entries = json.loads(payload)
+    except (ValueError, TypeError) as exc:
+        raise ReleaseBlocked("Unparseable GitHub signed review verification") from exc
+    expected = "sha256:" + hash_file(path)
+    prefix = f"https://github.com/{REPOSITORY}/actions/runs/{run['id']}/attempts/{run['run_attempt']}"
+    require(isinstance(entries, list) and any(
+        isinstance(item, dict)
+        and isinstance(item.get("verificationResult"), dict)
+        and isinstance(item["verificationResult"].get("statement"), dict)
+        and any(isinstance(sub, dict)
+                and isinstance(sub.get("digest"), dict)
+                and "sha256:" + str(sub["digest"].get("sha256")) == expected
+                for sub in item["verificationResult"]["statement"].get("subject", []))
+        and isinstance(item["verificationResult"]["statement"].get("predicate"), dict)
+        and item["verificationResult"]["statement"]["predicate"].get(
+            "runDetails", {}).get("metadata", {}).get("invocationId") == prefix
+        for item in entries),
+        "No GitHub-verified exact review subject/signer/run invocation")
+
+
+def owner_disposition_state(*, latest: bool) -> dict[str, bytes]:
+    """Use job-start owner variables for preview; live API for final publish.
+
+    No trust/lifecycle record is accepted from the R4 or review artifacts.
+    The publication environment owns the variables-read credential.
+    """
+    encoded = {name: os.environ.get(name, "") for name in OWNER_STATE_VARIABLES}
+    require(all(encoded.values()), "Missing owner-managed disposition trust/lifecycle")
+    if latest:
+        token = os.environ.get("SECURITY_DISPOSITION_STATE_READ_TOKEN")
+        require(bool(token), "Missing protected, read-only latest owner-state credential")
+        for name, snapshot in encoded.items():
+            data = api("repos/" + REPOSITORY + "/actions/variables/" + name,
+                       token=token)
+            require(isinstance(data, dict) and data.get("name") == name
+                    and isinstance(data.get("updated_at"), str)
+                    and isinstance(data.get("value"), str)
+                    and data["value"] == snapshot,
+                    "Owner trust/lifecycle changed or current state unavailable: " + name)
+    try:
+        decoded = {name: base64.b64decode(encoded[name], validate=True)
+                   for name in OWNER_STATE_VARIABLES[:-1]}
+    except (binascii.Error, ValueError) as exc:
+        raise ReleaseBlocked("Malformed owner-managed trust/lifecycle encoding") from exc
+    require(all(0 < len(value) < 4 * 1024 * 1024 for value in decoded.values()),
+            "Missing/oversized owner-signed disposition evidence")
+    ledger_digest = encoded["SECURITY_DISPOSITION_LIFECYCLE_SHA256"]
+    require(re.fullmatch(r"sha256:[0-9a-f]{64}", ledger_digest) is not None
+            and "sha256:" + hashlib.sha256(
+                decoded["SECURITY_DISPOSITION_LIFECYCLE_B64"]).hexdigest() == ledger_digest,
+            "Current owner lifecycle digest does not match committed state")
+    return decoded
+
+
+def revalidate_current_dispositions(root: Path, summary: dict,
+                                    source_sha: str, *, latest: bool) -> None:
+    """Never reuse R4's lifecycle snapshot as approval at publication time."""
+    disposition = summary["disposition"]
+    document = disposition["document"]
+    binding = disposition["binding"]
+    scan_id = document["scan_run_id"]
+    review_id = binding["review_run_id"]
+    scan_run = api("repos/" + REPOSITORY + "/actions/runs/" + str(scan_id))
+    review_run = api("repos/" + REPOSITORY + "/actions/runs/" + str(review_id))
+    validate_authenticated_run(scan_run, source_sha, scan_id, SCAN_WORKFLOW)
+    validate_authenticated_run(review_run, source_sha, review_id, REVIEW_WORKFLOW)
+    require(document["producer_actor"] ==
+            "github:" + scan_run.get("actor", {}).get("login", ""),
+            "Original scan actor differs from signed disposition producer identity")
+    require(review_run.get("actor", {}).get("login") !=
+            scan_run.get("actor", {}).get("login"),
+            "Independent review run cannot be submitted by scan producer")
+    attested = safe_file(root, "integration/disposition-verification.json")
+    verify_attested_review_file(attested, source_sha, REVIEW_WORKFLOW, review_run)
+    state = owner_disposition_state(latest=latest)
+
+    # Use original, separately authenticated scan inputs; never reconstruct
+    # missing report hashes from current scanner results or R4 summary flags.
+    with tempfile.TemporaryDirectory(prefix="r5-disposition-") as temporary:
+        staging = Path(temporary)
+        security = staging / "security"
+        review = staging / "review"
+        security.mkdir()
+        review.mkdir()
+        run_command(["gh", "run", "download", str(scan_id),
+                     "--repo", REPOSITORY,
+                     "--name", "ghcr-security-contract-v2-inputs",
+                     "--dir", str(security)])
+        context_path = safe_file(security, "context.json")
+        verify_attested_review_file(context_path, source_sha, SCAN_WORKFLOW,
+                                    scan_run)
+        context = read_json(context_path)
+        require(context.get("source_sha") == source_sha
+                and context.get("scan_run_id") == scan_id
+                and context.get("r3_run_id") == document["r3_run_id"]
+                and context.get("producer_actor") == document["producer_actor"]
+                and context.get("release_lock_sha256") ==
+                "sha256:" + disposition["lock_sha256"],
+                "Signed original scan context differs from R4 image/lock identity")
+        for name in ("release-lock.json", "scanner.json", "vulnerability-exceptions.json"):
+            original = safe_file(security, name)
+            reference = (Path("security") / name if name == "vulnerability-exceptions.json"
+                         else root / name)
+            require(hash_file(original) == hash_file(safe_file(
+                reference.parent, reference.name)),
+                "Original scan metadata differs from signed R4/main evidence: " + name)
+        for component in summary["lock"]["images"]:
+            for suffix in (".vuln.json", ".sbom.spdx.json"):
+                rel = "reports/" + component + suffix
+                require(hash_file(safe_file(security, rel)) ==
+                        hash_file(safe_file(root, rel)),
+                        "Original scan report/SPDX differs from signed R4 bytes: " + rel)
+        # R4 maps review/proofs/foo.json to exact integration/disposition-proof-foo.json.
+        (review / "proofs").mkdir()
+        shutil.copyfile(safe_file(root, "integration/security-dispositions.json"),
+                        review / "dispositions.json")
+        shutil.copyfile(safe_file(root, "integration/security-disposition-signatures.json"),
+                        review / "signatures.json")
+        for record in document["records"]:
+            match = REVIEW_PROOF.fullmatch(record["proof_path"])
+            require(match is not None, "Unsafe signed disposition proof name")
+            shutil.copyfile(safe_file(
+                root, "integration/disposition-proof-" + match.group(1) + ".json"),
+                review / record["proof_path"])
+        (review / "trust.json").write_bytes(
+            state["SECURITY_DISPOSITION_TRUST_B64"])
+        (review / "lifecycle.json").write_bytes(
+            state["SECURITY_DISPOSITION_LIFECYCLE_B64"])
+        (review / "lifecycle.sig").write_bytes(
+            state["SECURITY_DISPOSITION_LIFECYCLE_SIG_B64"])
+        output = staging / "current-verification.json"
+        run_command([
+            sys.executable, "-m", "scripts.verify_security_dispositions", "verify",
+            "--context", str(context_path), "--evidence-dir", str(security),
+            "--dispositions", str(review / "dispositions.json"),
+            "--proofs-dir", str(review), "--signatures", str(review / "signatures.json"),
+            "--lifecycle", str(review / "lifecycle.json"),
+            "--lifecycle-signature", str(review / "lifecycle.sig"),
+            "--trust", str(review / "trust.json"),
+            "--lock", str(security / "release-lock.json"),
+            "--scanner", str(security / "scanner.json"),
+            "--exceptions", str(security / "vulnerability-exceptions.json"),
+            "--expected-source-sha", source_sha,
+            "--expected-r3-run-id", str(document["r3_run_id"]),
+            "--expected-scan-run-id", str(scan_id),
+            "--expected-producer-actor", document["producer_actor"],
+            "--output", str(output),
+        ])
+        current = read_json(safe_file(staging, "current-verification.json"))
+        prior = disposition["result"]
+        require(set(current) == RESULT_FIELDS and current["decision"] == "pass"
+                and all(current[key] == prior[key] for key in RESULT_FIELDS -
+                        {"lifecycle_sha256"})
+                and current["lifecycle_sha256"] != "" and
+                re.fullmatch(r"sha256:[0-9a-f]{64}",
+                             current["lifecycle_sha256"]) is not None,
+                "Current independently signed review does not reproduce R4 decision")
+        if latest:
+            # Reject a changed owner ledger during computation. No cached R4
+            # lifecycle or potentially older environment snapshot can authorize.
+            require(owner_disposition_state(latest=True) == state,
+                    "Owner revoked or changed reviewer trust during R5 verification")
 
 
 def verify_registry(lock: dict, source_sha: str) -> None:
@@ -760,12 +963,13 @@ def check_published(source_sha: str, root: Path, r4_id: int) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("live", "bundle", "registry", "assets", "approval", "published"))
+    parser.add_argument("command", choices=("live", "bundle", "registry", "assets", "approval", "published", "dispositions"))
     parser.add_argument("--source-sha", required=True)
     parser.add_argument("--r4-run-id", required=True, type=int)
     parser.add_argument("--evidence-dir", type=Path, default=Path("release-evidence"))
     parser.add_argument("--assets-dir", type=Path, default=Path("release-assets"))
     parser.add_argument("--approval-issue", type=int, default=0)
+    parser.add_argument("--final", action="store_true", help="Require live owner state and publication approval")
     args = parser.parse_args()
     try:
         require(valid_sha(args.source_sha) and args.r4_run_id > 0,
@@ -782,9 +986,16 @@ def main() -> int:
                        approval_issue=args.approval_issue,
                        lock_sha=summary["lock_sha256"] if summary else "",
                        require_approval=args.command == "approval")
-        elif args.command in ("bundle", "registry", "assets"):
+        elif args.command in ("bundle", "registry", "assets", "dispositions"):
             verify_signed_release_ready(args.evidence_dir, args.source_sha, args.r4_run_id)
             summary = validate_bundle(args.evidence_dir, args.source_sha, args.r4_run_id)
+            if args.command == "dispositions":
+                revalidate_current_dispositions(
+                    args.evidence_dir, summary, args.source_sha, latest=args.final)
+                if args.final:
+                    live_check(args.source_sha, args.r4_run_id,
+                               approval_issue=args.approval_issue,
+                               lock_sha=summary["lock_sha256"], require_approval=True)
             if args.command == "registry":
                 verify_registry({"images": summary["images"]}, args.source_sha)
             elif args.command == "assets":
