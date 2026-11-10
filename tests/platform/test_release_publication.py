@@ -5,6 +5,8 @@ No network, Docker, GHCR, tags, GitHub Releases or NAS access is exercised.
 from __future__ import annotations
 
 import datetime as dt
+import base64
+import os
 import hashlib
 import importlib.util
 import json
@@ -94,9 +96,55 @@ def make_bundle(folder: Path) -> tuple[dict, dict]:
             dest = folder / item[key]
             dest.parent.mkdir(exist_ok=True)
             dest.write_text(json.dumps({"fixture": key}), encoding="utf-8")
-    # Exact producer top-level security inputs (only R4 may declare them passed).
-    for name in ("security-contract.json", "scanner.json",
-                 "rendered-release-compose.json"):
+    # Synthetic R4-v2 review: structurally authentic, NOT a real signature.
+    # PR #93's separate Ed25519 verifier is required at actual R5 publication.
+    now = dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
+    stamp = lambda value: value.strftime("%Y-%m-%dT%H:%M:%SZ")
+    review_doc = {
+        "schema_version": 1, "repository": R5.REPOSITORY,
+        "source_sha": SHA, "producer_actor": "github:scan-producer",
+        "release_lock_sha256": "sha256:" + lock_sha,
+        "r3_run_id": R3, "scan_run_id": 34567,
+        "created_at": stamp(now - dt.timedelta(hours=3)),
+        "reviewed_at": stamp(now - dt.timedelta(hours=2)),
+        "expires_at": stamp(now + dt.timedelta(days=7)),
+        "records": [],
+    }
+    integration = folder / "integration"
+    integration.mkdir()
+    (integration / "security-dispositions.json").write_text(
+        json.dumps(review_doc), encoding="utf-8")
+    (integration / "security-disposition-signatures.json").write_text(
+        json.dumps({"schema_version": 1, "document_sha256":
+                    R5.canonical_hash(review_doc), "signatures": []}),
+        encoding="utf-8")
+    review_output = {
+        "schema_version": 1, "decision": "pass",
+        "disposition_document_sha256": R5.canonical_hash(review_doc),
+        "lifecycle_sha256": "sha256:" + "1" * 64,
+        "source_sha": SHA, "release_lock_sha256": "sha256:" + lock_sha,
+        "r3_run_id": R3, "scan_run_id": review_doc["scan_run_id"],
+        "reviewed_at": review_doc["reviewed_at"],
+        "expires_at": review_doc["expires_at"],
+        "cleared_finding_count": 0, "image_count": len(images),
+    }
+    (integration / "disposition-verification.json").write_text(
+        json.dumps(review_output), encoding="utf-8")
+    review = {
+        "schema_version": 1, "artifact_name": R5.REVIEW_ARTIFACT,
+        "verification_file": "integration/disposition-verification.json",
+        "verification_sha256": "sha256:" + R5.hash_file(
+            integration / "disposition-verification.json"),
+        "dispositions_sha256": R5.canonical_hash(review_doc),
+        "review_workflow": R5.REVIEW_WORKFLOW,
+        "review_run_id": 45678,
+        "verified_at": stamp(now - dt.timedelta(hours=1)),
+    }
+    security_review = dict(review, verification_file="disposition-verification.json")
+    (folder / "security-contract.json").write_text(
+        json.dumps({"schema_version": 2, "disposition_review": security_review}),
+        encoding="utf-8")
+    for name in ("scanner.json", "rendered-release-compose.json"):
         (folder / name).write_text(json.dumps({"fixture": name}), encoding="utf-8")
     records = [p for p in folder.rglob("*") if p.is_file()]
     files = {str(p.relative_to(folder)): R5.hash_file(p) for p in records}
@@ -115,6 +163,7 @@ def make_bundle(folder: Path) -> tuple[dict, dict]:
         "github_security_review": "pass", "unapproved_security_findings": 0,
         "image_evidence": evidence,
         "exceptions": [], "files": files,
+        "disposition_review": review,
     }
     (folder / "verification.json").write_text(
         json.dumps(verified, indent=2) + "\n", encoding="utf-8")
@@ -164,6 +213,107 @@ class BundleTests(unittest.TestCase):
     def assert_blocked(self):
         with self.assertRaises(R5.ReleaseBlocked):
             R5.validate_bundle(self.root, SHA, R4)
+
+
+    def refresh_review(self, *, document=None, result=None, binding=None):
+        """Rehash synthetic evidence; never invents genuine signatures."""
+        doc_path = self.root / "integration/security-dispositions.json"
+        result_path = self.root / "integration/disposition-verification.json"
+        if document is None:
+            document = R5.read_json(doc_path)
+        doc_path.write_text(json.dumps(document), encoding="utf-8")
+        result = result or R5.read_json(result_path)
+        result["disposition_document_sha256"] = R5.canonical_hash(document)
+        result["source_sha"] = document["source_sha"]
+        result["reviewed_at"] = document["reviewed_at"]
+        result["expires_at"] = document["expires_at"]
+        result_path.write_text(json.dumps(result), encoding="utf-8")
+        signatures = self.root / "integration/security-disposition-signatures.json"
+        statement = R5.read_json(signatures)
+        statement["document_sha256"] = R5.canonical_hash(document)
+        signatures.write_text(json.dumps(statement), encoding="utf-8")
+        b = binding or self.verified["disposition_review"]
+        b["dispositions_sha256"] = R5.canonical_hash(document)
+        b["verification_sha256"] = "sha256:" + R5.hash_file(result_path)
+        security_path = self.root / "security-contract.json"
+        contract = R5.read_json(security_path)
+        contract["disposition_review"] = dict(
+            b, verification_file="disposition-verification.json")
+        security_path.write_text(json.dumps(contract), encoding="utf-8")
+        self.verified["files"].update({
+            name: R5.hash_file(self.root / name)
+            for name in (
+                "integration/security-dispositions.json",
+                "integration/security-disposition-signatures.json",
+                "integration/disposition-verification.json",
+                "security-contract.json",
+            )
+        })
+        self.update_verification(disposition_review=b)
+
+    def test_review_expired_after_r4_acceptance_fails(self):
+        doc = R5.read_json(self.root / "integration/security-dispositions.json")
+        now = dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
+        stamp = lambda x: x.strftime("%Y-%m-%dT%H:%M:%SZ")
+        doc["created_at"] = stamp(now - dt.timedelta(days=6))
+        doc["reviewed_at"] = stamp(now - dt.timedelta(days=5))
+        doc["expires_at"] = stamp(now - dt.timedelta(minutes=1))
+        self.refresh_review(document=doc)
+        self.assert_blocked()
+
+    def test_signed_review_v1_fallback_never_allowed(self):
+        contract = self.root / "security-contract.json"
+        value = R5.read_json(contract)
+        value["schema_version"] = 1
+        contract.write_text(json.dumps(value), encoding="utf-8")
+        self.verified["files"]["security-contract.json"] = R5.hash_file(contract)
+        self.update_verification()
+        self.assert_blocked()
+
+    def test_signed_review_binding_wrong_run_or_hash_fails(self):
+        for changed in (
+            {"review_run_id": -1}, {"review_workflow": ".github/workflows/other.yml"},
+            {"dispositions_sha256": "sha256:" + "0" * 64},
+            {"verification_file": "disposition-verification.json"},
+        ):
+            with self.subTest(changed=changed):
+                old = dict(self.verified["disposition_review"])
+                self.update_verification(disposition_review={**old, **changed})
+                self.assert_blocked()
+                self.update_verification(disposition_review=old)
+
+    def test_missing_or_unsigned_review_parts_fail(self):
+        for rel in (
+            "integration/disposition-verification.json",
+            "integration/security-dispositions.json",
+            "integration/security-disposition-signatures.json",
+        ):
+            with self.subTest(file=rel):
+                target = self.root / rel
+                data = target.read_bytes()
+                target.unlink()
+                self.assert_blocked()
+                target.write_bytes(data)
+
+    def test_review_original_proof_must_be_in_signed_file_map(self):
+        doc = R5.read_json(self.root / "integration/security-dispositions.json")
+        proof = {"fixture": "proof"}
+        p = self.root / "integration/disposition-proof-case1.json"
+        p.write_text(json.dumps(proof))
+        doc["records"] = [{
+            "status": "FIXED", "subject": {}, "reviewer_id": "github:reviewer",
+            "proof_path": "proofs/case1.json",
+            "proof_sha256": "sha256:" + R5.hash_file(p),
+        }]
+        result = R5.read_json(self.root / "integration/disposition-verification.json")
+        result["cleared_finding_count"] = 1
+        self.refresh_review(document=doc, result=result)
+        self.assert_blocked()
+        self.verified["files"]["integration/disposition-proof-case1.json"] = R5.hash_file(p)
+        self.update_verification()
+        R5.validate_bundle(self.root, SHA, R4)
+        p.write_text('{"tampered":true}')
+        self.assert_blocked()
 
     def test_clean_verified_artifacts_pass(self):
         summary = R5.validate_bundle(self.root, SHA, R4)
