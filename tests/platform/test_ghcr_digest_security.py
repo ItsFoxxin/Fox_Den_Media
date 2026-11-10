@@ -11,7 +11,8 @@ import pytest
 
 from scripts.ghcr_digest_security import (
     EvidenceError, FIRST_PARTY, build_contract, check_manifest, check_scanner,
-    check_gh_cli_version, prepare,
+    check_gh_cli_version, prepare, collect_v2_context, final_v2_contract,
+    severe_inventory, strict_load,
 )
 
 SOURCE = "a" * 40
@@ -362,3 +363,187 @@ def test_workflow_signer_and_four_attestation_subjects_are_explicit():
                  "security/rendered-release-compose.json", "security/scanner.json"):
         assert workflow.count(path) >= 2
     assert "create-storage-record:" not in workflow
+
+
+# V2 B is a separate Worker: these are synthetic A/C contract tests, NOT
+# a substitute for cryptographic B signatures, environment or live lifecycle.
+def v2_fixture(tmp_path, severity=None):
+    plan = plan_fixture()
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    synthetic_reports(reports, plan, severity=severity)
+    lock, _rendered, _candidates, _signers = fixture()
+    lock_path = tmp_path / "release-lock.json"
+    lock_path.write_text(json.dumps(lock))
+    scanner_path = tmp_path / "scanner.json"
+    scanner_path.write_text(json.dumps(metadata()))
+    policy = {"schema_version": 1, "exceptions": []}
+    context = collect_v2_context(
+        plan, reports, metadata(), policy, lock_path, scanner_path,
+        SOURCE, 113, 235, "github:scan-bot", NOW)
+    return plan, reports, lock_path, scanner_path, policy, context
+
+
+def synthetic_review(context, records):
+    document = {
+        "schema_version": 1, "repository": context["repository"],
+        "source_sha": context["source_sha"],
+        "producer_actor": context["producer_actor"],
+        "release_lock_sha256": context["release_lock_sha256"],
+        "r3_run_id": context["r3_run_id"],
+        "scan_run_id": context["scan_run_id"],
+        "created_at": "2026-11-07T00:00:00Z",
+        "reviewed_at": "2026-11-07T12:00:00Z",
+        "expires_at": "2026-11-20T00:00:00Z",
+        "records": records,
+    }
+    document_hash = "sha256:" + hashlib.sha256(json.dumps(
+        document, sort_keys=True, separators=(",", ":"),
+        ensure_ascii=True, allow_nan=False).encode()).hexdigest()
+    result = {
+        "schema_version": 1, "decision": "pass",
+        "disposition_document_sha256": document_hash,
+        "lifecycle_sha256": "sha256:" + "c" * 64,
+        "source_sha": SOURCE,
+        "release_lock_sha256": context["release_lock_sha256"],
+        "r3_run_id": 113, "scan_run_id": 235,
+        "reviewed_at": "2026-11-07T12:00:00Z",
+        "expires_at": "2026-11-20T00:00:00Z",
+        "cleared_finding_count": len(records),
+        "image_count": len(context["images"]),
+    }
+    return document, result
+
+
+def synthetic_finalize(plan, reports, lock_path, scanner_path, policy, context,
+                       document, result, *, now=NOW):
+    return final_v2_contract(
+        plan, reports, metadata(), policy, lock_path, scanner_path,
+        context, result, deepcopy(result), json.dumps(result).encode(),
+        document, SOURCE, 113, 235, "github:scan-bot", 236, now)
+
+
+def test_v2_collection_does_not_suppress_or_block_real_high_findings(tmp_path):
+    plan, reports, lock, scanner, policy, context = v2_fixture(tmp_path, "HIGH")
+    assert set(context) == {
+        "schema_version", "repository", "source_sha", "producer_actor",
+        "release_lock_sha256", "r3_run_id", "scan_run_id",
+        "scanner_metadata_sha256", "images",
+    }
+    assert set(context["images"]) == set(plan)
+    assert context["images"]["portal"]["trivy_report_sha256"] == (
+        "sha256:" + hashlib.sha256((reports / "portal.vuln.json").read_bytes()).hexdigest()
+    )
+    assert json.loads((reports / "portal.vuln.json").read_text())[
+        "Results"][0]["Vulnerabilities"][0]["Severity"] == "HIGH"
+
+
+def test_v2_strict_positive_reviewed_contract_uses_no_v1_fallback(tmp_path):
+    plan, reports, lock, scanner, policy, context = v2_fixture(tmp_path, "CRITICAL")
+    item = next(iter(severe_inventory(context, reports).values()))
+    record = {"status": "NOT_AFFECTED", "subject": item,
+              "proof_path": "proofs/review.json",
+              "proof_sha256": "sha256:" + "d" * 64,
+              "reviewer_id": "github:independent-reviewer"}
+    document, result = synthetic_review(context, [record])
+    contract = synthetic_finalize(
+        plan, reports, lock, scanner, policy, context, document, result)
+    assert contract["schema_version"] == 2
+    assert contract["disposition_review"]["artifact_name"] == "security-disposition-review-v1"
+    assert contract["disposition_review"]["review_run_id"] == 236
+    assert contract["images"]["portal"]["decision"] == "pass"
+    assert contract["images"]["portal"]["exceptions"] == []
+
+
+@pytest.mark.parametrize("mutation", ["wrong-source", "wrong-lock", "wrong-scan",
+                                       "wrong-image", "forged-decision", "stale",
+                                       "altered-document", "wrong-count"])
+def test_v2_rejects_misbound_forged_or_stale_independent_result(tmp_path, mutation):
+    plan, reports, lock, scanner, policy, context = v2_fixture(tmp_path, "HIGH")
+    subject = next(iter(severe_inventory(context, reports).values()))
+    document, result = synthetic_review(context, [{
+        "status": "FIXED", "subject": subject, "proof_path": "proofs/one.json",
+        "proof_sha256": "sha256:" + "d" * 64,
+        "reviewer_id": "github:reviewer",
+    }])
+    if mutation == "wrong-source":
+        result["source_sha"] = "f" * 40
+    elif mutation == "wrong-lock":
+        result["release_lock_sha256"] = "sha256:" + "f" * 64
+    elif mutation == "wrong-scan":
+        result["scan_run_id"] = 344
+    elif mutation == "wrong-image":
+        subject["manifest_digest"] = "sha256:" + "e" * 64
+    elif mutation == "forged-decision":
+        result["decision"] = "approved"
+    elif mutation == "stale":
+        result["expires_at"] = "2026-11-07T13:00:00Z"
+    elif mutation == "altered-document":
+        document["records"][0]["status"] = "NOT_AFFECTED"
+    elif mutation == "wrong-count":
+        result["cleared_finding_count"] = 0
+    with pytest.raises(EvidenceError):
+        synthetic_finalize(plan, reports, lock, scanner, policy,
+                           context, document, result)
+
+
+def test_v2_missing_unreviewed_severe_inventory_fails(tmp_path):
+    plan, reports, lock, scanner, policy, context = v2_fixture(tmp_path, "CRITICAL")
+    document, result = synthetic_review(context, [])
+    with pytest.raises(EvidenceError, match="HIGH/CRITICAL"):
+        synthetic_finalize(plan, reports, lock, scanner, policy,
+                           context, document, result)
+
+
+def test_v2_unknown_severity_collected_but_rejected_at_final_review(tmp_path):
+    plan, reports, lock, scanner, policy, context = v2_fixture(tmp_path, "UNKNOWN")
+    document, result = synthetic_review(context, [])
+    with pytest.raises(EvidenceError, match="UNKNOWN"):
+        synthetic_finalize(plan, reports, lock, scanner, policy,
+                           context, document, result)
+
+
+def test_v2_missing_or_mutated_raw_evidence_is_rejected(tmp_path):
+    plan, reports, lock, scanner, policy, context = v2_fixture(tmp_path)
+    report_path = reports / "portal.vuln.json"
+    report = strict_load(report_path)
+    report["Results"][0]["Target"] = "substituted target"
+    report_path.write_text(json.dumps(report))
+    document, result = synthetic_review(context, [])
+    with pytest.raises(EvidenceError, match="context"):
+        synthetic_finalize(plan, reports, lock, scanner, policy,
+                           context, document, result)
+    report_path.unlink()
+    with pytest.raises((EvidenceError, OSError)):
+        collect_v2_context(plan, reports, metadata(), policy, lock,
+                           scanner, SOURCE, 113, 235, "github:scan-bot", NOW)
+
+
+def test_v2_strict_duplicate_json_and_missing_enabled_images(tmp_path):
+    plan, reports, lock, scanner, policy, context = v2_fixture(tmp_path)
+    bad = tmp_path / "duplicate.json"
+    bad.write_text('{"schema_version":1,"schema_version":2}')
+    with pytest.raises(EvidenceError, match="Duplicate"):
+        strict_load(bad)
+    plan.pop("nginx")
+    with pytest.raises(EvidenceError):
+        collect_v2_context(plan, reports, metadata(), policy,
+                           lock, scanner, SOURCE, 113, 235, "github:scan-bot", NOW)
+
+
+def test_v2_manual_a_c_workflow_and_independent_crypto_gate_are_explicit():
+    workflow = Path(".github/workflows/trivy-digest-security.yml").read_text()
+    assert "options: [collect, finalize]" in workflow
+    assert "ghcr-security-contract-v2-inputs" in workflow
+    assert "ghcr-security-contract-v2" in workflow
+    assert "ghcr-security-contract-v1" not in workflow
+    assert "security-disposition-review-v1" in workflow
+    assert ".github/workflows/security-disposition-review.yml" in workflow
+    assert "--signer-workflow" in workflow and "--source-digest" in workflow
+    assert "--expected-producer-actor" in workflow
+    assert "--lifecycle-signature" in workflow and "--trust trusted/trust.json" in workflow
+    assert "cmp reviewed/security/disposition-verification.json trusted/revalidated.json" in workflow
+    assert "scripts/verify_security_dispositions.py verify" in workflow
+    assert "environment: ghcr-security" in workflow
+    assert "packages: write" not in workflow
+    assert "actions/attest@" in workflow
