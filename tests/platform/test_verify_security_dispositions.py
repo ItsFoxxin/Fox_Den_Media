@@ -398,6 +398,11 @@ def test_signed_high_finding_accepts_original_nested_cvss_decimals(tmp_path):
     parsed = v.load_json(path, scanner_evidence=True)
     parsed_vuln = parsed["Results"][0]["Vulnerabilities"][0]
     expected_finding_hash = v.canonical_digest(parsed_vuln)
+    # Mirror PR #84's independent producer canonicalization without changing its branch.
+    producer_finding_hash = "sha256:" + hashlib.sha256(json.dumps(
+        parsed_vuln, sort_keys=True, separators=(",", ":"),
+        ensure_ascii=True, allow_nan=False).encode("utf-8")).hexdigest()
+    assert expected_finding_hash == producer_finding_hash
     assert parsed_vuln["CVSS"]["redhat"]["V2Score"] == 3.7
     assert expected_finding_hash == v.canonical_digest(vuln)
     assert c["doc"]["records"][0]["subject"]["finding_sha256"] == expected_finding_hash
