@@ -532,7 +532,7 @@ def test_r4_v2_adapter_rejects_noninteger_review_result_runs(
     c = case_factory(tmp_path)
     result = check(c)
     result[field] = bad_run_id
-    raw = v.canonical(result) + b"\\n"
+    raw = v.canonical(result) + b"\n"
     binding = {
         "schema_version": 1,
         "artifact_name": "security-disposition-review-v1",
