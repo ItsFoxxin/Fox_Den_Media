@@ -173,6 +173,9 @@ def test_workflow_requires_source_bound_signed_a_b_c_and_owner_trust():
                  "--lifecycle-path", "--lifecycle-signature-path"):
         assert flag in stage["run"]
     assert "--policy-path source-policy/vulnerability-exceptions.json" in stage["run"]
+    assert "SECURITY_DISPOSITION_STATE_READ_TOKEN" in str(stage["env"])
+    assert "actions/variables/$name" in stage["run"]
+    assert "Latest owner disposition state unavailable or changed" in stage["run"]
 
 
 def test_signed_file_map_cannot_omit_or_tamper_with_disposition_proof(tmp_path):

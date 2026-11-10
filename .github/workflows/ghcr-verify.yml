@@ -398,9 +398,34 @@ jobs:
           ACCEPTANCE_RUN: ${{ inputs.acceptance_run_id }}
           SOURCE_ISSUE: ${{ inputs.source_approval_issue }}
           LEDGER_SHA: ${{ vars.SECURITY_DISPOSITION_LIFECYCLE_SHA256 }}
+          TRUST_SNAPSHOT: ${{ vars.SECURITY_DISPOSITION_TRUST_B64 }}
+          LIFECYCLE_SNAPSHOT: ${{ vars.SECURITY_DISPOSITION_LIFECYCLE_B64 }}
+          SIGNATURE_SNAPSHOT: ${{ vars.SECURITY_DISPOSITION_LIFECYCLE_SIG_B64 }}
+          STATE_READ_TOKEN: ${{ secrets.SECURITY_DISPOSITION_STATE_READ_TOKEN }}
         run: |
           set -euo pipefail
           test "sha256:$(sha256sum governance/disposition-lifecycle.json | cut -d' ' -f1)" = "$LEDGER_SHA"
+          # Enforce the latest owner-published trust/lifecycle snapshot, not
+          # only a genuine but possibly replayed signed ledger under 24h old.
+          # A protected read-only credential is mandatory; absence fails closed.
+          test -n "$STATE_READ_TOKEN"
+          for name in SECURITY_DISPOSITION_TRUST_B64 \
+                      SECURITY_DISPOSITION_LIFECYCLE_B64 \
+                      SECURITY_DISPOSITION_LIFECYCLE_SIG_B64 \
+                      SECURITY_DISPOSITION_LIFECYCLE_SHA256; do
+            case "$name" in
+              SECURITY_DISPOSITION_TRUST_B64) expected="$TRUST_SNAPSHOT" ;;
+              SECURITY_DISPOSITION_LIFECYCLE_B64) expected="$LIFECYCLE_SNAPSHOT" ;;
+              SECURITY_DISPOSITION_LIFECYCLE_SIG_B64) expected="$SIGNATURE_SNAPSHOT" ;;
+              SECURITY_DISPOSITION_LIFECYCLE_SHA256) expected="$LEDGER_SHA" ;;
+            esac
+            current="$(GH_TOKEN="$STATE_READ_TOKEN" gh api \
+              "repos/$GITHUB_REPOSITORY/actions/variables/$name" --jq '.value')"
+            test -n "$expected" && test "$current" = "$expected" || {
+              echo "::error::Latest owner disposition state unavailable or changed"
+              exit 1
+            }
+          done
           python -m pip install cryptography==50.0.2
           python -m scripts.r4_release_ready \
             --source-sha "$SOURCE_SHA" --r3-run-id "$PUBLISHER_RUN" \
