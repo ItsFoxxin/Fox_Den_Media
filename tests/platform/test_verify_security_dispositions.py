@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 import copy
 from datetime import datetime, timedelta, timezone
+import hashlib
 import json
 from pathlib import Path
 
@@ -535,3 +536,122 @@ def test_r3_source_lock_tampering_rejected(tmp_path):
         tmp_path / "security/release-lock.json")
     with pytest.raises(v.DispositionError, match="R3 publisher"):
         check(c)
+
+@pytest.mark.parametrize("invalid_version", [True, False, "1", None])
+@pytest.mark.parametrize("document", [
+    "context", "dispositions", "trust", "signatures",
+    "lifecycle", "release_lock", "exceptions", "proof",
+])
+def test_schema_version_requires_exact_integer_with_valid_evidence(
+        tmp_path, document, invalid_version):
+    """Recompute authentic signatures/hashes where applicable, then reject types."""
+    c = case_factory(tmp_path)
+    if document == "context":
+        c["context"]["schema_version"] = invalid_version
+    elif document == "dispositions":
+        c["doc"]["schema_version"] = invalid_version
+        resign_document(c)
+    elif document == "trust":
+        c["trust"]["schema_version"] = invalid_version
+    elif document == "signatures":
+        c["signatures"]["schema_version"] = invalid_version
+    elif document == "lifecycle":
+        c["lifecycle"]["schema_version"] = invalid_version
+        c["lifecycle_signature"] = signed(c["owner"], b"foxden.lifecycle.v1\n",
+                                          c["lifecycle"])
+    elif document == "release_lock":
+        c["lock"]["schema_version"] = invalid_version
+        refresh(c)
+    elif document == "exceptions":
+        c["exceptions"]["schema_version"] = invalid_version
+    elif document == "proof":
+        c["proof"]["schema_version"] = invalid_version
+        proof_path = tmp_path / "review/proofs/proof.json"
+        put(proof_path, c["proof"])
+        c["doc"]["records"][0]["proof_sha256"] = v.raw_digest(proof_path)
+        resign_document(c)
+    with pytest.raises(v.DispositionError):
+        check(c)
+
+
+@pytest.mark.parametrize("invalid_version", [True, False, "1", None])
+@pytest.mark.parametrize("document", ["contract", "binding", "review_result"])
+def test_r4_v2_adapter_rejects_noninteger_schema_versions(
+        tmp_path, document, invalid_version):
+    c = case_factory(tmp_path)
+    result = check(c)
+    raw = v.canonical(result) + b"\n"
+    binding = {
+        "schema_version": 1,
+        "artifact_name": "security-disposition-review-v1",
+        "verification_file": "disposition-verification.json",
+        "verification_sha256": "sha256:" + hashlib.sha256(raw).hexdigest(),
+        "dispositions_sha256": result["disposition_document_sha256"],
+        "review_workflow": v.REVIEW_WORKFLOW,
+        "review_run_id": 404,
+        "verified_at": utc(NOW),
+    }
+    contract = {"schema_version": 2, "disposition_review": binding}
+    v.require_r4_contract_v2(contract, result, raw)
+    if document == "contract":
+        contract["schema_version"] = invalid_version
+    elif document == "binding":
+        binding["schema_version"] = invalid_version
+    else:
+        result["schema_version"] = invalid_version
+        raw = v.canonical(result) + b"\n"
+        binding["verification_sha256"] = "sha256:" + hashlib.sha256(raw).hexdigest()
+    with pytest.raises(v.DispositionError):
+        v.require_r4_contract_v2(contract, result, raw)
+
+
+def _review_attestation_command(workflow_text: str, subject: str) -> str:
+    lines = workflow_text.splitlines()
+    start = "gh attestation verify " + subject + " \\"
+    matches = [i for i, line in enumerate(lines) if line.strip() == start]
+    assert len(matches) == 1
+    pos = matches[0]
+    pieces = []
+    while True:
+        line = lines[pos].strip()
+        pieces.append(line.removesuffix("\\").strip())
+        if not line.endswith("\\"):
+            return " ".join(pieces)
+        pos += 1
+        assert pos < len(lines)
+
+
+def _has_strict_attestation_identity(command: str, workflow_filename: str) -> bool:
+    signer = ('--signer-workflow '
+              '"$GITHUB_REPOSITORY/.github/workflows/' + workflow_filename + '"')
+    return (command.count("--signer-workflow") == 1
+            and signer in command
+            and '--repo "$GITHUB_REPOSITORY"' in command
+            and "--source-ref refs/heads/main" in command
+            and '--source-digest "$SOURCE_SHA"' in command)
+
+
+@pytest.mark.parametrize("subject,workflow_filename", [
+    ("security/context.json", "trivy-digest-security.yml"),
+    ("review/dispositions.json", "security-disposition-submission.yml"),
+])
+def test_review_workflow_pins_full_attestation_signers_and_main(
+        subject, workflow_filename):
+    workflow_text = (Path(__file__).resolve().parents[2] / ".github/workflows"
+                     / "security-disposition-review.yml").read_text(encoding="utf-8")
+    assert "tuple(map(int,m.groups())) >= (2,102,0)" in workflow_text
+    assert workflow_text.count("gh attestation verify ") == 2
+    command = _review_attestation_command(workflow_text, subject)
+    assert _has_strict_attestation_identity(command, workflow_filename)
+
+    expected = ('"$GITHUB_REPOSITORY/.github/workflows/' + workflow_filename + '"')
+    for unsafe_identity in (
+        '".github/workflows/' + workflow_filename + '"',
+        '"$GITHUB_REPOSITORY/.github/workflows/' + workflow_filename[:-4] + '"',
+        '"$GITHUB_REPOSITORY/.github/workflows/' + workflow_filename + '-prefix"',
+    ):
+        assert not _has_strict_attestation_identity(
+            command.replace(expected, unsafe_identity), workflow_filename)
+    assert not _has_strict_attestation_identity(
+        command.replace("--source-ref refs/heads/main", ""),
+        workflow_filename)

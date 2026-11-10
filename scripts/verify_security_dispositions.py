@@ -81,6 +81,11 @@ def integer(value: object, label: str, minimum: int = 1) -> int:
     return value
 
 
+def is_schema_version(value: object, expected: int) -> bool:
+    """Reject booleans as schema versions; Python treats True == 1 as true."""
+    return type(value) is int and value == expected
+
+
 def load_json(path: Path) -> dict:
     raw = path.read_bytes()
     require(len(raw) <= 32 * 1024 * 1024, "Oversized JSON evidence")
@@ -144,7 +149,7 @@ def verify_sig(public_pem: str, signature: str, domain: bytes,
 def validate_trust(trust: dict) -> tuple[dict, dict]:
     keys(trust, {"schema_version", "repository", "review_workflow",
                  "producer_workflow", "reviewers", "owner"}, "trust policy")
-    require(trust["schema_version"] == 1 and trust["repository"] == REPOSITORY and
+    require(is_schema_version(trust["schema_version"], 1) and trust["repository"] == REPOSITORY and
             trust["review_workflow"] == REVIEW_WORKFLOW and
             trust["producer_workflow"] == PRODUCER_WORKFLOW,
             "Unauthorized repository or signer workflow")
@@ -173,7 +178,7 @@ def validate_signatures(document: dict, signatures: dict, trust: dict,
                         needs_owner: bool) -> None:
     reviewers, owner = validate_trust(trust)
     keys(signatures, {"schema_version", "document_sha256", "signatures"}, "signatures")
-    require(signatures["schema_version"] == 1 and
+    require(is_schema_version(signatures["schema_version"], 1) and
             signatures["document_sha256"] == canonical_digest(document),
             "Modified disposition document or incorrect signature subject")
     entries = signatures["signatures"]
@@ -222,7 +227,7 @@ def validate_lifecycle(lifecycle: dict, signature_text: str, trust: dict,
     keys(lifecycle, {"schema_version", "issued_at", "expires_at",
                      "revoked_document_sha256", "superseded_document_sha256"},
          "lifecycle")
-    require(lifecycle["schema_version"] == 1, "Unknown lifecycle version")
+    require(is_schema_version(lifecycle["schema_version"], 1), "Unknown lifecycle version")
     issued = timestamp(lifecycle["issued_at"])
     expires = timestamp(lifecycle["expires_at"])
     require(issued <= now < expires and timedelta(0) < expires - issued <= timedelta(hours=24),
@@ -246,7 +251,7 @@ def validate_lock_coverage(lock: dict, context: dict) -> None:
     keys(lock, {"schema_version", "version", "source_sha", "compose_sha256",
                 "platform", "profiles", "images", "services", "rollback",
                 "publisher"}, "release lock")
-    require(lock["schema_version"] == 1 and lock["version"] == "1.0.0" and
+    require(is_schema_version(lock["schema_version"], 1) and lock["version"] == "1.0.0" and
             lock["platform"] == "linux/amd64" and
             lock["source_sha"] == context["source_sha"],
             "R2 release lock source/version/platform mismatch")
@@ -373,7 +378,7 @@ def validate_proof(record: dict, proof_dir: Path, context: dict) -> None:
     for k in ("image_repository", "manifest_digest", "platform_digest",
               "finding_sha256", "installed_version"):
         require(proof[k] == subject[k], "Proof not bound to exact finding/image")
-    require(proof["schema_version"] == 1 and proof["kind"] == record["status"],
+    require(is_schema_version(proof["schema_version"], 1) and proof["kind"] == record["status"],
             "Proof type mismatch")
     for k in ("binary_sha256", "reference_sha256"):
         digest(proof[k], "proof " + k)
@@ -405,7 +410,7 @@ def verify(*, context: dict, dispositions: dict, signatures: dict, lifecycle: di
     require(now.tzinfo is not None, "Validation clock must have timezone")
     now = now.astimezone(timezone.utc)
     keys(context, CONTEXT_FIELDS, "signed R4 evidence context")
-    require(context["schema_version"] == 1 and
+    require(is_schema_version(context["schema_version"], 1) and
             context["repository"] == REPOSITORY and
             context["source_sha"] == expected_source_sha and
             bool(SHA.fullmatch(expected_source_sha)) and
@@ -426,7 +431,7 @@ def verify(*, context: dict, dispositions: dict, signatures: dict, lifecycle: di
             "No authenticated image subjects")
     validate_lock_coverage(load_json(lock_path), context)
     keys(exceptions, {"schema_version", "exceptions"}, "security exceptions")
-    require(exceptions["schema_version"] == 1 and exceptions["exceptions"] == [],
+    require(is_schema_version(exceptions["schema_version"], 1) and exceptions["exceptions"] == [],
             "Nonempty or unsupported security exceptions")
     require(scanner.get("Version") == "0.76.2" and
             type(scanner.get("VulnerabilityDB")) is dict and
@@ -438,7 +443,7 @@ def verify(*, context: dict, dispositions: dict, signatures: dict, lifecycle: di
             "Stale or future scanner database")
     findings = collect_findings(context, evidence_dir)
     keys(dispositions, DOCUMENT_FIELDS, "disposition document")
-    require(dispositions["schema_version"] == 1 and
+    require(is_schema_version(dispositions["schema_version"], 1) and
             dispositions["repository"] == context["repository"],
             "Unsupported disposition schema or repository")
     for field in ("source_sha", "release_lock_sha256", "r3_run_id", "scan_run_id", "producer_actor"):
@@ -505,16 +510,16 @@ REVIEW_BINDING_FIELDS = {"schema_version", "artifact_name", "verification_file",
 def require_r4_contract_v2(contract: dict, review_result: dict,
                            verification_raw_bytes: bytes) -> None:
     """Consumer adapter: reject all v1 fallbacks; upstream still verifies OIDC."""
-    require(type(contract) is dict and type(contract.get("schema_version")) is int
-            and contract["schema_version"] == 2,
+    require(type(contract) is dict and
+            is_schema_version(contract.get("schema_version"), 2),
             "R4 v2 required: no v1-to-v2 fallback")
     binding = keys(contract.get("disposition_review"), REVIEW_BINDING_FIELDS,
                    "R4 v2 independent review binding")
-    require(binding["schema_version"] == 1 and
+    require(is_schema_version(binding["schema_version"], 1) and
             binding["artifact_name"] == "security-disposition-review-v1" and
             binding["verification_file"] == "disposition-verification.json" and
             binding["review_workflow"] == REVIEW_WORKFLOW and
-            review_result.get("schema_version") == 1 and
+            is_schema_version(review_result.get("schema_version"), 1) and
             review_result.get("decision") == "pass",
             "Unapproved or unverified R4 disposition review")
     integer(binding["review_run_id"], "independent review run ID")

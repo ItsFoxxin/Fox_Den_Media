@@ -91,11 +91,15 @@ jobs:
           test -s security/context.json && test -s review/dispositions.json
           test -s review/signatures.json
           gh attestation verify security/context.json \
-            --repo "$GITHUB_REPOSITORY" --source-digest "$SOURCE_SHA" \
-            --signer-workflow .github/workflows/trivy-digest-security.yml
+            --repo "$GITHUB_REPOSITORY" --source-ref refs/heads/main \
+            --source-digest "$SOURCE_SHA" \
+            --signer-workflow \
+              "$GITHUB_REPOSITORY/.github/workflows/trivy-digest-security.yml"
           gh attestation verify review/dispositions.json \
-            --repo "$GITHUB_REPOSITORY" --source-digest "$SOURCE_SHA" \
-            --signer-workflow .github/workflows/security-disposition-submission.yml
+            --repo "$GITHUB_REPOSITORY" --source-ref refs/heads/main \
+            --source-digest "$SOURCE_SHA" \
+            --signer-workflow \
+              "$GITHUB_REPOSITORY/.github/workflows/security-disposition-submission.yml"
       - name: Load owner-controlled trust and latest lifecycle commitment
         shell: bash
         env:
