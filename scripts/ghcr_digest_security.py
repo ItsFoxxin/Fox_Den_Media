@@ -240,11 +240,15 @@ def check_scanner(metadata: dict, now: datetime) -> dict:
     ensure(type(db) is dict and type(db.get("Version")) is int and
            db["Version"] > 0 and type(db.get("UpdatedAt")) is str and
            bool(db["UpdatedAt"]), "Vulnerability DB metadata missing")
+    ensure(bool(re.fullmatch(r"\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z",
+                             db["UpdatedAt"])),
+           "Vulnerability DB timestamp must be UTC whole-second Z")
     try:
-        updated = datetime.fromisoformat(db["UpdatedAt"].replace("Z", "+00:00"))
+        updated = datetime.strptime(db["UpdatedAt"], "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=timezone.utc)
     except ValueError as exc:
         raise EvidenceError("Invalid vulnerability DB timestamp") from exc
-    ensure(updated.tzinfo is not None and 0 <= (now - updated).total_seconds() <= 14 * 86400,
+    ensure(0 <= (now - updated).total_seconds() <= 14 * 86400,
            "Vulnerability DB expired or in future")
     return {"name": "trivy", "version": metadata["Version"],
             "db_updated_at": db["UpdatedAt"]}
