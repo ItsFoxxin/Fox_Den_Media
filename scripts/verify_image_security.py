@@ -32,9 +32,38 @@ def validate_contract(contract: dict, candidates: dict, source_sha: str,
                       evidence_dir: Path | None = None) -> None:
     require(bool(SHA.fullmatch(source_sha)), "Bad approved source SHA")
     required = {"schema_version", "producer", "source_sha", "publisher_run_id",
-                "platform", "scanner", "policy_version", "images", "upstream"}
-    require(type(contract) is dict and set(contract) == required, "Bad security contract schema")
-    require(type(contract["schema_version"]) is int and contract["schema_version"] == 1, "Unknown contract")
+                "platform", "scanner", "policy_version", "images", "upstream",
+                "disposition_review"}
+    require(type(contract) is dict and set(contract) == required,
+            "R4 scan security contract must have exact v2 fields")
+    require(type(contract["schema_version"]) is int and
+            contract["schema_version"] == 2,
+            "R4 requires scan-security contract v2; legacy v1 is forbidden")
+    binding = contract["disposition_review"]
+    fields = {"schema_version", "artifact_name", "verification_file",
+              "verification_sha256", "dispositions_sha256",
+              "review_workflow", "review_run_id", "verified_at"}
+    require(type(binding) is dict and set(binding) == fields,
+            "Missing or extra independent review binding fields")
+    require(type(binding["schema_version"]) is int and binding["schema_version"] == 1
+            and binding["artifact_name"] == "security-disposition-review-v1"
+            and binding["verification_file"] == "disposition-verification.json"
+            and binding["review_workflow"] ==
+                ".github/workflows/security-disposition-review.yml"
+            and type(binding["review_run_id"]) is int and
+                binding["review_run_id"] > 0,
+            "Untrusted independent review artifact or run")
+    for name in ("verification_sha256", "dispositions_sha256"):
+        require(type(binding[name]) is str and bool(DIGEST.fullmatch(binding[name])),
+                "Unbound independent review hash: " + name)
+    stamp = binding["verified_at"]
+    require(type(stamp) is str and bool(re.fullmatch(
+        r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", stamp)),
+        "Malformed independent review UTC time")
+    try:
+        datetime.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ")
+    except ValueError as exc:
+        raise SecurityContractError("Invalid independent review UTC timestamp") from exc
     require(contract["producer"] == ".github/workflows/trivy-digest-security.yml", "Unapproved scanner producer")
     require(contract["source_sha"] == source_sha and
             contract["publisher_run_id"] == publisher_run_id, "Wrong source/publisher identity")
@@ -88,6 +117,11 @@ def validate_contract(contract: dict, candidates: dict, source_sha: str,
     upstream = contract["upstream"]
     require(type(upstream) is dict and bool(upstream), "Missing upstream security coverage")
     if lock is not None:
+        require(type(lock) is dict and type(lock.get("images")) is dict and
+                type(lock.get("services")) is dict and
+                set(lock["images"]) == set(COMPONENTS) | set(upstream) and
+                set(lock["services"].values()) == set(lock["images"]),
+                "R2 locked images/services and scanned subjects disagree")
         expected = set(lock["images"]) - set(COMPONENTS)
         require(set(upstream) == expected, "Missing/unexpected upstream image scan")
     for component, record in upstream.items():

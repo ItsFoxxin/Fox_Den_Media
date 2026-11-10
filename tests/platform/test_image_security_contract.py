@@ -29,7 +29,17 @@ def sample():
             "scan_subject": IMAGE_DIGEST, "decision": "pass", "exceptions": [],
         }
     contract = {
-        "schema_version": 1,
+        "schema_version": 2,
+        "disposition_review": {
+            "schema_version": 1,
+            "artifact_name": "security-disposition-review-v1",
+            "verification_file": "disposition-verification.json",
+            "verification_sha256": "sha256:" + "1" * 64,
+            "dispositions_sha256": "sha256:" + "2" * 64,
+            "review_workflow": ".github/workflows/security-disposition-review.yml",
+            "review_run_id": 110,
+            "verified_at": "2026-11-08T11:00:00Z",
+        },
         "producer": ".github/workflows/trivy-digest-security.yml",
         "source_sha": SHA, "publisher_run_id": 99, "platform": "linux/amd64",
         "scanner": {"name": "trivy", "version": "0.76.2",
@@ -52,6 +62,14 @@ def test_exact_digest_contract():
     validate_contract(contract, candidates, SHA, 99)
 
 @pytest.mark.parametrize("mod", [
+    lambda c, d: c.update(schema_version=1),
+    lambda c, d: c.update(schema_version=3),
+    lambda c, d: c.pop("disposition_review"),
+    lambda c, d: c["disposition_review"].update(review_run_id=0),
+    lambda c, d: c["disposition_review"].update(verification_file="integration/disposition-verification.json"),
+    lambda c, d: c["disposition_review"].update(verification_sha256="sha256:bad"),
+    lambda c, d: c["disposition_review"].update(verified_at="2026-11-08T11:00:00+00:00"),
+    lambda c, d: c["disposition_review"].update(review_workflow=".github/workflows/fake.yml"),
     lambda c, d: c.update(source_sha="f" * 40),
     lambda c, d: c.update(publisher_run_id=100),
     lambda c, d: c.update(producer=".github/workflows/other.yml"),

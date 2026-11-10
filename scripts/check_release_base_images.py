@@ -7,7 +7,7 @@ import re
 
 # This release uses one independently reviewed linux/amd64 Python base digest
 # for all first-party containers; the exact digest is committed in Dockerfiles.
-BASE = re.compile(r"FROM python:3\.12\.13-slim-bookworm@sha256:([0-9a-f]{64})(?:\s+AS\s+[A-Za-z][A-Za-z0-9_-]*)?\Z", re.I)
+BASE = re.compile(r"FROM python:3\.12\.15-slim-bookworm@sha256:([0-9a-f]{64})(?:\s+AS\s+[A-Za-z][A-Za-z0-9_-]*)?\Z", re.I)
 DOCKERFILES = (
     "apps/portal/Dockerfile",
     "apps/music/backend/Dockerfile",
