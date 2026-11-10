@@ -634,3 +634,152 @@ def test_v2_workflow_checks_actual_environment_and_independent_review_actor():
     assert '.inputs.stage == "collect"' in workflow
     assert "ghcr-security-contract-v1" not in workflow
     assert "ghcr-security-contract-v2" in workflow
+
+
+# Regression for F-01 and the independent Issue #94 verifier's binary64
+# finite-decimal contract. No real scan, review signature, or CVE is claimed.
+def decimal_trivy_fixture(tmp_path, *, severity="HIGH", score_text="3.7"):
+    plan, reports, lock, scanner, policy, _ = v2_fixture(tmp_path, severity)
+    report_path = reports / "portal.vuln.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    vuln = report["Results"][0]["Vulnerabilities"][0]
+    vuln["CVSS"] = {
+        "redhat": {"V2Vector": "AV:N/AC:L/Au:N/C:P/I:P/A:P",
+                   "V2Score": 3.7, "V3Score": 7.8},
+        "nvd": {"V3Score": 8.1},
+    }
+    report["Results"][0]["Class"] = "os-pkgs"
+    raw = json.dumps(report, ensure_ascii=False,
+                     separators=(",", ":")).encode("utf-8") + b"\n"
+    assert b'"V2Score":3.7' in raw
+    raw = raw.replace(b'"V2Score":3.7', b'"V2Score":' + score_text.encode("ascii"))
+    report_path.write_bytes(raw)
+    context = collect_v2_context(
+        plan, reports, metadata(), policy, lock, scanner,
+        SOURCE, 113, 235, "github:scan-bot", NOW)
+    return plan, reports, lock, scanner, policy, context, report_path
+
+
+@pytest.mark.parametrize("severity", ["HIGH", "CRITICAL"])
+def test_original_nested_finite_cvss_preserved_in_a_and_reviewed_c(tmp_path, severity):
+    plan, reports, lock, scanner, policy, context, path = decimal_trivy_fixture(
+        tmp_path, severity=severity)
+    original_bytes = path.read_bytes()
+    original_hash = "sha256:" + hashlib.sha256(original_bytes).hexdigest()
+    parsed = strict_load(path, scanner_evidence=True)
+    vulnerability = parsed["Results"][0]["Vulnerabilities"][0]
+    assert vulnerability["CVSS"]["redhat"]["V2Score"] == 3.7
+    assert vulnerability["CVSS"]["redhat"]["V3Score"] == 7.8
+    assert vulnerability["CVSS"]["nvd"]["V3Score"] == 8.1
+    assert context["images"]["portal"]["trivy_report_sha256"] == original_hash
+    # Collection is not a pass. It still contains a severe finding and
+    # preserves every raw Trivy byte for independent human review.
+    assert parsed["Results"][0]["Vulnerabilities"][0]["Severity"] == severity
+    subject = severe_inventory(context, reports)[("portal", 0, 0)]
+    canonical = json.dumps(vulnerability, sort_keys=True, separators=(",", ":"),
+                           ensure_ascii=True, allow_nan=False).encode()
+    assert subject["finding_sha256"] == (
+        "sha256:" + hashlib.sha256(canonical).hexdigest())
+    assert b'"V2Score":3.7' in canonical
+    record = {"status": "FIXED", "subject": subject, "proof_path": "proofs/synthetic.json",
+              "proof_sha256": "sha256:" + "d" * 64,
+              "reviewer_id": "github:synthetic-independent-reviewer"}
+    document, reviewed = synthetic_review(context, [record])
+    # This is *only* the C structural/hash adapter: B's independently
+    # authenticated Ed25519 review and lifecycle remain mandatory at runtime.
+    contract = synthetic_finalize(plan, reports, lock, scanner, policy,
+                                  context, document, reviewed)
+    assert contract["schema_version"] == 2
+    assert contract["images"]["portal"]["decision"] == "pass"
+    assert contract["images"]["portal"]["vulnerability_report_sha256"] == original_hash
+    assert path.read_bytes() == original_bytes
+
+
+def test_original_cvss_lexical_variation_changes_raw_hash_not_canonical_finding(tmp_path):
+    plan, reports, lock, scanner, policy, first, path = decimal_trivy_fixture(
+        tmp_path, score_text="3.7")
+    original = path.read_bytes()
+    first_finding = severe_inventory(first, reports)[("portal", 0, 0)]["finding_sha256"]
+    alternate = original.replace(b'"V2Score":3.7', b'"V2Score":3.700')
+    assert original != alternate
+    path.write_bytes(alternate)
+    second = collect_v2_context(plan, reports, metadata(), policy, lock,
+                                scanner, SOURCE, 113, 235, "github:scan-bot", NOW)
+    second_finding = severe_inventory(second, reports)[("portal", 0, 0)]["finding_sha256"]
+    assert second_finding == first_finding
+    assert first["images"]["portal"]["trivy_report_sha256"] != (
+        second["images"]["portal"]["trivy_report_sha256"])
+    assert strict_load(path, scanner_evidence=True)["Results"][0][
+        "Vulnerabilities"][0]["CVSS"]["redhat"]["V2Score"] == 3.7
+
+
+def test_modified_original_cvss_report_cannot_reuse_signed_a_context(tmp_path):
+    plan, reports, lock, scanner, policy, context, path = decimal_trivy_fixture(tmp_path)
+    doc, result = synthetic_review(context, [{
+        "status": "FIXED",
+        "subject": severe_inventory(context, reports)[("portal", 0, 0)],
+        "proof_path": "proofs/synthetic.json",
+        "proof_sha256": "sha256:" + "d" * 64,
+        "reviewer_id": "github:synthetic-reviewer",
+    }])
+    original = path.read_bytes()
+    path.write_bytes(original.replace(b'"V2Score":3.7', b'"V2Score":3.8'))
+    assert path.read_bytes() != original
+    with pytest.raises(EvidenceError, match="Altered signed A"):
+        synthetic_finalize(plan, reports, lock, scanner, policy,
+                           context, doc, result)
+
+
+@pytest.mark.parametrize("bad_number", [
+    "NaN", "Infinity", "-Infinity", "1e309", "-1e309", "9.9e99999",
+])
+def test_original_trivy_nonfinite_cvss_is_rejected(tmp_path, bad_number):
+    path = tmp_path / "report.vuln.json"
+    path.write_text('{"CVSS":{"nvd":{"V3Score":' + bad_number + '}}}',
+                    encoding="utf-8")
+    with pytest.raises(EvidenceError, match="numeric|Nonfinite"):
+        strict_load(path, scanner_evidence=True)
+
+
+def test_original_trivy_nested_duplicate_cvss_field_is_rejected(tmp_path):
+    path = tmp_path / "report.vuln.json"
+    path.write_text('{"CVSS":{"nvd":{"V3Score":3.7,"V3Score":8.1}}}',
+                    encoding="utf-8")
+    with pytest.raises(EvidenceError, match="Duplicate"):
+        strict_load(path, scanner_evidence=True)
+
+
+@pytest.mark.parametrize("payload", [
+    '{"schema_version":1.0}', '{"r3_run_id":2.0}',
+    '{"CVSS":{"nvd":{"V3Score":3.7}}}',
+])
+def test_signed_control_and_default_evidence_loader_stay_decimal_strict(tmp_path, payload):
+    path = tmp_path / "control.json"
+    path.write_text(payload, encoding="utf-8")
+    with pytest.raises(EvidenceError, match="numeric"):
+        strict_load(path)
+
+
+def test_spdx_and_scanner_metadata_are_not_decimal_scanner_evidence(tmp_path):
+    plan, reports, lock, scanner, policy, context, path = decimal_trivy_fixture(tmp_path)
+    spdx = reports / "portal.sbom.spdx.json"
+    spdx.write_text(spdx.read_text()[:-1] + ',"unexpected":3.7}')
+    with pytest.raises(EvidenceError, match="numeric"):
+        collect_v2_context(plan, reports, metadata(), policy, lock, scanner,
+                           SOURCE, 113, 235, "github:scan-bot", NOW)
+    spdx.unlink()
+    control = tmp_path / "scanner.json"
+    control.write_text('{"Version":"0.76.2","VulnerabilityDB":{"Version":1.0}}')
+    with pytest.raises(EvidenceError, match="numeric"):
+        strict_load(control)
+
+
+@pytest.mark.parametrize("bad_bytes", [
+    b'{"CVSS":',
+    b'{"CVSS":"' + bytes([255]) + b'"}',
+])
+def test_malformed_original_trivy_json_or_utf8_still_fails(tmp_path, bad_bytes):
+    path = tmp_path / "report.vuln.json"
+    path.write_bytes(bad_bytes)
+    with pytest.raises((ValueError, UnicodeError)):
+        strict_load(path, scanner_evidence=True)
