@@ -349,10 +349,11 @@ def collect_findings(context: dict, evidence_dir: Path) -> dict:
                         type(vulnerability.get("Severity")) is str and
                         vulnerability["Severity"] in SEVERITIES,
                         "Unidentified or unknown severity/package finding")
-                full = canonical_digest(vulnerability)
+                # Duplicate detection uses underlying identity, not mutable scanner metadata.
+                # finding_subject() still binds the full canonical vulnerability hash.
                 identity = (component, result["Target"], result["Type"],
                             vulnerability["VulnerabilityID"], vulnerability["PkgName"],
-                            vulnerability["InstalledVersion"], full)
+                            vulnerability["InstalledVersion"])
                 require(identity not in identities, "Ambiguous duplicate finding identity")
                 identities.add(identity)
                 severity = vulnerability["Severity"]

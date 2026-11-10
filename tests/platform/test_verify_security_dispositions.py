@@ -272,6 +272,94 @@ def test_duplicate_ambiguous_finding(tmp_path):
         check(c)
 
 
+
+@pytest.mark.parametrize("variation", [
+    "identical", "high_low", "critical_high", "fixed_version",
+    "description", "separate_results", "separate_results_high_low",
+])
+def test_conflicting_underlying_finding_is_rejected_with_valid_evidence(
+        tmp_path, variation):
+    """Reject duplicate CVE/package/target occurrences before disposition matching."""
+    c = case_factory(tmp_path, severity="CRITICAL" if variation == "critical_high"
+                     else "HIGH")
+    result = c["report"]["Results"][0]
+    duplicate = copy.deepcopy(result["Vulnerabilities"][0])
+    if variation in {"high_low", "separate_results_high_low"}:
+        duplicate["Severity"] = "LOW"
+    elif variation == "critical_high":
+        duplicate["Severity"] = "HIGH"
+    elif variation == "fixed_version":
+        duplicate["FixedVersion"] = "2.0"
+    elif variation == "description":
+        duplicate["Description"] = "Conflicting metadata for the same occurrence"
+
+    if variation.startswith("separate_results"):
+        result2 = copy.deepcopy(result)
+        result2["Vulnerabilities"] = [duplicate]
+        c["report"]["Results"].append(result2)
+    else:
+        result["Vulnerabilities"].append(duplicate)
+
+    refresh(c)
+    # Original report bytes, first disposition signature, and proof stay consistent.
+    assert v.raw_digest(tmp_path / "security/reports/portal.vuln.json") == (
+        c["context"]["images"]["portal"]["trivy_report_sha256"])
+    v.validate_signatures(c["doc"], c["signatures"], c["trust"], False)
+    with pytest.raises(v.DispositionError,
+                       match="Ambiguous duplicate finding identity"):
+        check(c)
+
+
+@pytest.mark.parametrize("difference", [
+    "package", "installed_version", "cve", "target", "ecosystem",
+])
+def test_distinct_findings_in_same_image_can_each_be_signed(
+        tmp_path, difference):
+    """Keep distinct underlying package/CVE and target/ecosystem occurrences."""
+    c = case_factory(tmp_path, status="FIXED", severity="HIGH")
+    base_result = c["report"]["Results"][0]
+    additional_vuln = copy.deepcopy(base_result["Vulnerabilities"][0])
+    if difference == "package":
+        additional_vuln["PkgName"] = "libsynthetic-other"
+    elif difference == "installed_version":
+        additional_vuln["InstalledVersion"] = "2.0"
+    elif difference == "cve":
+        additional_vuln["VulnerabilityID"] = "CVE-2099-1001"
+
+    if difference in {"target", "ecosystem"}:
+        result2 = copy.deepcopy(base_result)
+        result2["Vulnerabilities"] = [additional_vuln]
+        if difference == "target":
+            result2["Target"] = "debian:12-other-layer"
+        else:
+            result2["Type"] = "other-ecosystem"
+        c["report"]["Results"].append(result2)
+        result_index, vuln_index = 1, 0
+    else:
+        base_result["Vulnerabilities"].append(additional_vuln)
+        result_index, vuln_index = 0, 1
+
+    refresh(c)
+    selected_result = c["report"]["Results"][result_index]
+    subject2 = v.finding_subject(
+        "portal", result_index, vuln_index, selected_result,
+        additional_vuln, c["context"]["images"]["portal"])
+    assert subject2["finding_sha256"] == v.canonical_digest(additional_vuln)
+    proof2 = copy.deepcopy(c["proof"])
+    for field in ("image_repository", "manifest_digest", "platform_digest",
+                  "finding_sha256", "installed_version"):
+        proof2[field] = subject2[field]
+    proof_path = tmp_path / "review/proofs/distinct.json"
+    put(proof_path, proof2)
+    c["doc"]["records"].append({
+        "status": "FIXED", "subject": subject2,
+        "proof_path": "proofs/distinct.json",
+        "proof_sha256": v.raw_digest(proof_path),
+        "reviewer_id": "github:independent-reviewer"})
+    resign_document(c)
+    assert check(c)["cleared_finding_count"] == 2
+
+
 def test_duplicate_review_record(tmp_path):
     c = case_factory(tmp_path)
     c["doc"]["records"].append(copy.deepcopy(c["doc"]["records"][0]))
