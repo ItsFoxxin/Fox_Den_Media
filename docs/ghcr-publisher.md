@@ -55,12 +55,12 @@ job-specific `packages: write` token. It has no deployment credentials.
    re-run with force, retag or silently rebuild.
 5. Immediately disable the authorization variables after the authorized run.
 
-**Build reproducibility prerequisite:** all three current Dockerfiles use the
-mutable parent `python:3.12.13-slim-bookworm`. R3 now runs
-`scripts/check_release_base_images.py` and will **reject** publication until
-all three have been independently verified and updated to the same approved
-`python:3.12.13-slim-bookworm@sha256:<64-hex-digest>` parent.
-Pinning the commit alone does not freeze mutable base-image contents.
+**Build reproducibility prerequisite:** all three Dockerfiles still reference
+mutable `python:3.12.13-slim-bookworm`. The updated R3 preflight now demands
+one identical independently reviewed immutable
+`python:3.12.15-slim-bookworm@sha256:<64-hex-digest>` in all three files.
+No base digest was fabricated and the Dockerfiles were not modified. R3
+publication remains blocked until the owner reviews and pins the real digest.
 
 The publisher records image, source SHA, linux/amd64 manifest digest, GitHub
 run ID and BuildKit provenance/SBOM. It also creates a GitHub-signed image
@@ -74,11 +74,12 @@ version. No license label is added until the licensing decision.
 
 ## R4 — shared, independently signed security evidence
 
-The read-only `ghcr-verify.yml` requires a successful R3 run on the same
-exact source and a successful **trusted**
-`.github/workflows/trivy-digest-security.yml` producer run. It downloads
-all three immutable candidate artifacts and the *signed* shared security
-contract plus release lock and nonsecret rendered release Compose file.
+The read-only `ghcr-verify.yml` now requires approved R3, original signed
+scan collection A, independent review B, and finalized signed v2 producer C,
+all on the same exact immutable approved `main` source. R4 independently
+authenticates A/B/C workflow, run, signer and source identities and verifies
+unchanged original Trivy/SPDX inputs against the complete R2 lock and the
+reviewed owner-controlled disposition lifecycle.
 
 R4 verifies the expected GitHub workflow/run/SHA, the security contract's
 attestation identity, every first-party image's GitHub attestation, OCI
@@ -95,13 +96,13 @@ run against real R3 candidate images. This remains a hard release dependency. R4
 and tests it. Do not weaken that gate, forge "pass" records or treat an
 R4 structural test as security acceptance.
 
-Shared contract v1 fields: exact producer, source SHA, publisher run,
-platform, pinned Trivy version/DB timestamp, policy version, and one entry
-per first-party digest with platform digest, verified provenance, SPDX SBOM
-subject/hash, vulnerability scan subject/hash, decision and exceptions.
-This contract is consumed, **not generated**, by this PR's verifier. It
-currently rejects nonempty exception lists until a separately approved,
-expiring, issue-linked exception policy is wired in.
+The mandatory `schema_version: 2` scan-security contract retains every
+original source, publisher, OCI, provenance, Trivy, SPDX, DB-age and
+`exceptions=[]` policy binding, plus the exact `disposition_review`
+extension from PR #93. Legacy scan-security v1 has **no fallback**.
+Only independently authenticated, technically verified FIXED or NOT_AFFECTED
+records may clear a HIGH/CRITICAL finding, and UNKNOWN always blocks.
+The source exception-policy hash semantics remain `v1:` without waivers.
 
 The R4 consumer now requires pass decisions, provenance verification and
 checksummed SPDX/Trivy evidence for **every enabled upstream image**, in
@@ -111,6 +112,67 @@ not yet exist, these are required input conditions, **not completed scans**.
 Final release-lock approval needs the owner-approved vulnerability exception
 process, any required full-profile acceptance and independently retained
 evidence for each digest.
+
+## PR #93 — Independent v2 disposition integration
+
+[Authoritative interface guide](https://github.com/ItsFoxxin/Fox_Den_Media/blob/5da5328c923f548794f7ee9568fd6c8c175dea13/docs/security-disposition-review.md).
+
+The reviewer interface is separate from release security acceptance.
+**A** collects complete unsuppressed original Trivy/SPDX bytes, signed
+`context.json`, scanner, policy and complete R2 lock as artifact
+`ghcr-security-contract-v2-inputs`. **B** independently verifies all findings
+and human Ed25519 review/owner concurrence in a protected main-only workflow
+and signs `disposition-verification.json` in artifact
+`security-disposition-review-v1`. **C** consumes A and B, preserving original
+reports, and signs the finalized `ghcr-security-contract-v2` with exact
+`disposition_review`. A successful scan collection is never a pass decision.
+
+At R4 acceptance, the workflow requires exact successful and distinct
+authenticated A/B/C run IDs and expected signer workflow, current approved
+source SHA, attested file-subject raw hash, independently authenticated scan
+producer actor, current R2/OCI identities and source exception policy. The
+trusted owner-managed review Environment must enforce required reviewers and
+protected main. Review signer public keys, fresh signed lifecycle,
+revocation/supersession, expiry, scanner age and every HIGH/CRITICAL
+finding/proof are independently re-evaluated through the PR #93 verifier.
+Producer-provided trust and stale lifecycle snapshots are not accepted.
+
+The final C security contract names the review artifact ROOT file
+`disposition-verification.json`. After validation, the R4 signed
+`verification.json` adds the exact `disposition_review` extension with
+`schema_version:1`, `artifact_name:security-disposition-review-v1`,
+`verification_file:integration/disposition-verification.json`,
+`verification_sha256`, `dispositions_sha256`, `review_workflow`,
+`review_run_id` and `verified_at`.
+
+The existing `foxden.r4.release-ready.v1` root envelope remains **unchanged**
+with precisely `schema_version`, `version`, `repository`, `workflow`,
+`source_sha`, `r3_run_id`, `r4_run_id` and `files`. The two existing
+file maps (in `verification.json` and the signed root) include SHA-256 of
+all the original copied disposition evidence:
+
+| Required flattened signed path | Exact origin |
+| --- | --- |
+| `integration/disposition-verification.json` | Independently B-signed verification result |
+| `integration/security-dispositions.json` | Original signed dispositions document |
+| `integration/security-disposition-signatures.json` | Detached reviewer/owner signatures |
+| `integration/disposition-proof-<slug>.json` | Every original `review/proofs/<slug>.json` |
+
+The original disposition document uses a **canonical** SHA-256; bundle
+file hashes cover the **raw original bytes**. Missing, duplicate, extra or
+altered proofs, or missing signed-map entries, fail closed. No unsigned
+sidecar and no competing R5 schema are introduced.
+
+**External blockers:** PR #93's `scripts.verify_security_dispositions`
+is not merged onto this branch, so R4 deliberately refuses real acceptance
+until its independently reviewed verifier is available. PR #84 owns the
+future A/C producers; PR #80 owns mandatory R5 independent review
+revalidation. Protected Environment policy, owner Ed25519 trust/key
+custody, independent submission transport, latest owner-signed lifecycle
+publication and anti-rollback, actual severe-finding resolution, upstream
+provenance and owner approvals remain unverified or absent.
+No real CVE has been cleared by these synthetic integration changes.
+
 
 ## Package presentation, permissions and release boundaries
 
@@ -129,11 +191,11 @@ not publish or deploy, and this PR does not introduce R5 or R6.
 The separate `.github/workflows/trivy-digest-security.yml` (not modified
 by this PR) must be a successful, owner-approved, completed manual run on
 the **same current main SHA and authenticated R3 run**. R4 downloads its
-`ghcr-security-contract-v1` artifact. Expected relative paths:
+`ghcr-security-contract-v2` artifact. Expected relative paths:
 
 | File | Required consumer binding |
 | --- | --- |
-| `security-contract.json` | Strict v1 fields, exact producer/source SHA/R3 run, scanner/policy, all first-party and enabled upstream decisions |
+| `security-contract.json` | Strict v2 fields, exact producer/source SHA/R3 run, scanner/policy, all first-party and enabled upstream decisions |
 | `release-lock.json` | R2 v1 lock with full profile/service set and immutable SHA256 images |
 | `rendered-release-compose.json` | **Sanitized** image-only Compose, no builds or sensitive environment values; maps exactly to lock |
 | `scanner.json` | Trivy `Version=0.76.2`, positive integer `VulnerabilityDB.Version`, parseable UTC `UpdatedAt`, not future or older than 14 days |
