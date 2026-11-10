@@ -204,6 +204,7 @@ def revalidate_independent_dispositions(*, security: dict, lock: dict,
                                         source: str, r3_id: int, scan_id: int,
                                         review_id: int, scan_actor: str,
                                         security_dir: Path, scan_dir: Path,
+                                        policy_path: Path,
                                         review_dir: Path, trust_path: Path,
                                         lifecycle_path: Path,
                                         lifecycle_signature_path: Path) -> tuple[dict, dict]:
@@ -232,7 +233,7 @@ def revalidate_independent_dispositions(*, security: dict, lock: dict,
         require(sha_file(scan_dir / name) == sha_file(security_dir / name),
                 "Final C has altered signed scan A evidence: " + name)
     require(sha_file(scan_dir / "vulnerability-exceptions.json") ==
-            sha_file(security_dir.parent / "security" / "vulnerability-exceptions.json"),
+            sha_file(policy_path),
             "Scan A exception ledger differs from checked-out source")
     for component in lock["images"]:
         require(type(component) is str and
@@ -371,7 +372,7 @@ def assemble_bundle(*, source: str, r3_id: int, r4_id: int,
         security=security, lock=lock, scanner=scanner, ledger=ledger,
         source=source, r3_id=r3_id, scan_id=scan_id, review_id=review_id,
         scan_actor=scan_actor, security_dir=security_dir, scan_dir=scan_dir,
-        review_dir=review_dir, trust_path=trust_path,
+        policy_path=policy_path, review_dir=review_dir, trust_path=trust_path,
         lifecycle_path=lifecycle_path,
         lifecycle_signature_path=lifecycle_signature_path)
     require(security.get("policy_version") == "v1:" + hashlib.sha256(

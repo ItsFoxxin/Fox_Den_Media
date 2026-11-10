@@ -160,31 +160,101 @@ jobs:
             test -s "candidates/$name/$name.json"
             cp "candidates/$name/$name.json" "candidates/$name.json"
           done
-      - name: Download signed shared digest scan and complete release lock
+      - name: Preserve approved source security policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p source-policy
+          git show HEAD:security/vulnerability-exceptions.json \
+            > source-policy/vulnerability-exceptions.json
+          test -s source-policy/vulnerability-exceptions.json
+      - name: Authenticate exact A B C signed artifact subjects
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          SCAN_RUN: ${{ inputs.scan_run_id }}
+          REVIEW_RUN: ${{ inputs.review_run_id }}
           SECURITY_RUN: ${{ inputs.security_run_id }}
           SOURCE_SHA: ${{ inputs.source_sha }}
         run: |
           set -euo pipefail
-          mkdir -p security
+          mkdir -p scan-inputs review-evidence security
+          gh run download "$SCAN_RUN" --repo "$GITHUB_REPOSITORY" \
+            --name ghcr-security-contract-v2-inputs --dir scan-inputs
+          gh run download "$REVIEW_RUN" --repo "$GITHUB_REPOSITORY" \
+            --name security-disposition-review-v1 --dir review-evidence
           gh run download "$SECURITY_RUN" --repo "$GITHUB_REPOSITORY" \
-            --name ghcr-security-contract-v1 --dir security
-          test -s security/security-contract.json
-          test -s security/release-lock.json
-          test -s security/rendered-release-compose.json
-          test -s security/scanner.json
+            --name ghcr-security-contract-v2 --dir security
+          for file in scan-inputs/context.json scan-inputs/release-lock.json \
+                      scan-inputs/scanner.json scan-inputs/vulnerability-exceptions.json \
+                      review-evidence/security/disposition-verification.json \
+                      review-evidence/review/dispositions.json \
+                      review-evidence/review/signatures.json \
+                      security/security-contract.json security/release-lock.json \
+                      security/rendered-release-compose.json security/scanner.json; do
+            test -s "$file"
+          done
+          test -d scan-inputs/reports && test -d review-evidence/review/proofs
           test -d security/reports
-          # Authenticate every exact, individually attested top-level input.
+          test "$(jq -er .schema_version security/security-contract.json)" = 2
+          # gh establishes exact OIDC signer/repo/source; the signed SLSA
+          # invocation binds the retrieved subject to the queried run ID.
+          verify_subject() {
+            local file="$1" run="$2" signer="$3"
+            local output="$RUNNER_TEMP/attested-$(basename "$file").$run.json"
+            gh attestation verify "$file" --repo "$GITHUB_REPOSITORY" \
+              --source-ref "refs/heads/main" --source-digest "$SOURCE_SHA" \
+              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/$signer" \
+              --format json > "$output"
+            python - "$output" "$file" "$run" "$GITHUB_REPOSITORY" <<'PY'
+          import hashlib
+          import json
+          import re
+          import sys
+          from pathlib import Path
+          entries = json.loads(Path(sys.argv[1]).read_text())
+          actual = hashlib.sha256(Path(sys.argv[2]).read_bytes()).hexdigest()
+          run, repo = sys.argv[3:]
+          prefix = "https://github.com/" + repo + "/actions/runs/" + run + "/attempts/"
+          def valid(entry):
+              result = entry.get("verificationResult", {})
+              statement = result.get("statement", {})
+              predicate = statement.get("predicate", {})
+              invocation = predicate.get("runDetails", {}).get("metadata", {}).get("invocationId")
+              subjects = statement.get("subject", [])
+              return (isinstance(invocation, str) and
+                      re.fullmatch(re.escape(prefix) + r"[1-9][0-9]*", invocation) and
+                      isinstance(subjects, list) and
+                      any(isinstance(x, dict) and
+                          x.get("digest", {}).get("sha256") == actual for x in subjects))
+          if not isinstance(entries, list) or not any(
+                  valid(entry) for entry in entries if isinstance(entry, dict)):
+              raise SystemExit("Signed subject not bound to authenticated A/B/C run")
+          PY
+          }
+          verify_subject scan-inputs/context.json "$SCAN_RUN" trivy-digest-security.yml
+          verify_subject review-evidence/security/disposition-verification.json \
+            "$REVIEW_RUN" security-disposition-review.yml
           for file in security/security-contract.json security/release-lock.json \
                       security/rendered-release-compose.json security/scanner.json; do
-            gh attestation verify "$file" \
-              --repo "$GITHUB_REPOSITORY" \
-              --source-ref "refs/heads/main" \
-              --source-digest "$SOURCE_SHA" \
-              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/trivy-digest-security.yml"
+            verify_subject "$file" "$SECURITY_RUN" trivy-digest-security.yml
           done
+      - name: Load owner-managed signed disposition lifecycle and reviewer trust
+        shell: bash
+        env:
+          TRUST_B64: ${{ vars.SECURITY_DISPOSITION_TRUST_B64 }}
+          LEDGER_B64: ${{ vars.SECURITY_DISPOSITION_LIFECYCLE_B64 }}
+          LEDGER_SIG_B64: ${{ vars.SECURITY_DISPOSITION_LIFECYCLE_SIG_B64 }}
+          LEDGER_SHA: ${{ vars.SECURITY_DISPOSITION_LIFECYCLE_SHA256 }}
+        run: |
+          set -euo pipefail
+          test -n "$TRUST_B64" && test -n "$LEDGER_B64" && test -n "$LEDGER_SIG_B64"
+          [[ "$LEDGER_SHA" =~ ^sha256:[0-9a-f]{64}$ ]]
+          mkdir -p governance
+          printf %s "$TRUST_B64" | base64 --decode > governance/disposition-trust.json
+          printf %s "$LEDGER_B64" | base64 --decode > governance/disposition-lifecycle.json
+          printf %s "$LEDGER_SIG_B64" | base64 --decode > governance/disposition-lifecycle.sig
+          test "sha256:$(sha256sum governance/disposition-lifecycle.json | cut -d' ' -f1)" = "$LEDGER_SHA"
       - name: Download and independently authenticate acceptance receipts
         shell: bash
         env:
@@ -238,7 +308,7 @@ jobs:
           python scripts/verify_image_security.py --contract security/security-contract.json \
             --lock security/release-lock.json --evidence-dir security/reports \
             --scanner-metadata security/scanner.json \
-            --policy security/vulnerability-exceptions.json \
+            --policy source-policy/vulnerability-exceptions.json \
             --candidates candidates --source-sha "$SOURCE_SHA" \
             --publisher-run-id "$PUBLISHER_RUN"
           python scripts/release_lock.py security/release-lock.json \
