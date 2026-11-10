@@ -194,6 +194,29 @@ def verify_integration(report: dict, lock: dict, source: str, r4_id: int) -> Non
 
 
 
+def require_unmodified_scan_collection(*, lock: dict, security_dir: Path,
+                                       scan_dir: Path, policy_path: Path) -> None:
+    """A raw reports, SPDX, scanner, lock and source policy survive C unchanged."""
+    require(type(lock) is dict and type(lock.get("images")) is dict and
+            bool(lock["images"]), "Missing complete R2 locked images")
+    # A is the original, signed complete scan collection. C must not swap
+    # its lock, scanner, ledger or any raw per-image report/SBOM before review.
+    for name in ("release-lock.json", "scanner.json"):
+        require(sha_file(scan_dir / name) == sha_file(security_dir / name),
+                "Final C has altered signed scan A evidence: " + name)
+    require(sha_file(scan_dir / "vulnerability-exceptions.json") ==
+            sha_file(policy_path),
+            "Scan A exception ledger differs from checked-out source")
+    for component in lock["images"]:
+        require(type(component) is str and
+                bool(re.fullmatch(r"[a-z][a-z0-9_-]{0,39}", component)),
+                "Unsafe or missing locked scan component")
+        for suffix in (".vuln.json", ".sbom.spdx.json"):
+            rel = "reports/" + component + suffix
+            require(sha_file(scan_dir / rel) == sha_file(security_dir / rel),
+                    "Final C changed original scan A evidence: " + rel)
+
+
 REVIEW_WORKFLOW = ".github/workflows/security-disposition-review.yml"
 REVIEW_ARTIFACT = "security-disposition-review-v1"
 PROOF_BASENAME = re.compile(r"proofs/([a-z0-9_-]+)\.json\Z")
@@ -227,22 +250,8 @@ def revalidate_independent_dispositions(*, security: dict, lock: dict,
     require(type(scan_actor) is str and
             bool(re.fullmatch(r"github:[A-Za-z0-9-]{1,39}", scan_actor)),
             "Missing independently authenticated scan A actor")
-    # A is the original, signed complete scan collection. C must not swap
-    # its lock, scanner, ledger or any raw per-image report/SBOM before review.
-    for name in ("release-lock.json", "scanner.json"):
-        require(sha_file(scan_dir / name) == sha_file(security_dir / name),
-                "Final C has altered signed scan A evidence: " + name)
-    require(sha_file(scan_dir / "vulnerability-exceptions.json") ==
-            sha_file(policy_path),
-            "Scan A exception ledger differs from checked-out source")
-    for component in lock["images"]:
-        require(type(component) is str and
-                bool(re.fullmatch(r"[a-z][a-z0-9_-]{0,39}", component)),
-                "Unsafe or missing locked scan component")
-        for suffix in (".vuln.json", ".sbom.spdx.json"):
-            rel = "reports/" + component + suffix
-            require(sha_file(scan_dir / rel) == sha_file(security_dir / rel),
-                    "Final C changed original scan A evidence: " + rel)
+    require_unmodified_scan_collection(lock=lock, security_dir=security_dir,
+                                       scan_dir=scan_dir, policy_path=policy_path)
     signed_path = review_dir / "security/disposition-verification.json"
     signed_bytes = signed_path.read_bytes()
     signed_result = load_json(signed_path)
@@ -284,7 +293,7 @@ def stage_independent_dispositions(*, review_dir: Path, output: Path,
     This stages *already authenticated* B evidence. Upstream verification and
     latest owner lifecycle MUST succeed before the caller invokes it.
     """
-    assert type(dispositions) is dict
+    require(type(dispositions) is dict, "Invalid disposition document")
     require(type(dispositions.get("records")) is list,
             "Missing disposition records")
     review_root = review_dir / "review"
