@@ -1,200 +1,67 @@
-# Trusted immutable GHCR security evidence producer (issue #83)
+# R4 trusted digest-security producer — v2 A/C (Issue #83, draft PR #84)
 
-**Status: implementation only, NOT real release evidence or approval to publish/deploy.**
-This is a separate, manual R4 producer for draft PR #81's **strict**
-`ghcr-security-contract-v1` consumer. The existing `trivy.yml` advisory
-Dockerfile builds, Trivy PR reporter and `security_contract.py` assessment
-are untouched. Source of truth for time-bounded exceptions remains
-`security/vulnerability-exceptions.json`. Issue #76 owns remediation.
+**Preparatory code only. No 1.0.0 release, real image assessment, protected merge, GHCR push or NAS authorization.** This PR owns the existing `trivy-digest-security.yml` workflow and `ghcr_digest_security.py`; it does not copy or edit the separately owned #93 / #81 / #80 branches. The reviewed interface is PR #93 at `5da5328c923f548794f7ee9568fd6c8c175dea13`, `docs/security-disposition-review.md`. This is a dependency contract, not a claim that PR #93 has merged.
 
-## Separation and prerequisites
+## Why two independent runs
 
-1. Merge reviewed R1/R2 PR #79 and R3/R4 PR #81 into `dev` only after
-   owner approval and separately promote the approved source to `main`.
-   Neither release workflows nor this producer are runnable on this PR branch.
-2. Obtain an **authorized, successful R3** `ghcr-candidates.yml`
-   `workflow_dispatch` on the exact current approved `main` SHA. R3 must
-   have created **all three digest-identified candidate artifacts**:
-   `ghcr-candidate-portal`, `ghcr-candidate-music`,
-   `ghcr-candidate-media`; Music web and worker share the Music digest.
-   There are currently no approved 1.0.0 candidate images to assess.
-3. After R3, an owner reviews a complete R2 JSON release lock, the
-   `linux/amd64` platform manifests, selected profiles, rollback digest
-   and a **sanitized image-only** rendered Compose JSON. All enabled upstream
-   images must be digest-locked, not mutable tags or implicit aliases.
-4. **Before approving/promoting the source SHA to main**, commit reviewed
-   `security/upstream-provenance.json` entries for **each intended upstream
-   image**. Upstream digests and signer identities can be selected before R3;
-   changing this file after R3 would change the approved main SHA and
-   invalidate the R3 run.
-   Its default `upstream: {}` is deliberately **non-accepting**: if nginx
-   has no exact signer metadata, this workflow stops before scanning.
-   Each entry is keyed by `nginx`, `browser`, `jellyfin`, `gluetun` or
-   `qbittorrent` and contains:
-   `ref` (full exact registry digest),
-   `source_repo` (GitHub owner/repository),
-   `source_sha` (signed source commit),
-   `source_ref` (signed branch/tag),
-   `signer_workflow` (full GitHub Actions workflow path in that repo).
-   **Never invent a signer.** If an upstream image lacks a verifiable
-   GitHub OCI attestation, R4 is blocked pending owner-approved support for
-   another independently authenticated provenance scheme; marking it
-   `verified` without proof is prohibited.
+A single v1 producer blocked on any HIGH/CRITICAL, making independent legitimate FIXED or NOT_AFFECTED review impossible. The new workflow accepts `stage: collect` (A) or `stage: finalize` (C) under separate, human-reviewed `ghcr-security` environment approvals. Between them, a separately authorized B workflow in PR #93 must perform independent Ed25519 human dispositions and GitHub OIDC attestation.
 
-## Exact upstream provenance blockers (not fabricated)
+1. **A — collect original evidence**: only manual approved `main` SHA with a real, successful same-source R3 run, three first-party candidates and owner-reviewed R2 lock. Authenticate R3, exact OCI digest, platform and upstream signer (never assume provenance); scan each distinct enabled image with checksum-verified Trivy 0.76.2. Retain unaltered unsuppressed `reports/*.vuln.json`, original SPDX and scanner JSON. Verify structure, image ID, hash, Trivy version, positive DB version, nonfuture <=14-day freshness, source/R3, lock and service coverage. **HIGH/CRITICAL/UNKNOWN are retained, not cleared or suppressed.** UNKNOWN blocks final security acceptance. Sign context, lock, rendered Compose, scanner and source exception policy with GitHub OIDC; upload `ghcr-security-contract-v2-inputs`. SUCCESS means evidence collected, **not security accepted**.
+2. **B — separate independent human review**: separately owned `.github/workflows/security-disposition-review.yml` consumes signed A + independently authenticated `security-disposition-submission-v1`; validates every HIGH/CRITICAL occurrence from the unmodified reports, FIXED/NOT_AFFECTED proof and reviewer Ed25519 signature, additional owner Ed25519 concurrence for CRITICAL NOT_AFFECTED, and separately owner-signed fresh lifecycle. It emits signed `security-disposition-review-v1`, with `disposition-verification.json` plus dispositions, signatures and original proofs. This implementation and owner-managed reviewer submission are **not** in PR #84.
+3. **C — finalize strict v2**: separately authorize another manual run on the **same approved SHA**. Fetch run-ID-specific successful R3/A/B artifacts, verify exact completed GitHub workflow/source identities and OIDC attestation on A and B, independently reconstruct R2/candidate/upstream identities and current report hashes, then **rerun the PR #93 CLI** using owner-managed current trust, separately signed latest lifecycle, the original source/lock/scanner/reports, review proof files and signatures. Require its regenerated `disposition-verification.json` bytes to match the signed B verification. Reject expired/revoked/superseded review, missing or duplicate HIGH/CRITICAL, UNKNOWN, wrong source/lock/manifest/platform, wrong signer or altered report. Produce only `schema_version=2` `security-contract.json` with `disposition_review`. Sign and upload `ghcr-security-contract-v2`. No silent v1 fallback.
 
-`security/upstream-provenance.json` remains `{"schema_version": 1, "upstream": {}}`.
-The producer **cannot currently complete** for any release lock: `nginx`
-is an always-enabled ingress dependency and lacks a reviewed digest-specific
-GitHub signer entry. This is **missing evidence**, not a proven absence of
-all possible upstream signatures. No signer, upstream source SHA, OCI
-attestation or reviewed manifest has been authenticated by this draft PR.
+The workflow has **no PR/push trigger**, no `packages: write`, no publication or NAS token. A and C are separate workflow dispatches; C cannot execute a full verification without independently integrated PR #93 verifier and a real owner-controlled trust/lifecycle channel.
 
-| R2 component | Registry identity | Enabled by | Current state |
-| --- | --- | --- | --- |
-| `nginx` | `docker.io/library/nginx` | always (ingress) | **Blocking in every release lock**: no validated exact-digest signer |
-| `browser` | `docker.io/jlesage/firefox` | browser profile (+music) | Blocking when enabled: no validated signer |
-| `jellyfin` | `docker.io/jellyfin/jellyfin` | jellyfin profile | Blocking when enabled: no validated signer |
-| `gluetun` | `docker.io/qmcgaw/gluetun` | managed profile | Blocking when enabled: no validated signer |
-| `qbittorrent` | `lscr.io/linuxserver/qbittorrent` | managed profile | Blocking when enabled: no validated signer |
+## A artifact `ghcr-security-contract-v2-inputs`
 
-The **registry named in the lock is material**: an attestation on a related
-GitHub Container Registry package does not automatically authenticate a
-Docker Hub or LSCR image digest. `gh attestation verify oci://<exact-lock-ref>
---repo <trusted-source-repo> --source-ref ... --source-digest ...
---signer-workflow ...` must succeed for that **same** locked image,
-with the pinned workflow identity. Verify real evidence first; if an
-upstream does not offer this mode of GitHub-signed provenance, arrange a
-separately reviewed, independently authenticated alternative in a
-**versioned producer + consumer change**. Do not add guessed source
-repositories/digests or mark provenance verified from a successful pull.
+Exact root paths when downloaded into `security/`:
 
-Single-platform upstream image manifests are structurally supported:
-`platform_digest` must equal the locked top-level digest, and the
-post-pull image architecture must independently be `linux/amd64`.
-Multi-platform indexes still require a unique matching amd64 child digest.
-Neither rule waives missing provenance.
-
-## Manual environment and operator inputs
-
-Set a **required-reviewer** GitHub environment named `ghcr-security`,
-restricted to protected `main`. If reviewer enforcement is not supported
-on the account plan, do not enable this release gate. Confirm the settings
-in GitHub independently; the environment name/variable alone is not proof.
-
-For a single separately approved source/run only, set the following
-repository variables (not secrets or public deployment environment values):
-
-| Variable | Required exact value |
+| Path | Meaning |
 | --- | --- |
-| `GHCR_SECURITY_ENABLED` | `true`, manually armed for one approved run |
-| `GHCR_SECURITY_ENV_PROTECTED` | `true`, verified by owner in GitHub UI |
-| `GHCR_SECURITY_APPROVED_SOURCE_SHA` | 40-hex approved current main commit |
-| `GHCR_SECURITY_LOCK_B64` | Base64-encoded complete nonsecret R2 lock JSON |
-| `GHCR_SECURITY_RENDERED_B64` | Base64-encoded image-only rendered Compose JSON |
-| `GHCR_SECURITY_LOCK_SHA256` | SHA-256 hex checksum of raw lock bytes |
-| `GHCR_SECURITY_RENDERED_SHA256` | SHA-256 hex checksum of raw rendered JSON bytes |
+| `context.json` | OIDC-signed producer context |
+| `release-lock.json` | Raw approved complete R2 lock |
+| `rendered-release-compose.json` | Only `services.{name}.image`, no secrets |
+| `scanner.json` | Unmodified Trivy 0.76.2 metadata with positive VulnerabilityDB.Version and UpdatedAt |
+| `vulnerability-exceptions.json` | Exact approved source exception ledger; must remain `{"schema_version":1,"exceptions":[]}` |
+| `reports/<name>.vuln.json` | Original unsuppressed Trivy scan |
+| `reports/<name>.sbom.spdx.json` | Original SPDX-2.3 |
+| `reports/<name>.manifest.json` / `<name>.image-id` | Observed immutable OCI manifest and inspected config identity |
 
-Use `base64 -w0 release-lock.json` and `sha256sum release-lock.json` on
-a trusted local workstation to prepare the lock values. The **rendered JSON
-is a minimal `{"services": {"portal": {"image": "<digest-ref>"}, ...}}`**:
-no environment, passwords, bind paths, volumes, labels, build or user state.
-R2 validates against `deploy/compose.yaml`; the producer separately rejects
-any extra rendered data. Do not upload a real `docker compose config`
-containing secrets. GitHub variables have size limitations; fail rather
-than truncate or switch to unreviewed external artifact URLs.
+`context.json` contains **exactly**: `schema_version=1`, `repository="ItsFoxxin/Fox_Den_Media"`, `source_sha`, `producer_actor="github:<authenticated-A-run-actor>"`, `release_lock_sha256`, `r3_run_id`, `scan_run_id`, `scanner_metadata_sha256`, `images`. Every image maps exactly `image_repository`, `manifest_digest`, `platform_digest`, `trivy_report_sha256`, `spdx_sbom_sha256`. All digests are `sha256:<lowercase-hex>` of ORIGINAL raw bytes or locked OCI digest, as appropriate. The exact key sets and rules are in PR #93's `scripts/verify_security_dispositions.py`; the v2 producer independently checks them.
 
-Dispatch `trivy-digest-security.yml` only on `main` with
-`source_sha` and `publisher_run_id` matching the explicitly reviewed R3
-run. The job authenticates R3 run identity, SHA, path, branch, event and
-success via GitHub API and downloads the **exact** candidate artifacts.
-The GitHub CLI must be >=2.102.0 for exact `--signer-workflow`
-matching; an older CLI is a hard failure. The operator disables the arming
-variables afterward. There is no triggered PR/build/push/publishing event.
+Music web and worker use the **same** `music` image. First-party images: `portal`, `music`, `media`. Mandatory upstream: `nginx`. Additional exact enabled lock subjects: `browser` (Firefox), `jellyfin`, `gluetun`, `qbittorrent`. Missing profile image, locked service, scan, signer, manifest or platform digest **blocks A**, even if vulnerabilities are absent.
 
-## Security procedure (blocking)
+## C artifact `ghcr-security-contract-v2`
 
-- Calls the **authoritative** R2 validator from PR #79. Missing validator,
-  changed source/Compose, unexpected profile/service or digest fails.
-- Requires all three first-party images, ingress and every upstream image
-  enabled by the lock. Rejects missing signer metadata, wrong candidate
-  source/publisher, altered amd64 manifest, registry mismatch, no image,
-  malformed/duplicate platform or extra service/build directives.
-- Uses the existing SHA-256-verified Trivy `0.76.2` installer. Pulls and
-  scans exact `<registry>@sha256:<manifest-index>` with Docker, without
-  building, pushing or using mutable tags. Includes OS/application
-  vulnerabilities and produces Trivy JSON and SPDX 2.3 per image.
-- Before assessment, `gh attestation verify oci://...` must independently
-  authenticate **every** image's signer workflow, source ref and commit;
-  first-party must match R3 publisher workflow. The manifest index,
-  platform digest, Docker image config ID and Trivy report subject are
-  checked separately. Image signatures, not source JSON, establish provenance.
-- Enforces Trivy version, a nonmissing parseable vulnerability DB timestamp
-  not future-dated or older than 14 days, complete unsuppressed report,
-  package-containing SPDX SBOM, exact scan subject, and per-file SHA-256 hashes.
-  Trivy DB schema version is required; raw scanner JSON is also attested
-  and uploaded, although PR #81 v1 consumes only DB update time.
-- HIGH, CRITICAL and UNKNOWN severity cause hard failure; missing evidence,
-  malformed CVE/package identities and any nonempty exception ledger fail
-  without producing a passing signed contract. This **intentionally blocks**
-  even otherwise approved exceptions: PR #81 v1 requires `exceptions: []`.
-  Owner-approved, issue-linked, expiring exceptions cannot pass R4 until the
-  consumer is independently extended and tested. No suppression or
-  `.trivyignore` is introduced.
-- Only after *every* scan and check passes, signs the contract, release
-  lock, sanitized Compose render and raw scanner metadata together using
-  GitHub OIDC `actions/attest`, then uploads
-  `ghcr-security-contract-v1`. The producer has `packages: read`, not write.
-  R4 separately verifies run identity and GitHub attestation before reading
-  the artifact. No GitHub release/tag, GHCR publication or NAS operations.
+Contains every unmodified A file and `security-contract.json`, plus `review/disposition-verification.json`, `review/dispositions.json`, `review/signatures.json` and `review/proofs/<slug>.json` from the independently verified B artifact. Trust/private keys and current owner lifecycle are **not** taken from B as trusted policy and are not uploaded in the final release artifact.
 
-## Consumer interface: exact PR #81 artifact layout
+`security-contract.json` retains all v1 data fields and original raw report/SPDX hashes, but **schema_version is 2, never 1**, and adds `disposition_review` with exactly:
 
-| Inside `ghcr-security-contract-v1` | Role |
+| Field | Required value |
 | --- | --- |
-| `security-contract.json` | Strict R4 consumer schema v1 (source, publisher, scanner, signed policy, images/upstream) |
-| `release-lock.json` | Complete R2 lock, all enabled profiles and digest subjects |
-| `rendered-release-compose.json` | Sanitized, build-free, image-only Compose render |
-| `reports/<name>.sbom.spdx.json` | Trivy SPDX SBOM, bytes hashed as `sbom_sha256` |
-| `reports/<name>.vuln.json` | Unsuppressed Trivy findings, bytes hashed as `vulnerability_report_sha256` |
-| `reports/<name>.manifest.json` | Observed OCI index for amd64 platform verification |
-| `reports/<name>.image-id` | Inspected local image config ID; matches Trivy Metadata.ImageID |
-| `scanner.json` | Raw Trivy version/database metadata including database version when present |
+| `schema_version` | integer `1` |
+| `artifact_name` | `security-disposition-review-v1` |
+| `verification_file` | `disposition-verification.json` (B artifact root) |
+| `verification_sha256` | SHA-256 of original signed B result bytes |
+| `dispositions_sha256` | SHA-256 of canonical independently signed dispositions JSON |
+| `review_workflow` | `.github/workflows/security-disposition-review.yml` |
+| `review_run_id` | exact positive authenticated GitHub B run ID |
+| `verified_at` | UTC second-precision timestamp |
 
-Names cover `portal`, `music`, `media`, plus exactly the enabled subset
-of `nginx`, `browser`, `jellyfin`, `gluetun`, `qbittorrent`.
-`security-contract.json` has no extra properties because R4's consumer
-rejects them. `policy_version` is `v1:<SHA256 of canonicalized reviewed
-exception ledger>`; scanner name/version/DB timestamp are exact consumer
-fields. A successful synthetic contract is **not** a real signed release
-artifact. The workflow never emits a signed contract on failure.
+**PR #81 still requires its own v2 consumer changes**: validate A/B/C workflows and run identities, reject v1, reconstruct full findings, validate present lifecycle, preserve `foxden.r4.release-ready.v1` outer manifest and bind the reviewed evidence through the R4/R5 signed file map. A green C cannot be treated as proof that #81 or #80 integration is ready.
 
-## Verification and unresolved integration decisions
+## Operator prerequisites — external blockers
 
-Run `python -m pytest tests/platform/test_ghcr_digest_security.py -q`,
-then the existing Monorepo CI, CodeQL, Dependency Review and actionlint.
-Fixtures cover a complete good contract, wrong source/lock/publisher,
-manifest drift, missing reports, altered scan subject, unsatisfied optional
-upstream scope, unsupported signer, incomplete SPDX, stale database,
-HIGH/CRITICAL/UNKNOWN and rejected exceptions. They do not claim live GHCR
-scan, signed OCI provenance, protected environment, or R3 publication.
+- Owner separately authorizes protected reviewed source promotion, immutable digest-pinned base, legitimate R3 images, A, independently reviewed B and C. `dev` code and this PR do not authorize `main` promotion.
+- Confirm the actual GitHub `ghcr-security` Environment has required human reviewers and protected `main` restrictions, and that these controls are enforceable on the repository plan. Variables do not prove GitHub protection. The separate B environment `security-disposition-review` requires the same independent verification.
+- Set one-time `GHCR_SECURITY_ENABLED=true`, `GHCR_SECURITY_ENV_PROTECTED=true`, `GHCR_SECURITY_APPROVED_SOURCE_SHA`, `GHCR_SECURITY_LOCK_B64`, `GHCR_SECURITY_RENDERED_B64`, and SHA-256 hex values `GHCR_SECURITY_LOCK_SHA256`, `GHCR_SECURITY_RENDERED_SHA256`. Lock and rendered content must be complete and nonsecret. The workflow checks hashes and authoritative R2 validator; disarm after authorized use.
+- B and C require **owner-controlled**, source-independent trust/lifecycle: `SECURITY_DISPOSITION_TRUST_B64`, `SECURITY_DISPOSITION_LIFECYCLE_B64`, `SECURITY_DISPOSITION_LIFECYCLE_SIG_B64`, `SECURITY_DISPOSITION_LIFECYCLE_SHA256`. Keys, approved reviewer membership and independent review-submission uploader remain unimplemented/unverified. The owner must establish a trusted *latest* signed-lifecycle channel with anti-rollback; a fresh-looking older genuine ledger is not sufficient. **Do not operate on live release evidence until this trust prerequisite exists**.
+- Patched `gh >= 2.102.0` is mandatory to prevent signer-workflow prefix confusion. GitHub Actions OIDC file attestations are checked by exact workflow/repo/ref/commit and SHA; the GitHub API verifies completed workflows and selected artifact run IDs.
+- **Upstream allowlist remains deliberately empty** in `security/upstream-provenance.json`. For every enabled upstream (including mandatory nginx) independently verify real GitHub signed OCI provenance for the exact locked Docker Hub/LSCR digest before adding approved signer metadata; no fabricated source SHA/workflow, mutable alias, Docker pull alone, alternate registry assertion or `provenance_status=verified` substitute. If an image lacks equivalent trust, a separately reviewed versioned producer+consumer scheme is required.
+- #76 security finding disposition, #92/#93 independent review, #81 R4 acceptance, #80 R5 publication and #18 NAS acceptance are separate gates. No empty policy exception may be introduced.
 
-For the PR #81 worker: the latest consumer head `6e2af6b` already
-verifies **all four** top-level artifacts using exact signer workflow,
-source SHA and `main` source ref, and enforces Trivy `0.76.2`,
-positive DB schema version, nonfuture/<=14-day DB freshness and the
-source-reviewed policy hash in separately signed `scanner.json`.
-The producer's v1 contract schema and canonicalized policy hash agree.
-Keep these checks as-is; do not add duplicate consumer validation.
-The remaining contract decision is **upstream provenance**: exact external
-registry image digests must have independently verifiable signers, or both
-workstreams must review a versioned alternate chain of trust. PR #81 still
-rejects every nonempty exception array, so no release will pass
-HIGH/CRITICAL findings or any unreviewed (or reviewed-but-incompatible)
-waiver. Do not modify PR #81's branch from this workstream.
+## Synthetic validation and review boundaries
 
-Real 1.0.0 release readiness remains blocked by source/R3 approval,
-current R2 lock, complete approved upstream signer identities, current
-database scans, issue #76 vulnerability disposition, successful trusted
-producer attestation, R4 no-rebuild acceptance, issue #18 and separate
-release/NAS approvals.
+On the existing assigned branch, `python -m pytest tests/platform/test_ghcr_digest_security.py -q`; repository validation additionally runs all platform tests, actionlint, CodeQL, advisory Dependency Review and Trivy. Fixtures exercise A HIGH/CRITICAL evidence retention, v2 success under **mock verified** B inputs, UNKNOWN final rejection, missing/unmatched findings, exact review hash, wrong lock/scan/source/digest, stale review and incomplete upstream scope. They **do not** establish actual B reviewer/owner signatures or the protected environment. PR #93's separate tests verify Ed25519 semantics and lifecycle. The C workflow refuses to run without the independently integrated verifier, authenticated B and fresh owner-managed trust.
+
+**Rollback:** this PR changes only a draft manual producer workflow and scripts, never images or user data. Disable the unapproved dispatch/arming variables and do not promote the code to `main` until separately reviewed. No root VERSION bump for preparatory security infrastructure.
