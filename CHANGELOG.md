@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.9.8 - 2026-11-10
+
+### Fixed
+
+- Fixes #85: Upgrade OpenSSL and libssl3 in all three first-party Bookworm images to Debian's security-fixed 3.0.22-1~deb12u2 or later, rejecting builds with vulnerable package versions.
+
+### Validation and rollback
+
+- Check both installed OpenSSL packages against the Debian security minimum during every first-party image build, after the already integrated APT security bootstrap.
+- Validate the three real image builds with Trivy JSON/CycloneDX evidence, security contracts, normal application and integration regressions, actionlint, CodeQL and Dependency Review; CI does not approve publication or NAS deployment.
+- Roll back only to separately reviewed source and immutable image digests following owner approval; do not change live services or data as part of this patch.
+
 ## 0.9.7 - 2026-11-08
 
 ### Fixed
