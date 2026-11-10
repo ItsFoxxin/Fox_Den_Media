@@ -7,6 +7,7 @@ import copy
 import hashlib
 import json
 from pathlib import Path
+from zipfile import ZipFile
 
 import pytest
 import yaml
@@ -200,3 +201,163 @@ def test_signed_file_map_cannot_omit_or_tamper_with_disposition_proof(tmp_path):
             r4.validate_disposition_file_map(
                 files=modified, output=output, dispositions=document,
                 binding=extension)
+
+
+def _synthetic_clean_review(tmp_path: Path, *, retain_empty_directory: bool):
+    """A consistent zero-finding fixture; independent B signatures are out of scope."""
+    base, output, document, result, binding = fixture_review(tmp_path)
+    document["records"] = []
+    (base / "review/dispositions.json").write_text(json.dumps(document))
+    proof_dir = base / "review/proofs"
+    (proof_dir / "finding-1.json").unlink()
+    if not retain_empty_directory:
+        proof_dir.rmdir()
+    # Bind the synthetic signed result to the canonical document hash and to
+    # its actual raw bytes, exactly as the verified producer would require.
+    canonical = json.dumps(
+        document, sort_keys=True, separators=(",", ":"),
+        ensure_ascii=True, allow_nan=False,
+    ).encode("utf-8")
+    result["disposition_document_sha256"] = (
+        "sha256:" + hashlib.sha256(canonical).hexdigest()
+    )
+    result_path = base / "security/disposition-verification.json"
+    result_path.write_text(json.dumps(result))
+    binding["dispositions_sha256"] = result["disposition_document_sha256"]
+    binding["verification_sha256"] = raw(result_path)
+    return base, output, document, result, binding
+
+
+def _assert_clean_file_map(output, document, binding):
+    expected = {
+        "integration/disposition-verification.json",
+        "integration/security-dispositions.json",
+        "integration/security-disposition-signatures.json",
+    }
+    actual = {str(p.relative_to(output)) for p in output.rglob("*.json")}
+    assert actual == expected
+    assert not any("disposition-proof-" in name for name in actual)
+    hashes = {name: r4.sha_file(output / name) for name in actual}
+    r4.validate_disposition_file_map(
+        files=hashes, output=output, dispositions=document, binding=binding,
+    )
+    return hashes
+
+
+def test_clean_scan_with_missing_empty_proofs_directory_after_artifact_zip(tmp_path):
+    base, output, document, result, binding = _synthetic_clean_review(
+        tmp_path, retain_empty_directory=False,
+    )
+    archive_path = tmp_path / "synthetic-review.zip"
+    # Emulate GitHub artifact upload/download: only files are retained.
+    with ZipFile(archive_path, "w") as archive:
+        for entry in base.rglob("*"):
+            if entry.is_file():
+                archive.write(entry, entry.relative_to(base))
+    extracted = tmp_path / "extracted-review"
+    with ZipFile(archive_path) as archive:
+        archive.extractall(extracted)
+    assert not (extracted / "review/proofs").exists()
+    extension = pack(extracted, output, document, result, binding)
+    assert extension["verification_file"] == (
+        "integration/disposition-verification.json"
+    )
+    assert extension["dispositions_sha256"] == binding["dispositions_sha256"]
+    _assert_clean_file_map(output, document, extension)
+
+
+def test_clean_scan_with_existing_empty_proofs_directory(tmp_path):
+    base, output, document, result, binding = _synthetic_clean_review(
+        tmp_path, retain_empty_directory=True,
+    )
+    assert (base / "review/proofs").is_dir()
+    assert not list((base / "review/proofs").iterdir())
+    extension = pack(base, output, document, result, binding)
+    _assert_clean_file_map(output, document, extension)
+
+
+@pytest.mark.parametrize("remove_directory", [True, False])
+def test_nonempty_dispositions_still_require_existing_proof_file(
+    remove_directory, tmp_path,
+):
+    base, output, document, result, binding = fixture_review(tmp_path)
+    proof = base / "review/proofs/finding-1.json"
+    proof.unlink()
+    if remove_directory:
+        proof.parent.rmdir()
+    with pytest.raises(r4.ReleaseEvidenceError):
+        pack(base, output, document, result, binding)
+
+
+@pytest.mark.parametrize("path_kind", ["unexpected", "symlink"])
+def test_empty_dispositions_reject_unreferenced_or_symlinked_proofs(
+    path_kind, tmp_path,
+):
+    base, output, document, result, binding = _synthetic_clean_review(
+        tmp_path, retain_empty_directory=False,
+    )
+    proof_root = base / "review/proofs"
+    if path_kind == "unexpected":
+        proof_root.mkdir()
+        (proof_root / "unexpected.json").write_text("{}")
+    else:
+        target = tmp_path / "outside"
+        target.mkdir()
+        proof_root.symlink_to(target, target_is_directory=True)
+    with pytest.raises(r4.ReleaseEvidenceError):
+        pack(base, output, document, result, binding)
+
+
+@pytest.mark.parametrize("mutation", ["duplicate", "altered", "extra", "symlink"])
+def test_nonempty_disposition_proofs_fail_closed_for_unsafe_content(
+    mutation, tmp_path,
+):
+    base, output, document, result, binding = fixture_review(tmp_path)
+    proof = base / "review/proofs/finding-1.json"
+    if mutation == "duplicate":
+        document["records"].append(copy.deepcopy(document["records"][0]))
+    elif mutation == "altered":
+        proof.write_text('{"kind":"NOT_AFFECTED"}')
+    elif mutation == "extra":
+        (proof.parent / "extra.json").write_text("{}")
+    else:
+        original = tmp_path / "original.json"
+        proof.rename(original)
+        proof.symlink_to(original)
+    with pytest.raises(r4.ReleaseEvidenceError):
+        pack(base, output, document, result, binding)
+
+
+def test_clean_scan_signed_file_map_cannot_claim_placeholder_proof(tmp_path):
+    base, output, document, result, binding = _synthetic_clean_review(
+        tmp_path, retain_empty_directory=False,
+    )
+    extension = pack(base, output, document, result, binding)
+    hashes = _assert_clean_file_map(output, document, extension)
+    hashes["integration/disposition-proof-placeholder.json"] = "a" * 64
+    with pytest.raises(r4.ReleaseEvidenceError):
+        r4.validate_disposition_file_map(
+            files=hashes, output=output,
+            dispositions=document, binding=extension,
+        )
+
+
+def test_workflow_does_not_require_empty_github_artifact_directory():
+    root = Path(__file__).resolve().parents[2]
+    workflow = yaml.safe_load(
+        (root / ".github/workflows/ghcr-verify.yml").read_text()
+    )
+    step = next(
+        item for item in workflow["jobs"]["verify"]["steps"]
+        if item.get("name") == "Authenticate exact A B C signed artifact subjects"
+    )
+    script = step["run"]
+    assert "test -d scan-inputs/reports" in script
+    assert "test -d security/reports" in script
+    assert "test -d review-evidence/review/proofs" not in script
+    assert "test -s review-evidence/review/dispositions.json" not in script
+    # The mandatory JSON is still required by the existing file preflight.
+    assert "review-evidence/review/dispositions.json" in script
+    assert "review-evidence/review/signatures.json" in script
+    assert "review-evidence/security/disposition-verification.json" in script
+    assert "verify_subject review-evidence/security/disposition-verification.json" in script

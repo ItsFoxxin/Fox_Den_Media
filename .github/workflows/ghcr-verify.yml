@@ -196,8 +196,11 @@ jobs:
                       security/review/disposition-verification.json; do
             test -s "$file"
           done
-          test -d scan-inputs/reports && test -d review-evidence/review/proofs
+          test -d scan-inputs/reports
           test -d security/reports
+          # A clean signed B review may have zero records and no proofs directory
+          # after artifact extraction. Proof completeness and absence of extras
+          # are checked against the authenticated review document at staging.
           test "$(jq -er .schema_version security/security-contract.json)" = 2
           # gh establishes exact OIDC signer/repo/source; the signed SLSA
           # invocation binds the retrieved subject to the queried run ID.

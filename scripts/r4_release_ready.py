@@ -312,11 +312,17 @@ def stage_independent_dispositions(*, review_dir: Path, output: Path,
         require("sha256:" + sha_file(proof) == record.get("proof_sha256"),
                 "Altered signed disposition proof bytes")
     proof_root = review_root / "proofs"
-    require(proof_root.is_dir() and not proof_root.is_symlink() and
-            {p.name for p in proof_root.iterdir()} ==
-            {slug + ".json" for slug in paths} and
-            all(p.is_file() and not p.is_symlink() for p in proof_root.iterdir()),
-            "Missing or unreferenced disposition proof")
+    if proof_root.exists() or proof_root.is_symlink():
+        require(proof_root.is_dir() and not proof_root.is_symlink() and
+                {p.name for p in proof_root.iterdir()} ==
+                {slug + ".json" for slug in paths} and
+                all(p.is_file() and not p.is_symlink()
+                    for p in proof_root.iterdir()),
+                "Missing, unreferenced or unsafe disposition proof")
+    else:
+        # GitHub artifact archives omit empty directories. Only an authenticated
+        # zero-record document can legitimately have no proof directory.
+        require(not paths, "Missing disposition proofs directory")
     copied = (
         ("security/disposition-verification.json",
          "integration/disposition-verification.json"),

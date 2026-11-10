@@ -159,9 +159,14 @@ all the original copied disposition evidence:
 | `integration/disposition-proof-<slug>.json` | Every original `review/proofs/<slug>.json` |
 
 The original disposition document uses a **canonical** SHA-256; bundle
-file hashes cover the **raw original bytes**. Missing, duplicate, extra or
-altered proofs, or missing signed-map entries, fail closed. No unsigned
-sidecar and no competing R5 schema are introduced.
+file hashes cover the **raw original bytes**. A fully authenticated clean
+scan with `records: []` may omit the empty `review/proofs/` directory
+during artifact upload/download, or retain an empty directory; R4 accepts
+both without manufacturing a placeholder proof. Nonempty dispositions
+still require every referenced, hashed, regular proof file. Unexpected,
+duplicate, missing, altered or symlinked proofs, or missing signed-map
+entries, fail closed. No unsigned sidecar and no competing R5 schema
+are introduced.
 
 **Latest owner-state anti-rollback:** R4 requires an independently
 provisioned protected read-only environment secret
