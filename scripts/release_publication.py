@@ -8,6 +8,8 @@ boundary, then re-runs these checks immediately before publishing.
 from __future__ import annotations
 
 import argparse
+import base64
+import binascii
 import datetime as dt
 import hashlib
 import json
@@ -17,6 +19,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import urllib.error
 import urllib.request
 
@@ -28,6 +31,22 @@ R4_SIGNER_WORKFLOW = REPOSITORY + "/" + R4_WORKFLOW
 RELEASE_READY_SCHEMA = "foxden.r4.release-ready.v1"
 R3_WORKFLOW = "ItsFoxxin/Fox_Den_Media/.github/workflows/ghcr-candidates.yml"
 R4_ARTIFACT = "foxden-r4-release-ready-v1.0.0"  # Signed R4-owned artifact
+REVIEW_WORKFLOW = ".github/workflows/security-disposition-review.yml"
+SCAN_WORKFLOW = ".github/workflows/trivy-digest-security.yml"
+REVIEW_ARTIFACT = "security-disposition-review-v1"
+REVIEW_FIELDS = {"schema_version", "artifact_name", "verification_file",
+                 "verification_sha256", "dispositions_sha256",
+                 "review_workflow", "review_run_id", "verified_at"}
+RESULT_FIELDS = {"schema_version", "decision", "disposition_document_sha256",
+                 "lifecycle_sha256", "source_sha", "release_lock_sha256",
+                 "r3_run_id", "scan_run_id", "reviewed_at", "expires_at",
+                 "cleared_finding_count", "image_count"}
+OWNER_STATE_VARIABLES = ("SECURITY_DISPOSITION_TRUST_B64",
+                         "SECURITY_DISPOSITION_LIFECYCLE_B64",
+                         "SECURITY_DISPOSITION_LIFECYCLE_SIG_B64",
+                         "SECURITY_DISPOSITION_LIFECYCLE_SHA256")
+REVIEW_PROOF = re.compile(r"proofs/([a-z0-9_-]+)\.json\Z")
+UTC_SECONDS = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ\Z")
 SHA = re.compile(r"^[0-9a-f]{40}$")
 DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 FIRST_PARTY = {
@@ -171,6 +190,138 @@ def validate_notes(notes: str, source_sha: str, lock_sha: str, images: list) -> 
     require(not re.search(r"-----BEGIN [A-Z ]*PRIVATE KEY-----|"
                           r"(?i:(?:password|api[_-]?key|secret|access[_-]?token)\s*[=:]\s*\S{8,})",
                           notes), "Release notes may contain credentials")
+
+
+
+def utc_instant(value: object) -> dt.datetime:
+    require(isinstance(value, str) and UTC_SECONDS.fullmatch(value) is not None,
+            "Malformed UTC-second review timestamp")
+    try:
+        return dt.datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=dt.timezone.utc)
+    except ValueError as exc:
+        raise ReleaseBlocked("Invalid review timestamp") from exc
+
+
+def canonical_hash(document: dict) -> str:
+    return "sha256:" + hashlib.sha256(json.dumps(
+        document, sort_keys=True, separators=(",", ":"),
+        ensure_ascii=True, allow_nan=False).encode("utf-8")).hexdigest()
+
+
+def validate_disposition_bundle(root: Path, verification: dict,
+                                source_sha: str, lock_sha: str,
+                                lock: dict, now: dt.datetime | None = None) -> dict:
+    """Only source/byte bindings; real reviewer signatures are checked separately.
+
+    Never infer that a signed R4 'pass' remains a valid disposition at R5 time.
+    The independent PR #93 verifier re-checks every occurrence and Ed25519 key.
+    """
+    binding = verification.get("disposition_review")
+    require(isinstance(binding, dict) and set(binding) == REVIEW_FIELDS,
+            "Missing or unknown R4 independent disposition-review binding")
+    require(binding["schema_version"] == 1
+            and binding["artifact_name"] == REVIEW_ARTIFACT
+            and binding["verification_file"] == "integration/disposition-verification.json"
+            and binding["review_workflow"] == REVIEW_WORKFLOW
+            and type(binding["review_run_id"]) is int and binding["review_run_id"] > 0,
+            "Wrong independent review workflow, version or run")
+    utc_instant(binding["verified_at"])
+    require(isinstance(binding["verification_sha256"], str)
+            and re.fullmatch(r"sha256:[0-9a-f]{64}", binding["verification_sha256"])
+            and isinstance(binding["dispositions_sha256"], str)
+            and re.fullmatch(r"sha256:[0-9a-f]{64}", binding["dispositions_sha256"]),
+            "Malformed R4 signed review hashes")
+    names = set(verification["files"])
+    required = {"integration/disposition-verification.json",
+                "integration/security-dispositions.json",
+                "integration/security-disposition-signatures.json"}
+    require(required <= names, "Missing signed disposition-review input files")
+    output_path = safe_file(root, "integration/disposition-verification.json")
+    result = read_json(output_path)
+    require(set(result) == RESULT_FIELDS and result["schema_version"] == 1
+            and result["decision"] == "pass"
+            and type(result["cleared_finding_count"]) is int
+            and result["cleared_finding_count"] >= 0
+            and type(result["image_count"]) is int
+            and result["image_count"] == len(lock["images"]),
+            "Unrecognized or incomplete independent disposition result")
+    require(binding["verification_sha256"] == "sha256:" + hash_file(output_path),
+            "Wrong raw signed independent review result hash")
+    document = read_json(safe_file(root, "integration/security-dispositions.json"))
+    require(set(document) == {"schema_version", "repository", "source_sha",
+             "producer_actor", "release_lock_sha256", "r3_run_id",
+             "scan_run_id", "created_at", "reviewed_at", "expires_at",
+             "records"} and document["schema_version"] == 1
+            and document["repository"] == REPOSITORY
+            and document["source_sha"] == source_sha
+            and isinstance(document["producer_actor"], str)
+            and re.fullmatch(r"github:[A-Za-z0-9-]{1,39}", document["producer_actor"])
+            and type(document["scan_run_id"]) is int and document["scan_run_id"] > 0
+            and type(document["r3_run_id"]) is int
+            and document["r3_run_id"] == lock["publisher"]["run_id"]
+            and document["release_lock_sha256"] == "sha256:" + lock_sha
+            and type(document["records"]) is list,
+            "Disposition document has incompatible schema/source/image lock")
+    doc_hash = canonical_hash(document)
+    require(doc_hash == binding["dispositions_sha256"]
+            and result["disposition_document_sha256"] == doc_hash
+            and result["source_sha"] == source_sha
+            and result["release_lock_sha256"] == "sha256:" + lock_sha
+            and result["r3_run_id"] == document["r3_run_id"]
+            and result["scan_run_id"] == document["scan_run_id"]
+            and result["reviewed_at"] == document["reviewed_at"]
+            and result["expires_at"] == document["expires_at"],
+            "Signed review document/result/source/R3/scan mismatch")
+    utc_instant(document["created_at"])
+    reviewed = utc_instant(document["reviewed_at"])
+    expires = utc_instant(document["expires_at"])
+    now = now or dt.datetime.now(dt.timezone.utc)
+    require(utc_instant(document["created_at"]) <= reviewed <= now < expires
+            and dt.timedelta(0) < expires - reviewed <= dt.timedelta(days=30),
+            "Independent review expired since R4 or has invalid period")
+    signatures = read_json(safe_file(root, "integration/security-disposition-signatures.json"))
+    require(set(signatures) == {"schema_version", "document_sha256", "signatures"}
+            and signatures["schema_version"] == 1
+            and signatures["document_sha256"] == doc_hash
+            and isinstance(signatures["signatures"], list),
+            "Missing or mismatched signed disposition signatures")
+    expected_proofs = set()
+    for record in document["records"]:
+        require(isinstance(record, dict)
+                and set(record) == {"status", "subject", "proof_path",
+                                   "proof_sha256", "reviewer_id"}
+                and record["status"] in ("FIXED", "NOT_AFFECTED")
+                and isinstance(record["proof_path"], str),
+                "Unsupported independent disposition record")
+        match = REVIEW_PROOF.fullmatch(record["proof_path"])
+        require(match is not None, "Unrecognized disposition proof path")
+        flat = "integration/disposition-proof-" + match.group(1) + ".json"
+        require(flat not in expected_proofs and flat in names,
+                "Missing/duplicate original signed disposition proof")
+        expected_proofs.add(flat)
+        require(record.get("proof_sha256") == "sha256:" + hash_file(safe_file(root, flat)),
+                "Disposition proof raw-byte SHA-256 mismatch")
+    actual_proofs = {name for name in names
+                     if name.startswith("integration/disposition-proof-")}
+    require(expected_proofs == actual_proofs,
+            "Unexpected or missing original signed disposition proof")
+    require(result["cleared_finding_count"] == len(document["records"]),
+            "Reviewed severe finding count does not match signed records")
+    contract = read_json(safe_file(root, "security-contract.json"))
+    contract_binding = contract.get("disposition_review")
+    require(type(contract.get("schema_version")) is int
+            and contract["schema_version"] == 2
+            and isinstance(contract_binding, dict)
+            and set(contract_binding) == REVIEW_FIELDS,
+            "Strict security contract v2 required, no v1 fallback")
+    require(contract_binding == {
+        **binding, "verification_file": "disposition-verification.json",
+    }, "R4 v2 security contract and signed root review disagree")
+    require(utc_instant(binding["verified_at"]) <= now,
+            "Future R4 disposition verification timestamp")
+    return {"binding": binding, "result": result, "document": document,
+            "lock_sha256": lock_sha}
 
 
 def validate_bundle(root: Path, source_sha: str, r4_id: int) -> dict:
@@ -366,12 +517,14 @@ def validate_bundle(root: Path, source_sha: str, r4_id: int) -> dict:
     lock_sha = hash_file(lock_path)
     validate_notes(safe_file(root, "release-notes.md").read_text(encoding="utf-8"),
                    source_sha, lock_sha, normalized)
+    disposition = validate_disposition_bundle(root, verification, source_sha, lock_sha, lock)
     return {
         "lock_sha256": lock_sha,
         "lock": lock,
         "verification": verification,
         "release_ready": manifest,
         "images": normalized,
+        "disposition": disposition,
     }
 
 
