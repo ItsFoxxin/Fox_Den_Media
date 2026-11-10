@@ -454,7 +454,9 @@ def test_original_scanner_rejects_nested_duplicate_cvss_keys(tmp_path):
         v.load_json(path, scanner_evidence=True)
 
 
-@pytest.mark.parametrize("bad_bytes", [b'{"CVSS":', b'{"CVSS":"\\xff"}', b'\\xff'])
+@pytest.mark.parametrize("bad_bytes", [
+    b'{"CVSS":', b'{"CVSS":"' + bytes([255]) + b'"}', bytes([255]),
+])
 def test_original_scanner_rejects_malformed_json_or_utf8(tmp_path, bad_bytes):
     path = tmp_path / "scanner.json"
     path.write_bytes(bad_bytes)
@@ -480,9 +482,7 @@ def test_required_run_id_rejects_float_or_boolean(tmp_path, document, bad_run_id
         resign_document(c)
     elif document == "publisher":
         c["lock"]["publisher"]["run_id"] = bad_run_id
-        put(tmp_path / "security/release-lock.json", c["lock"])
-        c["context"]["release_lock_sha256"] = v.raw_digest(
-            tmp_path / "security/release-lock.json")
+        refresh(c)
     else:
         c["proof"]["r3_run_id"] = bad_run_id
         proof_path = tmp_path / "review/proofs/proof.json"
