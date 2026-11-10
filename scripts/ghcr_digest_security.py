@@ -187,7 +187,7 @@ def check_manifest(name: str, plan: dict, manifest: dict) -> None:
                f"Single image digest and platform digest differ: {name}")
 
 
-def check_report(report: dict, expected_ref: str, image_id: str) -> None:
+def check_report(report: dict, expected_ref: str, image_id: str, *, allow_severe: bool = False) -> None:
     ensure(bool(DIGEST.fullmatch(image_id)), "Missing inspected Docker config digest")
     ensure(report.get("ArtifactType") == "container_image" and
            report.get("ArtifactName") == expected_ref and
@@ -198,7 +198,8 @@ def check_report(report: dict, expected_ref: str, image_id: str) -> None:
            "Missing or empty Trivy scan results")
     for result in report["Results"]:
         ensure(type(result) is dict and type(result.get("Target")) is str and
-               bool(result["Target"]), "Malformed Trivy scan target")
+               bool(result["Target"]) and type(result.get("Type")) is str and
+               bool(result["Type"]), "Malformed Trivy scan target/ecosystem")
         vulnerabilities = result.get("Vulnerabilities", [])
         ensure(vulnerabilities is None or type(vulnerabilities) is list,
                "Malformed Trivy vulnerability list")
@@ -210,7 +211,7 @@ def check_report(report: dict, expected_ref: str, image_id: str) -> None:
                    bool(vuln["InstalledVersion"]) and
                    vuln.get("Severity") in VALID_SEVERITIES,
                    "Malformed, unidentifiable or unknown vulnerability")
-            ensure(vuln["Severity"] not in {"HIGH", "CRITICAL", "UNKNOWN"},
+            ensure(allow_severe or vuln["Severity"] not in {"HIGH", "CRITICAL", "UNKNOWN"},
                    f"Undispositioned required finding: {vuln['VulnerabilityID']}")
 
 
@@ -241,7 +242,8 @@ def check_scanner(metadata: dict, now: datetime) -> dict:
 
 
 def build_contract(plan: dict, reports_dir: Path, scanner: dict, ledger: dict,
-                   source: str, publisher_run: int, now: datetime | None = None) -> dict:
+                   source: str, publisher_run: int, now: datetime | None = None,
+                   *, allow_reviewed_severe: bool = False) -> dict:
     """Only call after workflow verified every source, manifest and attestation."""
     now = now or datetime.now(timezone.utc)
     ensure(type(ledger) is dict and set(ledger) == {"schema_version", "exceptions"} and
@@ -265,7 +267,8 @@ def build_contract(plan: dict, reports_dir: Path, scanner: dict, ledger: dict,
         manifest_path = reports_dir / f"{name}.manifest.json"
         report, sbom = load(report_path), load(sbom_path)
         check_manifest(name, plan, load(manifest_path))
-        check_report(report, item["ref"], id_path.read_text().strip())
+        check_report(report, item["ref"], id_path.read_text().strip(),
+                     allow_severe=allow_reviewed_severe)
         check_spdx(sbom)
         if type(report.get("Trivy")) is dict and report["Trivy"].get("Version"):
             ensure(report["Trivy"]["Version"] == scanner_record["version"],
@@ -295,6 +298,210 @@ def build_contract(plan: dict, reports_dir: Path, scanner: dict, ledger: dict,
     }
 
 
+
+# V2 is a separate, non-cyclic A -> independently reviewed B -> C interface.
+# The legacy v1 helper above remains for fixture regression; there is NO
+# operational v1 fallback or v1 output in the workflow.
+CONTEXT_FIELDS = {"schema_version", "repository", "source_sha", "producer_actor",
+                  "release_lock_sha256", "r3_run_id", "scan_run_id",
+                  "scanner_metadata_sha256", "images"}
+IMAGE_FIELDS = {"image_repository", "manifest_digest", "platform_digest",
+                "trivy_report_sha256", "spdx_sbom_sha256"}
+RESULT_FIELDS = {"schema_version", "decision", "disposition_document_sha256",
+                 "lifecycle_sha256", "source_sha", "release_lock_sha256",
+                 "r3_run_id", "scan_run_id", "reviewed_at", "expires_at",
+                 "cleared_finding_count", "image_count"}
+
+
+def strict_load(path: Path) -> dict:
+    ensure(path.is_file() and not path.is_symlink() and
+           path.stat().st_size <= 32 * 1024 * 1024, "Missing or unsafe evidence")
+    def pairs(items):
+        out = {}
+        for k, v in items:
+            ensure(k not in out, "Duplicate JSON evidence field")
+            out[k] = v
+        return out
+    def reject(_):
+        raise EvidenceError("Unsupported JSON numeric evidence")
+    obj = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=pairs,
+                     parse_float=reject, parse_constant=reject)
+    ensure(type(obj) is dict, "Evidence root must be JSON object")
+    return obj
+
+
+def assert_empty_policy(ledger: dict) -> None:
+    ensure(type(ledger) is dict and set(ledger) == {"schema_version", "exceptions"}
+           and type(ledger["schema_version"]) is int and
+           ledger["schema_version"] == 1 and ledger["exceptions"] == [],
+           "V2 never permits security exceptions")
+
+
+def collect_v2_context(plan: dict, reports: Path, scanner: dict, policy: dict,
+                       lock_path: Path, scanner_path: Path, source: str,
+                       r3_run: int, scan_run: int, actor: str,
+                       now: datetime | None = None) -> dict:
+    """A: strict integrity and complete image scope, but NOT vulnerability pass."""
+    now = now or datetime.now(timezone.utc)
+    assert_empty_policy(policy)
+    ensure(type(scan_run) is int and scan_run > 0 and type(r3_run) is int and
+           r3_run > 0 and bool(SHA.fullmatch(source)), "Invalid approved scan/R3/source")
+    ensure(type(actor) is str and bool(re.fullmatch(
+        r"github:[A-Za-z0-9-]{1,39}", actor)), "Invalid authenticated scan actor")
+    check_scanner(scanner, now)
+    lock = strict_load(lock_path)
+    ensure(type(plan) is dict and set(FIRST_PARTY) <= set(plan) and
+           "nginx" in plan and set(plan) <= set(FIRST_PARTY) | set(UPSTREAM) and
+           lock.get("source_sha") == source and
+           type(lock.get("images")) is dict and set(lock["images"]) == set(plan) and
+           type(lock.get("services")) is dict and
+           set(lock["services"].values()) == set(plan) and
+           lock.get("publisher") == {"workflow": PUBLISHER, "run_id": r3_run,
+                                     "source_sha": source},
+           "Missing or untrusted complete R2 image/service coverage")
+    images = {}
+    for name, item in plan.items():
+        ensure(type(item) is dict and item.get("digest") == image_digest(item.get("ref"))
+               and item.get("kind") == ("first_party" if name in FIRST_PARTY else "upstream"),
+               "Unexpected scan image")
+        report_path = reports / (name + ".vuln.json")
+        sbom_path = reports / (name + ".sbom.spdx.json")
+        report = strict_load(report_path)
+        check_report(report, item["ref"],
+                     (reports / (name + ".image-id")).read_text().strip(),
+                     allow_severe=True)
+        check_spdx(strict_load(sbom_path))
+        check_manifest(name, plan, strict_load(reports / (name + ".manifest.json")))
+        images[name] = {
+            "image_repository": item["ref"].split("@", 1)[0],
+            "manifest_digest": item["digest"],
+            "platform_digest": item["platform_digest"],
+            "trivy_report_sha256": sha256(report_path),
+            "spdx_sbom_sha256": sha256(sbom_path),
+        }
+    return {
+        "schema_version": 1, "repository": "ItsFoxxin/Fox_Den_Media",
+        "source_sha": source, "producer_actor": actor,
+        "release_lock_sha256": sha256(lock_path), "r3_run_id": r3_run,
+        "scan_run_id": scan_run, "scanner_metadata_sha256": sha256(scanner_path),
+        "images": images,
+    }
+
+
+def severe_inventory(context: dict, reports: Path) -> dict:
+    """Rebuild every distinct HIGH/CRITICAL occurrence from untouched Trivy bytes."""
+    out, identities = {}, set()
+    for name, image in context["images"].items():
+        doc = strict_load(reports / (name + ".vuln.json"))
+        for i, result in enumerate(doc["Results"]):
+            for j, vuln in enumerate(result.get("Vulnerabilities") or []):
+                severity = vuln["Severity"]
+                ensure(severity != "UNKNOWN", "UNKNOWN finding cannot be cleared")
+                finding_hash = "sha256:" + hashlib.sha256(json.dumps(
+                    vuln, sort_keys=True, separators=(",", ":"),
+                    ensure_ascii=True, allow_nan=False).encode()).hexdigest()
+                identity = (name, result["Target"], result["Type"],
+                            vuln["VulnerabilityID"], vuln["PkgName"],
+                            vuln["InstalledVersion"], finding_hash)
+                ensure(identity not in identities, "Ambiguous duplicate finding")
+                identities.add(identity)
+                if severity in {"HIGH", "CRITICAL"}:
+                    out[(name, i, j)] = {
+                        "component": name, "result_index": i,
+                        "vulnerability_index": j,
+                        "cve_id": vuln["VulnerabilityID"], "target": result["Target"],
+                        "ecosystem": result["Type"], "package_name": vuln["PkgName"],
+                        "installed_version": vuln["InstalledVersion"],
+                        "finding_sha256": finding_hash, **image,
+                    }
+    return out
+
+
+def final_v2_contract(plan: dict, reports: Path, scanner: dict, policy: dict,
+                      lock_path: Path, scanner_path: Path, context: dict,
+                      reviewed: dict, revalidated: dict, reviewed_raw: bytes,
+                      dispositions: dict, source: str, r3_run: int, scan_run: int,
+                      producer_actor: str, review_run: int,
+                      now: datetime | None = None) -> dict:
+    """C: called ONLY after separately authenticated review B and current CLI verify.
+
+    Actual Ed25519 review/owner keys, latest lifecycle and OIDC verification
+    are validated by the independent PR #93 verifier plus trusted workflow.
+    A JSON "pass" by itself is NOT an authorization.
+    """
+    now = now or datetime.now(timezone.utc)
+    ensure(type(context) is dict and set(context) == CONTEXT_FIELDS,
+           "Missing or extra signed scan context fields")
+    expected = collect_v2_context(plan, reports, scanner, policy, lock_path,
+                                  scanner_path, source, r3_run, scan_run,
+                                  producer_actor, now)
+    ensure(context == expected, "Altered signed A image/source/report/lock context")
+    ensure(type(review_run) is int and review_run > 0 and review_run != scan_run,
+           "Nonindependent review run")
+    ensure(type(reviewed) is dict and set(reviewed) == RESULT_FIELDS and
+           reviewed == revalidated and reviewed.get("schema_version") == 1 and
+           reviewed.get("decision") == "pass",
+           "No matching signed and freshly revalidated independent review")
+    ensure(reviewed["source_sha"] == source and reviewed["r3_run_id"] == r3_run
+           and reviewed["scan_run_id"] == scan_run and
+           reviewed["release_lock_sha256"] == context["release_lock_sha256"]
+           and type(reviewed["image_count"]) is int and
+           reviewed["image_count"] == len(context["images"]),
+           "Review not bound to exact source/R3/A/lock/image inventory")
+    for name in ("disposition_document_sha256", "lifecycle_sha256"):
+        ensure(type(reviewed[name]) is str and bool(DIGEST.fullmatch(reviewed[name])),
+               "Missing signed review/lifecycle hash")
+    doc_hash = "sha256:" + hashlib.sha256(json.dumps(
+        dispositions, sort_keys=True, separators=(",", ":"),
+        ensure_ascii=True, allow_nan=False).encode()).hexdigest()
+    ensure(doc_hash == reviewed["disposition_document_sha256"] and
+           dispositions.get("source_sha") == source and
+           dispositions.get("scan_run_id") == scan_run and
+           dispositions.get("r3_run_id") == r3_run and
+           dispositions.get("producer_actor") == producer_actor and
+           dispositions.get("release_lock_sha256") == context["release_lock_sha256"],
+           "Tampered or misbound disposition review document")
+    ensure(type(dispositions.get("records")) is list, "Missing review records")
+    inventory = severe_inventory(context, reports)
+    ensure(len(inventory) == len(dispositions["records"]) and
+           type(reviewed["cleared_finding_count"]) is int and
+           len(inventory) == reviewed["cleared_finding_count"],
+           "Missing or extra HIGH/CRITICAL dispositions")
+    seen = set()
+    for rec in dispositions["records"]:
+        ensure(type(rec) is dict and rec.get("status") in {"FIXED", "NOT_AFFECTED"}
+               and type(rec.get("subject")) is dict, "Forged disposition record")
+        subject = rec["subject"]
+        key = (subject.get("component"), subject.get("result_index"),
+               subject.get("vulnerability_index"))
+        ensure(key in inventory and key not in seen and subject == inventory[key],
+               "Wrong digest, CVE, finding hash or duplicate disposition")
+        seen.add(key)
+    def valid_time(value: str) -> datetime:
+        ensure(type(value) is str and bool(re.fullmatch(
+            r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", value)),
+            "Invalid security review timestamp")
+        return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    ensure(valid_time(reviewed["reviewed_at"]) <= now <
+           valid_time(reviewed["expires_at"]), "Expired or future security review")
+    ensure(type(reviewed_raw) is bytes and bool(reviewed_raw),
+           "Missing original signed review result bytes")
+    contract = build_contract(plan, reports, scanner, policy, source, r3_run,
+                              now, allow_reviewed_severe=True)
+    contract["schema_version"] = 2
+    contract["disposition_review"] = {
+        "schema_version": 1, "artifact_name": "security-disposition-review-v1",
+        "verification_file": "disposition-verification.json",
+        "verification_sha256": "sha256:" + hashlib.sha256(reviewed_raw).hexdigest(),
+        "dispositions_sha256": doc_hash,
+        "review_workflow": ".github/workflows/security-disposition-review.yml",
+        "review_run_id": review_run,
+        "verified_at": now.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+    return contract
+
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="mode", required=True)
@@ -320,8 +527,43 @@ def main() -> None:
     build.add_argument("--source-sha", required=True)
     build.add_argument("--publisher-run-id", type=int, required=True)
     build.add_argument("--output", type=Path, required=True)
+    for mode in ("collect-v2", "finalize-v2"):
+        p = sub.add_parser(mode)
+        fields = ("plan", "reports", "scanner", "policy", "lock", "source-sha",
+                  "publisher-run-id", "scan-run-id", "producer-actor", "output")
+        if mode == "finalize-v2":
+            fields += ("context", "reviewed-result", "revalidated-result",
+                       "dispositions", "review-run-id")
+        for field in fields:
+            p.add_argument("--" + field, required=True)
     args = parser.parse_args()
     try:
+        if args.mode == "collect-v2":
+            value = collect_v2_context(
+                strict_load(Path(args.plan)), Path(args.reports),
+                strict_load(Path(args.scanner)), strict_load(Path(args.policy)),
+                Path(args.lock), Path(args.scanner), args.source_sha,
+                int(args.publisher_run_id), int(args.scan_run_id),
+                args.producer_actor)
+            output = Path(args.output)
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
+            return
+        if args.mode == "finalize-v2":
+            reviewed_bytes = Path(args.reviewed_result).read_bytes()
+            value = final_v2_contract(
+                strict_load(Path(args.plan)), Path(args.reports),
+                strict_load(Path(args.scanner)), strict_load(Path(args.policy)),
+                Path(args.lock), Path(args.scanner),
+                strict_load(Path(args.context)), strict_load(Path(args.reviewed_result)),
+                strict_load(Path(args.revalidated_result)), reviewed_bytes,
+                strict_load(Path(args.dispositions)), args.source_sha,
+                int(args.publisher_run_id), int(args.scan_run_id),
+                args.producer_actor, int(args.review_run_id))
+            output = Path(args.output)
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
+            return
         if args.mode == "prepare":
             candidates = {name: load(args.candidates / f"{name}.json") for name in FIRST_PARTY}
             plan = prepare(load(args.lock), load(args.rendered), candidates,
