@@ -191,7 +191,9 @@ jobs:
                       review-evidence/review/dispositions.json \
                       review-evidence/review/signatures.json \
                       security/security-contract.json security/release-lock.json \
-                      security/rendered-release-compose.json security/scanner.json; do
+                      security/rendered-release-compose.json security/scanner.json \
+                      security/context.json security/vulnerability-exceptions.json \
+                      security/review/disposition-verification.json; do
             test -s "$file"
           done
           test -d scan-inputs/reports && test -d review-evidence/review/proofs
@@ -237,7 +239,9 @@ jobs:
           verify_subject review-evidence/security/disposition-verification.json \
             "$REVIEW_RUN" security-disposition-review.yml
           for file in security/security-contract.json security/release-lock.json \
-                      security/rendered-release-compose.json security/scanner.json; do
+                      security/rendered-release-compose.json security/scanner.json \
+                      security/context.json security/vulnerability-exceptions.json \
+                      security/review/disposition-verification.json; do
             verify_subject "$file" "$SECURITY_RUN" trivy-digest-security.yml
           done
       - name: Load owner-managed signed disposition lifecycle and reviewer trust

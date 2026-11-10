@@ -201,7 +201,8 @@ def require_unmodified_scan_collection(*, lock: dict, security_dir: Path,
             bool(lock["images"]), "Missing complete R2 locked images")
     # A is the original, signed complete scan collection. C must not swap
     # its lock, scanner, ledger or any raw per-image report/SBOM before review.
-    for name in ("release-lock.json", "scanner.json"):
+    for name in ("context.json", "release-lock.json", "scanner.json",
+                 "rendered-release-compose.json", "vulnerability-exceptions.json"):
         require(sha_file(scan_dir / name) == sha_file(security_dir / name),
                 "Final C has altered signed scan A evidence: " + name)
     require(sha_file(scan_dir / "vulnerability-exceptions.json") ==
@@ -253,6 +254,9 @@ def revalidate_independent_dispositions(*, security: dict, lock: dict,
     require_unmodified_scan_collection(lock=lock, security_dir=security_dir,
                                        scan_dir=scan_dir, policy_path=policy_path)
     signed_path = review_dir / "security/disposition-verification.json"
+    require(sha_file(security_dir / "review/disposition-verification.json") ==
+            sha_file(signed_path),
+            "Final C changed the independently signed B review result")
     signed_bytes = signed_path.read_bytes()
     signed_result = load_json(signed_path)
     require_r4_contract_v2(security, signed_result, signed_bytes)

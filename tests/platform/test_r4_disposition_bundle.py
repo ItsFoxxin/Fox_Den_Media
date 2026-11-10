@@ -104,6 +104,9 @@ def fixture_scan(tmp_path):
         (root / "reports").mkdir(parents=True)
         (root / "release-lock.json").write_text('{"lock":"synthetic"}')
         (root / "scanner.json").write_text('{"Version":"0.76.2"}')
+        (root / "context.json").write_text('{"source":"synthetic"}')
+        (root / "rendered-release-compose.json").write_text('{"services":{}}')
+        (root / "vulnerability-exceptions.json").write_bytes(policy.read_bytes())
         for component in components:
             for suffix in (".vuln.json", ".sbom.spdx.json"):
                 (root / "reports" / (component + suffix)).write_text(
@@ -121,6 +124,7 @@ def test_final_c_keeps_every_original_a_report_spdx_lock_and_scanner(tmp_path):
 @pytest.mark.parametrize("mutation", [
     "altered-trivy", "altered-spdx", "altered-lock",
     "altered-scanner", "altered-policy", "missing-upstream",
+    "altered-context", "altered-rendered", "altered-c-policy",
 ])
 def test_modified_scan_evidence_or_omitted_upstream_rejected(mutation, tmp_path):
     lock, original, final, policy = fixture_scan(tmp_path)
@@ -136,6 +140,12 @@ def test_modified_scan_evidence_or_omitted_upstream_rejected(mutation, tmp_path)
         policy.write_text('{"exceptions":[{"unauthorized":true}]}')
     elif mutation == "missing-upstream":
         (original / "reports/nginx.vuln.json").unlink()
+    elif mutation == "altered-context":
+        (final / "context.json").write_text("{}")
+    elif mutation == "altered-rendered":
+        (final / "rendered-release-compose.json").write_text("{}")
+    elif mutation == "altered-c-policy":
+        (final / "vulnerability-exceptions.json").write_text("{}")
     with pytest.raises(r4.ReleaseEvidenceError):
         r4.require_unmodified_scan_collection(
             lock=lock, scan_dir=original, security_dir=final, policy_path=policy)
