@@ -420,7 +420,7 @@ jobs:
           REVIEW_RUN: ${{ inputs.review_run_id }}
         run: |
           set -euo pipefail
-          python scripts/ghcr_digest_security.py finalize-v2 \
+          python -m scripts.ghcr_digest_security finalize-v2 \
             --plan security/scan-plan.json --reports security/reports \
             --scanner security/scanner.json --policy security/vulnerability-exceptions.json \
             --lock security/release-lock.json --context security/context.json \
