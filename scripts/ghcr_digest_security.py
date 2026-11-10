@@ -11,6 +11,7 @@ import argparse
 from datetime import datetime, timezone
 import hashlib
 import json
+import math
 from pathlib import Path
 import re
 
@@ -278,7 +279,7 @@ def build_contract(plan: dict, reports_dir: Path, scanner: dict, ledger: dict,
         sbom_path = reports_dir / f"{name}.sbom.spdx.json"
         id_path = reports_dir / f"{name}.image-id"
         manifest_path = reports_dir / f"{name}.manifest.json"
-        report, sbom = load(report_path), load(sbom_path)
+        report, sbom = strict_load(report_path, scanner_evidence=True), load(sbom_path)
         check_manifest(name, plan, load(manifest_path))
         check_report(report, item["ref"], id_path.read_text().strip(),
                      allow_severe=allow_reviewed_severe)
@@ -326,7 +327,14 @@ RESULT_FIELDS = {"schema_version", "decision", "disposition_document_sha256",
                  "cleared_finding_count", "image_count"}
 
 
-def strict_load(path: Path) -> dict:
+def strict_load(path: Path, *, scanner_evidence: bool = False) -> dict:
+    """Finite binary64 decimals are permitted only in original Trivy vuln JSON.
+
+    All signed/control inputs remain exact-integer and float-rejecting. The
+    parsed vulnerability is canonically hashed with the same Python JSON
+    encoding as the independent Issue #94 verifier; original bytes are never
+    normalized, overwritten, or substituted for raw report SHA-256.
+    """
     ensure(path.is_file() and not path.is_symlink() and
            path.stat().st_size <= 32 * 1024 * 1024, "Missing or unsafe evidence")
     def pairs(items):
@@ -337,8 +345,13 @@ def strict_load(path: Path) -> dict:
         return out
     def reject(_):
         raise EvidenceError("Unsupported JSON numeric evidence")
+    def finite_decimal(value):
+        number = float(value)
+        ensure(math.isfinite(number), "Nonfinite scanner JSON number")
+        return number
     obj = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=pairs,
-                     parse_float=reject, parse_constant=reject)
+                     parse_float=finite_decimal if scanner_evidence else reject,
+                     parse_constant=reject)
     ensure(type(obj) is dict, "Evidence root must be JSON object")
     return obj
 
@@ -379,7 +392,7 @@ def collect_v2_context(plan: dict, reports: Path, scanner: dict, policy: dict,
                "Unexpected scan image")
         report_path = reports / (name + ".vuln.json")
         sbom_path = reports / (name + ".sbom.spdx.json")
-        report = strict_load(report_path)
+        report = strict_load(report_path, scanner_evidence=True)
         check_report(report, item["ref"],
                      (reports / (name + ".image-id")).read_text().strip(),
                      allow_severe=True)
@@ -405,7 +418,7 @@ def severe_inventory(context: dict, reports: Path) -> dict:
     """Rebuild every distinct HIGH/CRITICAL occurrence from untouched Trivy bytes."""
     out, identities = {}, set()
     for name, image in context["images"].items():
-        doc = strict_load(reports / (name + ".vuln.json"))
+        doc = strict_load(reports / (name + ".vuln.json"), scanner_evidence=True)
         for i, result in enumerate(doc["Results"]):
             for j, vuln in enumerate(result.get("Vulnerabilities") or []):
                 severity = vuln["Severity"]
