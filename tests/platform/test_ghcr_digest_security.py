@@ -193,6 +193,17 @@ def test_stale_future_or_missing_trivy_db_fails(date):
         check_scanner(metadata(date), NOW)
 
 
+@pytest.mark.parametrize("date", [
+    "2026-11-08T00:00:00+00:00",
+    "2026-11-08T00:00:00.000Z",
+    "2026-11-08T00:00Z",
+    "2026-11-08T00:00:00-05:00",
+])
+def test_scanner_timestamp_requires_merged_verifier_utc_seconds(date):
+    with pytest.raises(EvidenceError, match="UTC whole-second"):
+        check_scanner(metadata(date), NOW)
+
+
 def test_exact_scanner_version_required():
     record = metadata()
     record["Version"] = "0.77.0"
