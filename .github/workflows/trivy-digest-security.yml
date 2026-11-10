@@ -404,6 +404,23 @@ jobs:
             --scan-run-id "$SCAN_RUN" --producer-actor "$SCAN_PRODUCER" \
             --review-run-id "$REVIEW_RUN" --output security/security-contract.json
           test "$(jq -er .schema_version security/security-contract.json)" = 2
+          # B must not smuggle extra, missing, duplicate or symlinked proof files.
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          document = json.loads(Path("reviewed/review/dispositions.json").read_text())
+          records = document["records"]
+          expected = [record["proof_path"] for record in records]
+          proof_dir = Path("reviewed/review/proofs")
+          actual = []
+          if proof_dir.exists():
+              for entry in proof_dir.rglob("*"):
+                  if not entry.is_file() or entry.is_symlink() or entry.suffix != ".json":
+                      raise SystemExit("Unexpected or unsafe disposition proof")
+                  actual.append(entry.relative_to(proof_dir.parent).as_posix())
+          if len(set(expected)) != len(expected) or set(expected) != set(actual):
+              raise SystemExit("Missing, duplicated or extraneous disposition proofs")
+          PY
           mkdir -p security/review
           cp reviewed/security/disposition-verification.json security/review/disposition-verification.json
           cp reviewed/review/dispositions.json security/review/dispositions.json
