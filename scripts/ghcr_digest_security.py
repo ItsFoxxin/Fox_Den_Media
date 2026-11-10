@@ -240,7 +240,7 @@ def check_scanner(metadata: dict, now: datetime) -> dict:
     ensure(type(db) is dict and type(db.get("Version")) is int and
            db["Version"] > 0 and type(db.get("UpdatedAt")) is str and
            bool(db["UpdatedAt"]), "Vulnerability DB metadata missing")
-    ensure(bool(re.fullmatch(r"\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z",
+    ensure(bool(re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z",
                              db["UpdatedAt"])),
            "Vulnerability DB timestamp must be UTC whole-second Z")
     try:
