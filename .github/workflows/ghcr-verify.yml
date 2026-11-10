@@ -10,8 +10,16 @@ on:
         description: 'Successful R3 run with three candidate artifacts'
         required: true
         type: string
+      scan_run_id:
+        description: 'A: original signed scanner collection run'
+        required: true
+        type: string
+      review_run_id:
+        description: 'B: signed independent disposition review run'
+        required: true
+        type: string
       security_run_id:
-        description: 'Trusted digest-security producer run with signed contract and lock'
+        description: 'C: finalized signed security-contract v2 producer run'
         required: true
         type: string
       acceptance_run_id:
@@ -35,7 +43,8 @@ jobs:
     name: Verify published digests without rebuilding
     if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    timeout-minutes: 50
+    environment: security-disposition-review
     permissions:
       contents: read
       actions: read
@@ -57,7 +66,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           SOURCE_SHA: ${{ inputs.source_sha }}
           PUBLISHER_RUN: ${{ inputs.publisher_run_id }}
+          SCAN_RUN: ${{ inputs.scan_run_id }}
+          REVIEW_RUN: ${{ inputs.review_run_id }}
           SECURITY_RUN: ${{ inputs.security_run_id }}
+          ENABLED: ${{ vars.SECURITY_DISPOSITION_REVIEW_ENABLED }}
+          APPROVED_SHA: ${{ vars.SECURITY_DISPOSITION_APPROVED_SOURCE_SHA }}
           ACCEPTANCE_RUN: ${{ inputs.acceptance_run_id }}
           SOURCE_ISSUE: ${{ inputs.source_approval_issue }}
         run: |
@@ -76,24 +89,49 @@ jobs:
           PY
           [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
           [[ "$PUBLISHER_RUN" =~ ^[1-9][0-9]*$ ]]
+          [[ "$SCAN_RUN" =~ ^[1-9][0-9]*$ ]]
+          [[ "$REVIEW_RUN" =~ ^[1-9][0-9]*$ ]]
           [[ "$SECURITY_RUN" =~ ^[1-9][0-9]*$ ]]
+          test "$SCAN_RUN" != "$REVIEW_RUN"
+          test "$REVIEW_RUN" != "$SECURITY_RUN"
+          test "$SCAN_RUN" != "$SECURITY_RUN"
+          test "$ENABLED" = true
+          test "$APPROVED_SHA" = "$SOURCE_SHA"
           [[ "$ACCEPTANCE_RUN" =~ ^[1-9][0-9]*$ ]]
           [[ "$SOURCE_ISSUE" =~ ^[1-9][0-9]*$ ]]
           test "$GITHUB_SHA" = "$SOURCE_SHA"
           test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')" = "$SOURCE_SHA"
-          for kind in publisher security; do
-            if [ "$kind" = publisher ]; then
-              run="$PUBLISHER_RUN"; workflow=".github/workflows/ghcr-candidates.yml"
-            else
-              run="$SECURITY_RUN"; workflow=".github/workflows/trivy-digest-security.yml"
-            fi
+          gh api "repos/$GITHUB_REPOSITORY/environments/security-disposition-review" > "$RUNNER_TEMP/review-environment.json"
+          jq -e '.deployment_branch_policy.protected_branches == true and
+            ([.protection_rules[]? | select(.type == "required_reviewers" and
+            (.reviewers | type == "array" and length > 0))] | length > 0)' \
+            "$RUNNER_TEMP/review-environment.json" >/dev/null
+          gh api "repos/$GITHUB_REPOSITORY/branches/main" | jq -e '.protected == true' >/dev/null
+          for kind in publisher scan review security; do
+            case "$kind" in
+              publisher) run="$PUBLISHER_RUN"; workflow=".github/workflows/ghcr-candidates.yml" ;;
+              scan) run="$SCAN_RUN"; workflow=".github/workflows/trivy-digest-security.yml" ;;
+              review) run="$REVIEW_RUN"; workflow=".github/workflows/security-disposition-review.yml" ;;
+              security) run="$SECURITY_RUN"; workflow=".github/workflows/trivy-digest-security.yml" ;;
+            esac
             gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run" > "$RUNNER_TEMP/$kind-run.json"
-            jq -e --arg sha "$SOURCE_SHA" --arg path "$workflow" \
-              '.head_sha == $sha and .head_branch == "main" and
+            jq -e --argjson id "$run" --arg repo "$GITHUB_REPOSITORY" \
+              --arg sha "$SOURCE_SHA" --arg path "$workflow" \
+              '.id == $id and .repository.full_name == $repo and
+               .head_sha == $sha and .head_branch == "main" and
                .event == "workflow_dispatch" and .path == $path and
-               .conclusion == "success" and .status == "completed"' \
-              "$RUNNER_TEMP/$kind-run.json"
+               .status == "completed" and .conclusion == "success" and
+               (.actor.login | type == "string" and length > 0)' \
+              "$RUNNER_TEMP/$kind-run.json" >/dev/null
           done
+          scan_actor="$(jq -er .actor.login "$RUNNER_TEMP/scan-run.json")"
+          review_actor="$(jq -er .actor.login "$RUNNER_TEMP/review-run.json")"
+          test "$scan_actor" != "$review_actor"
+          test "$(jq -er .created_at "$RUNNER_TEMP/scan-run.json")" \
+            \< "$(jq -er .created_at "$RUNNER_TEMP/review-run.json")"
+          test "$(jq -er .created_at "$RUNNER_TEMP/review-run.json")" \
+            \< "$(jq -er .created_at "$RUNNER_TEMP/security-run.json")"
+          echo "SCAN_ACTOR=github:$scan_actor" >> "$GITHUB_ENV"
           # A separate successful, signed operational acceptance run is needed
           # for final release notes and actual rollback verification.
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$ACCEPTANCE_RUN" \
@@ -280,20 +318,31 @@ jobs:
         env:
           SOURCE_SHA: ${{ inputs.source_sha }}
           PUBLISHER_RUN: ${{ inputs.publisher_run_id }}
+          SCAN_RUN: ${{ inputs.scan_run_id }}
+          REVIEW_RUN: ${{ inputs.review_run_id }}
           ACCEPTANCE_RUN: ${{ inputs.acceptance_run_id }}
           SOURCE_ISSUE: ${{ inputs.source_approval_issue }}
+          LEDGER_SHA: ${{ vars.SECURITY_DISPOSITION_LIFECYCLE_SHA256 }}
         run: |
           set -euo pipefail
+          test "sha256:$(sha256sum governance/disposition-lifecycle.json | cut -d' ' -f1)" = "$LEDGER_SHA"
+          python -m pip install cryptography==50.0.2
           python -m scripts.r4_release_ready \
             --source-sha "$SOURCE_SHA" --r3-run-id "$PUBLISHER_RUN" \
+            --scan-run-id "$SCAN_RUN" --review-run-id "$REVIEW_RUN" \
+            --scan-actor "$SCAN_ACTOR" \
             --r4-run-id "$GITHUB_RUN_ID" --acceptance-run-id "$ACCEPTANCE_RUN" \
             --approval-issue "$SOURCE_ISSUE" \
-            --security-dir security --candidates-dir candidates \
-            --provenance-dir provenance --integration-path integration/no-rebuild.json \
+            --security-dir security --scan-dir scan-inputs --review-dir review-evidence \
+            --trust-path governance/disposition-trust.json \
+            --lifecycle-path governance/disposition-lifecycle.json \
+            --lifecycle-signature-path governance/disposition-lifecycle.sig \
+            --candidates-dir candidates --provenance-dir provenance \
+            --integration-path integration/no-rebuild.json \
             --acceptance-dir acceptance --issue-path governance/source-issue.json \
             --comments-path governance/comments.json --alerts-dir governance/alerts \
             --compose-path deploy/compose.yaml \
-            --policy-path security/vulnerability-exceptions.json \
+            --policy-path source-policy/vulnerability-exceptions.json \
             --output release-bundle
           test -s release-bundle/release-ready.json
       - name: Cryptographically attest exact R4 release-ready root manifest
