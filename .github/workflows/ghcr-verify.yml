@@ -421,10 +421,10 @@ jobs:
             esac
             current="$(GH_TOKEN="$STATE_READ_TOKEN" gh api \
               "repos/$GITHUB_REPOSITORY/actions/variables/$name" --jq '.value')"
-            test -n "$expected" && test "$current" = "$expected" || {
+            if [ -z "$expected" ] || [ "$current" != "$expected" ]; then
               echo "::error::Latest owner disposition state unavailable or changed"
               exit 1
-            }
+            fi
           done
           python -m pip install cryptography==50.0.2
           python -m scripts.r4_release_ready \
