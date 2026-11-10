@@ -611,7 +611,7 @@ class DispositionContractRuntimeTests(unittest.TestCase):
         self.scan_id = self.document["scan_run_id"]
         self.review_id = self.summary["disposition"]["binding"]["review_run_id"]
 
-    def run(self, ident, workflow):
+    def mock_run(self, ident, workflow):
         return {
             "id": ident, "repository": {"full_name": R5.REPOSITORY},
             "head_branch": "main", "head_sha": SHA, "event": "workflow_dispatch",
@@ -620,7 +620,7 @@ class DispositionContractRuntimeTests(unittest.TestCase):
         }
 
     def test_disposition_workflow_run_source_and_identity_must_match(self):
-        good = self.run(self.review_id, R5.REVIEW_WORKFLOW)
+        good = self.mock_run(self.review_id, R5.REVIEW_WORKFLOW)
         R5.validate_authenticated_run(good, SHA, self.review_id, R5.REVIEW_WORKFLOW)
         for bad in (
             dict(good, head_sha="0" * 40),
@@ -635,7 +635,7 @@ class DispositionContractRuntimeTests(unittest.TestCase):
 
     def test_attestation_requires_correct_run_invocation_and_exact_hash(self):
         result = self.root / "integration/disposition-verification.json"
-        run = self.run(self.review_id, R5.REVIEW_WORKFLOW)
+        run = self.mock_run(self.review_id, R5.REVIEW_WORKFLOW)
         expected = ("https://github.com/" + R5.REPOSITORY +
                     "/actions/runs/" + str(self.review_id) + "/attempts/1")
         def envelope(invocation, digest):
@@ -722,8 +722,8 @@ class DispositionContractRuntimeTests(unittest.TestCase):
 
     def test_live_recheck_runs_original_cli_and_rejects_revoked_review(self):
         scans = {
-            self.scan_id: self.run(self.scan_id, R5.SCAN_WORKFLOW),
-            self.review_id: self.run(self.review_id, R5.REVIEW_WORKFLOW),
+            self.scan_id: self.mock_run(self.scan_id, R5.SCAN_WORKFLOW),
+            self.review_id: self.mock_run(self.review_id, R5.REVIEW_WORKFLOW),
         }
         old_result = self.summary["disposition"]["result"]
         context = {
