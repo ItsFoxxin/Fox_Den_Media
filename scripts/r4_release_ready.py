@@ -193,18 +193,164 @@ def verify_integration(report: dict, lock: dict, source: str, r4_id: int) -> Non
             "No-rebuild integration not proved on these exact digests")
 
 
+
+REVIEW_WORKFLOW = ".github/workflows/security-disposition-review.yml"
+REVIEW_ARTIFACT = "security-disposition-review-v1"
+PROOF_BASENAME = re.compile(r"proofs/([a-z0-9_-]+)\.json\Z")
+
+
+def revalidate_independent_dispositions(*, security: dict, lock: dict,
+                                        scanner: dict, ledger: dict,
+                                        source: str, r3_id: int, scan_id: int,
+                                        review_id: int, scan_actor: str,
+                                        security_dir: Path, scan_dir: Path,
+                                        review_dir: Path, trust_path: Path,
+                                        lifecycle_path: Path,
+                                        lifecycle_signature_path: Path) -> tuple[dict, dict]:
+    """Fresh independent Ed25519/lifecycle and raw A/C evidence verification.
+
+    The owning PR #93 provides this verifier. Absent/unmerged code blocks R4;
+    this consumer never substitutes a self-declared JSON "pass" for it.
+    """
+    try:
+        from scripts.verify_security_dispositions import (
+            verify, load_json, require_r4_contract_v2,
+        )
+    except ImportError as exc:
+        raise ReleaseEvidenceError(
+            "Independent disposition verifier PR #93 unavailable; R4 blocked"
+        ) from exc
+    binding = security["disposition_review"]
+    require(binding["review_run_id"] == review_id,
+            "Finalized C contract refers to a different authenticated B review")
+    require(type(scan_actor) is str and
+            bool(re.fullmatch(r"github:[A-Za-z0-9-]{1,39}", scan_actor)),
+            "Missing independently authenticated scan A actor")
+    # A is the original, signed complete scan collection. C must not swap
+    # its lock, scanner, ledger or any raw per-image report/SBOM before review.
+    for name in ("release-lock.json", "scanner.json"):
+        require(sha_file(scan_dir / name) == sha_file(security_dir / name),
+                "Final C has altered signed scan A evidence: " + name)
+    require(sha_file(scan_dir / "vulnerability-exceptions.json") ==
+            sha_file(security_dir.parent / "security" / "vulnerability-exceptions.json"),
+            "Scan A exception ledger differs from checked-out source")
+    for component in lock["images"]:
+        require(type(component) is str and
+                bool(re.fullmatch(r"[a-z][a-z0-9_-]{0,39}", component)),
+                "Unsafe or missing locked scan component")
+        for suffix in (".vuln.json", ".sbom.spdx.json"):
+            rel = "reports/" + component + suffix
+            require(sha_file(scan_dir / rel) == sha_file(security_dir / rel),
+                    "Final C changed original scan A evidence: " + rel)
+    signed_path = review_dir / "security/disposition-verification.json"
+    signed_bytes = signed_path.read_bytes()
+    signed_result = load_json(signed_path)
+    require_r4_contract_v2(security, signed_result, signed_bytes)
+    dispositions = load_json(review_dir / "review/dispositions.json")
+    signatures = load_json(review_dir / "review/signatures.json")
+    # The lifecycle and reviewer trust MUST originate from the independently
+    # owner-managed environment, never from artifact B or C.
+    fresh_result = verify(
+        context=load_json(scan_dir / "context.json"),
+        dispositions=dispositions,
+        signatures=signatures,
+        lifecycle=load_json(lifecycle_path),
+        lifecycle_signature=lifecycle_signature_path.read_text(encoding="ascii"),
+        trust=load_json(trust_path), evidence_dir=scan_dir,
+        proofs_dir=review_dir / "review",
+        lock_path=scan_dir / "release-lock.json",
+        scanner=scanner, scanner_path=scan_dir / "scanner.json",
+        exceptions=ledger, expected_source_sha=source,
+        expected_r3_run_id=r3_id, expected_scan_run_id=scan_id,
+        expected_producer_actor=scan_actor,
+    )
+    require(type(signed_result) is dict and
+            set(signed_result) == set(fresh_result) and
+            all(signed_result[k] == value for k, value in fresh_result.items()
+                if k != "lifecycle_sha256"),
+            "Signed B review differs from independently reconstructed current disposition")
+    # A *newer* genuine lifecycle ledger can supersede the one B signed;
+    # revalidate it now rather than trusting B's old lifecycle SHA.
+    return signed_result, dispositions
+
+
+def stage_independent_dispositions(*, review_dir: Path, output: Path,
+                                   dispositions: dict,
+                                   signed_result: dict, binding: dict,
+                                   review_id: int) -> dict:
+    """Flat, deterministic signed v1 manifest paths; no unsigned sidecar.
+
+    This stages *already authenticated* B evidence. Upstream verification and
+    latest owner lifecycle MUST succeed before the caller invokes it.
+    """
+    assert type(dispositions) is dict
+    require(type(dispositions.get("records")) is list,
+            "Missing disposition records")
+    review_root = review_dir / "review"
+    paths = set()
+    for record in dispositions["records"]:
+        require(type(record) is dict, "Malformed disposition record")
+        match = PROOF_BASENAME.fullmatch(record.get("proof_path", ""))
+        require(match is not None and match.group(1) not in paths,
+                "Missing, duplicate or unsafe disposition proof filename")
+        paths.add(match.group(1))
+        proof = review_root / record["proof_path"]
+        require("sha256:" + sha_file(proof) == record.get("proof_sha256"),
+                "Altered signed disposition proof bytes")
+    proof_root = review_root / "proofs"
+    require(proof_root.is_dir() and not proof_root.is_symlink() and
+            {p.name for p in proof_root.iterdir()} ==
+            {slug + ".json" for slug in paths} and
+            all(p.is_file() and not p.is_symlink() for p in proof_root.iterdir()),
+            "Missing or unreferenced disposition proof")
+    copied = (
+        ("security/disposition-verification.json",
+         "integration/disposition-verification.json"),
+        ("review/dispositions.json", "integration/security-dispositions.json"),
+        ("review/signatures.json",
+         "integration/security-disposition-signatures.json"),
+    )
+    for src, dst in copied:
+        copy_evidence(review_dir / src, output / dst)
+    for slug in sorted(paths):
+        copy_evidence(proof_root / (slug + ".json"),
+                      output / ("integration/disposition-proof-" + slug + ".json"))
+    verification_hash = "sha256:" + sha_file(
+        output / "integration/disposition-verification.json")
+    require(verification_hash == binding["verification_sha256"] and
+            signed_result.get("disposition_document_sha256") ==
+                binding["dispositions_sha256"],
+            "Altered signed disposition result/document binding")
+    require(binding["review_run_id"] == review_id,
+            "Wrong signed B review run for released disposition")
+    return {
+        "schema_version": 1,
+        "artifact_name": REVIEW_ARTIFACT,
+        "verification_file": "integration/disposition-verification.json",
+        "verification_sha256": verification_hash,
+        "dispositions_sha256": binding["dispositions_sha256"],
+        "review_workflow": REVIEW_WORKFLOW,
+        "review_run_id": review_id,
+        "verified_at": binding["verified_at"],
+    }
+
+
 def assemble_bundle(*, source: str, r3_id: int, r4_id: int,
+                    scan_id: int, review_id: int, scan_actor: str,
                     acceptance_id: int, approval_issue: int,
-                    security_dir: Path, candidates_dir: Path,
-                    provenance_dir: Path, integration_path: Path,
-                    acceptance_dir: Path, issue_path: Path,
-                    comments_path: Path, alerts_dir: Path,
+                    security_dir: Path, scan_dir: Path, review_dir: Path,
+                    trust_path: Path, lifecycle_path: Path,
+                    lifecycle_signature_path: Path,
+                    candidates_dir: Path, provenance_dir: Path,
+                    integration_path: Path, acceptance_dir: Path,
+                    issue_path: Path, comments_path: Path, alerts_dir: Path,
                     compose_path: Path, policy_path: Path,
                     output: Path) -> dict:
     """Create files only after validating genuine independent input subjects."""
     require(type(source) is str and bool(SHA.fullmatch(source)) and
-            all(type(i) is int and i > 0 for i in (r3_id, r4_id, acceptance_id)),
-            "Bad R3/R4/source or independent acceptance run identity")
+            all(type(i) is int and i > 0 for i in
+                (r3_id, scan_id, review_id, r4_id, acceptance_id)),
+            "Bad R3/A/B/C/R4/source or independent acceptance run identity")
     require(not output.exists() or not any(output.iterdir()),
             "Refusing to overwrite a release-ready bundle")
     security = read_json(security_dir / "security-contract.json")
@@ -221,6 +367,13 @@ def assemble_bundle(*, source: str, r3_id: int, r4_id: int,
     validate_contract(security, candidates, source, r3_id,
                       lock=lock, evidence_dir=security_dir / "reports")
     validate_scanner_policy(security, scanner, ledger)
+    signed_review_result, dispositions = revalidate_independent_dispositions(
+        security=security, lock=lock, scanner=scanner, ledger=ledger,
+        source=source, r3_id=r3_id, scan_id=scan_id, review_id=review_id,
+        scan_actor=scan_actor, security_dir=security_dir, scan_dir=scan_dir,
+        review_dir=review_dir, trust_path=trust_path,
+        lifecycle_path=lifecycle_path,
+        lifecycle_signature_path=lifecycle_signature_path)
     require(security.get("policy_version") == "v1:" + hashlib.sha256(
         json.dumps(ledger, sort_keys=True, separators=(",", ":")).encode()).hexdigest(),
         "Wrong independently reviewed security policy")
@@ -286,6 +439,10 @@ def assemble_bundle(*, source: str, r3_id: int, r4_id: int,
         normalized[component] = evidence
     copy_evidence(integration_path, output / "integration/no-rebuild.json")
     copy_evidence(rollback_path, output / "integration/rollback-report.json")
+    disposition_binding = stage_independent_dispositions(
+        review_dir=review_dir, output=output, dispositions=dispositions,
+        signed_result=signed_review_result,
+        binding=security["disposition_review"], review_id=review_id)
     review = {
         "schema_version": 1, "source_sha": source,
         "source_promotion": promotion, "native_alert_counts": counts,
@@ -309,6 +466,7 @@ def assemble_bundle(*, source: str, r3_id: int, r4_id: int,
         },
         "github_security_review": "pass", "unapproved_security_findings": 0,
         "image_evidence": normalized, "files": file_hashes,
+        "disposition_review": disposition_binding,
     }
     ver_path = output / "verification.json"
     ver_path.write_text(json.dumps(verification, sort_keys=True, indent=2) + "\n")
@@ -330,9 +488,14 @@ def main() -> int:
     parser.add_argument("--source-sha", required=True)
     parser.add_argument("--r3-run-id", type=int, required=True)
     parser.add_argument("--r4-run-id", type=int, required=True)
+    parser.add_argument("--scan-run-id", type=int, required=True)
+    parser.add_argument("--review-run-id", type=int, required=True)
+    parser.add_argument("--scan-actor", required=True)
     parser.add_argument("--acceptance-run-id", type=int, required=True)
     parser.add_argument("--approval-issue", type=int, required=True)
-    for field in ("security-dir", "candidates-dir", "provenance-dir",
+    for field in ("security-dir", "scan-dir", "review-dir", "trust-path",
+                  "lifecycle-path", "lifecycle-signature-path",
+                  "candidates-dir", "provenance-dir",
                   "integration-path", "acceptance-dir", "issue-path",
                   "comments-path", "alerts-dir", "compose-path", "policy-path",
                   "output"):
@@ -341,9 +504,15 @@ def main() -> int:
     try:
         assemble_bundle(
             source=args.source_sha, r3_id=args.r3_run_id,
-            r4_id=args.r4_run_id, acceptance_id=args.acceptance_run_id,
+            r4_id=args.r4_run_id, scan_id=args.scan_run_id,
+            review_id=args.review_run_id, scan_actor=args.scan_actor,
+            acceptance_id=args.acceptance_run_id,
             approval_issue=args.approval_issue,
-            security_dir=args.security_dir, candidates_dir=args.candidates_dir,
+            security_dir=args.security_dir, scan_dir=args.scan_dir,
+            review_dir=args.review_dir, trust_path=args.trust_path,
+            lifecycle_path=args.lifecycle_path,
+            lifecycle_signature_path=args.lifecycle_signature_path,
+            candidates_dir=args.candidates_dir,
             provenance_dir=args.provenance_dir, integration_path=args.integration_path,
             acceptance_dir=args.acceptance_dir, issue_path=args.issue_path,
             comments_path=args.comments_path, alerts_dir=args.alerts_dir,
