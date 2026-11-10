@@ -50,6 +50,11 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       SOURCE_SHA: ${{ inputs.source_sha }}
       R4_RUN_ID: ${{ inputs.r4_run_id }}
+      # Read-only preview uses the current owner-managed repository variables.
+      SECURITY_DISPOSITION_TRUST_B64: ${{ vars.SECURITY_DISPOSITION_TRUST_B64 }}
+      SECURITY_DISPOSITION_LIFECYCLE_B64: ${{ vars.SECURITY_DISPOSITION_LIFECYCLE_B64 }}
+      SECURITY_DISPOSITION_LIFECYCLE_SIG_B64: ${{ vars.SECURITY_DISPOSITION_LIFECYCLE_SIG_B64 }}
+      SECURITY_DISPOSITION_LIFECYCLE_SHA256: ${{ vars.SECURITY_DISPOSITION_LIFECYCLE_SHA256 }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -93,6 +98,14 @@ jobs:
           if version < (2, 102, 0):
               raise SystemExit("gh 2.102.0 or newer required for exact signer identity")
           PY
+      - name: Revalidate independently signed security dispositions (preview)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # This is the PR #93 verifier, not a second scanner or approval source.
+          python -m pip install cryptography==50.0.2
+          python scripts/release_publication.py dispositions \
+            --source-sha "$SOURCE_SHA" --r4-run-id "$R4_RUN_ID"
       - name: Verify published GHCR manifest identities and signed provenance/SBOM
         shell: bash
         run: |
@@ -133,6 +146,14 @@ jobs:
       APPROVAL_ISSUE: ${{ inputs.approval_issue }}
       CONFIRMATION: ${{ inputs.confirmation }}
       RELEASE_PUBLICATION_ARMED: ${{ secrets.RELEASE_PUBLICATION_ARMED }}
+      # Protection-gated read-only credential, scoped to repository Variables: read.
+      # Unlike job-start 'vars', it lets R5 reject supersession/revocation
+      # that happens between the earlier R4 and current publication approval.
+      SECURITY_DISPOSITION_STATE_READ_TOKEN: ${{ secrets.SECURITY_DISPOSITION_STATE_READ_TOKEN }}
+      SECURITY_DISPOSITION_TRUST_B64: ${{ vars.SECURITY_DISPOSITION_TRUST_B64 }}
+      SECURITY_DISPOSITION_LIFECYCLE_B64: ${{ vars.SECURITY_DISPOSITION_LIFECYCLE_B64 }}
+      SECURITY_DISPOSITION_LIFECYCLE_SIG_B64: ${{ vars.SECURITY_DISPOSITION_LIFECYCLE_SIG_B64 }}
+      SECURITY_DISPOSITION_LIFECYCLE_SHA256: ${{ vars.SECURITY_DISPOSITION_LIFECYCLE_SHA256 }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -187,6 +208,16 @@ jobs:
           mkdir -p release-assets
           python scripts/release_publication.py assets --source-sha "$SOURCE_SHA" \
             --r4-run-id "$R4_RUN_ID"
+      - name: Reauthenticate current reviewer trust, revocations and publication GO
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install cryptography==50.0.2
+          # CURRENT owner variables are re-read via GitHub's Variables API
+          # using an environment-only credential; stale or changed means NO-GO.
+          python scripts/release_publication.py dispositions \
+            --source-sha "$SOURCE_SHA" --r4-run-id "$R4_RUN_ID" \
+            --approval-issue "$APPROVAL_ISSUE" --final
       - name: Create immutable annotated tag and GitHub Release from verified assets
         shell: bash
         run: |
