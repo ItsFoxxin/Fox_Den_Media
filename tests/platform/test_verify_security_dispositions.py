@@ -514,6 +514,40 @@ def test_duplicate_finding_with_conflicting_decimal_metadata_rejected(tmp_path):
         check(c)
 
 
+@pytest.mark.parametrize("bad_db_version", [2.0, True])
+def test_scanner_database_version_requires_exact_integer(tmp_path, bad_db_version):
+    c = case_factory(tmp_path)
+    c["scanner"]["VulnerabilityDB"]["Version"] = bad_db_version
+    refresh(c)
+    with pytest.raises(v.DispositionError, match="Wrong scanner version"):
+        check(c)
+
+
+@pytest.mark.parametrize("field,bad_run_id", [
+    ("r3_run_id", 101.0), ("r3_run_id", True),
+    ("scan_run_id", 202.0), ("scan_run_id", True),
+])
+def test_r4_v2_adapter_rejects_noninteger_review_result_runs(
+        tmp_path, field, bad_run_id):
+    c = case_factory(tmp_path)
+    result = check(c)
+    result[field] = bad_run_id
+    raw = v.canonical(result) + b"\\n"
+    binding = {
+        "schema_version": 1,
+        "artifact_name": "security-disposition-review-v1",
+        "verification_file": "disposition-verification.json",
+        "verification_sha256": "sha256:" + hashlib.sha256(raw).hexdigest(),
+        "dispositions_sha256": result["disposition_document_sha256"],
+        "review_workflow": v.REVIEW_WORKFLOW,
+        "review_run_id": 404,
+        "verified_at": utc(NOW),
+    }
+    contract = {"schema_version": 2, "disposition_review": binding}
+    with pytest.raises(v.DispositionError, match="Invalid review result"):
+        v.require_r4_contract_v2(contract, result, raw)
+
+
 def test_missing_or_bad_reviewer_signature(tmp_path):
     c = case_factory(tmp_path)
     c["signatures"]["signatures"] = []
@@ -756,7 +790,7 @@ def test_r3_source_lock_tampering_rejected(tmp_path):
     with pytest.raises(v.DispositionError, match="R3 publisher"):
         check(c)
 
-@pytest.mark.parametrize("invalid_version", [True, False, "1", None])
+@pytest.mark.parametrize("invalid_version", [True, False, "1", None, 1.0])
 @pytest.mark.parametrize("document", [
     "context", "dispositions", "trust", "signatures",
     "lifecycle", "release_lock", "exceptions", "proof",
@@ -793,7 +827,7 @@ def test_schema_version_requires_exact_integer_with_valid_evidence(
         check(c)
 
 
-@pytest.mark.parametrize("invalid_version", [True, False, "1", None])
+@pytest.mark.parametrize("invalid_version", [True, False, "1", None, 1.0])
 @pytest.mark.parametrize("document", ["contract", "binding", "review_result"])
 def test_r4_v2_adapter_rejects_noninteger_schema_versions(
         tmp_path, document, invalid_version):
