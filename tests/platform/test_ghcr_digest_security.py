@@ -547,3 +547,78 @@ def test_v2_manual_a_c_workflow_and_independent_crypto_gate_are_explicit():
     assert "environment: ghcr-security" in workflow
     assert "packages: write" not in workflow
     assert "actions/attest@" in workflow
+
+
+@pytest.mark.parametrize("variation", [
+    "same", "changed-severity", "changed-fixed-version",
+    "changed-description", "other-result",
+])
+def test_v2_collection_rejects_conflicting_underlying_findings(tmp_path, variation):
+    """Mirrors the three corrected #93 cases: identity excludes scanner metadata."""
+    plan, reports, lock, scanner, policy, context = v2_fixture(tmp_path, "HIGH")
+    report_path = reports / "portal.vuln.json"
+    report = strict_load(report_path)
+    first = report["Results"][0]["Vulnerabilities"][0]
+    alternate = deepcopy(first)
+    if variation == "changed-severity":
+        alternate["Severity"] = "LOW"
+    elif variation == "changed-fixed-version":
+        alternate["FixedVersion"] = "9.9.9"
+    elif variation == "changed-description":
+        alternate["Description"] = "Metadata altered, same CVE/package occurrence"
+    if variation == "other-result":
+        second_result = deepcopy(report["Results"][0])
+        second_result["Vulnerabilities"] = [alternate]
+        report["Results"].append(second_result)
+    else:
+        report["Results"][0]["Vulnerabilities"].append(alternate)
+    report_path.write_text(json.dumps(report))
+    with pytest.raises(EvidenceError, match="Ambiguous duplicate finding identity"):
+        collect_v2_context(plan, reports, metadata(), policy,
+                           lock, scanner, SOURCE, 113, 235, "github:scan-bot", NOW)
+
+
+@pytest.mark.parametrize("field", ["context", "review"])
+def test_v2_strict_schema_integer_disallows_json_boolean(tmp_path, field):
+    plan, reports, lock, scanner, policy, context = v2_fixture(tmp_path)
+    document, verified = synthetic_review(context, [])
+    if field == "context":
+        context["schema_version"] = True
+    else:
+        verified["schema_version"] = True
+    with pytest.raises(EvidenceError):
+        synthetic_finalize(plan, reports, lock, scanner, policy,
+                           context, document, verified)
+
+
+def test_v2_merged_verifier_adapter_rejects_v1_or_forged_review_hash(tmp_path):
+    from scripts.verify_security_dispositions import (
+        DispositionError, require_r4_contract_v2,
+    )
+    plan, reports, lock, scanner, policy, context = v2_fixture(tmp_path)
+    document, reviewed = synthetic_review(context, [])
+    signed_bytes = json.dumps(reviewed).encode()
+    contract = synthetic_finalize(plan, reports, lock, scanner, policy,
+                                  context, document, reviewed)
+    # Structural compatibility with the actual merged #93 helper, not a
+    # replacement for B's independent Ed25519/OIDC cryptographic verification.
+    require_r4_contract_v2(contract, reviewed, signed_bytes)
+    contract["schema_version"] = 1
+    with pytest.raises(DispositionError):
+        require_r4_contract_v2(contract, reviewed, signed_bytes)
+    contract["schema_version"] = 2
+    contract["disposition_review"]["verification_sha256"] = "sha256:" + "0" * 64
+    with pytest.raises(DispositionError):
+        require_r4_contract_v2(contract, reviewed, signed_bytes)
+
+
+def test_v2_workflow_checks_actual_environment_and_independent_review_actor():
+    workflow = Path(".github/workflows/trivy-digest-security.yml").read_text()
+    assert workflow.count('environments/ghcr-security') == 2
+    assert workflow.count('".protected == true"') == 0  # jq uses single quotes
+    assert workflow.count(".protected == true") == 2
+    assert "required_reviewers" in workflow
+    assert 'test "$SCAN_ACTOR" != "$REVIEW_ACTOR"' in workflow
+    assert '.inputs.stage == "collect"' in workflow
+    assert "ghcr-security-contract-v1" not in workflow
+    assert "ghcr-security-contract-v2" in workflow
