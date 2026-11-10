@@ -536,6 +536,7 @@ def test_v2_manual_a_c_workflow_and_independent_crypto_gate_are_explicit():
     assert "options: [collect, finalize]" in workflow
     assert "ghcr-security-contract-v2-inputs" in workflow
     assert "ghcr-security-contract-v2" in workflow
+    assert "python -m scripts.ghcr_digest_security finalize-v2" in workflow
     assert "ghcr-security-contract-v1" not in workflow
     assert "security-disposition-review-v1" in workflow
     assert ".github/workflows/security-disposition-review.yml" in workflow
