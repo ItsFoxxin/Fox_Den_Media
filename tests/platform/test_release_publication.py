@@ -10,6 +10,7 @@ import os
 import hashlib
 import importlib.util
 import json
+import shutil
 from pathlib import Path
 import tempfile
 import unittest
@@ -593,6 +594,185 @@ class SignedEnvelopeTests(unittest.TestCase):
         (self.root / "release-ready.json").unlink()
         with self.assertRaises(R5.ReleaseBlocked):
             R5.verify_signed_release_ready(self.root, SHA, R4)
+
+
+
+class DispositionContractRuntimeTests(unittest.TestCase):
+    """Mocked network/run boundaries. PR #93 owns real Ed25519 test vectors."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name) / "bundle"
+        self.root.mkdir()
+        self.lock, self.verified = make_bundle(self.root)
+        self.summary = R5.validate_bundle(self.root, SHA, R4)
+        self.document = self.summary["disposition"]["document"]
+        self.scan_id = self.document["scan_run_id"]
+        self.review_id = self.summary["disposition"]["binding"]["review_run_id"]
+
+    def run(self, ident, workflow):
+        return {
+            "id": ident, "repository": {"full_name": R5.REPOSITORY},
+            "head_branch": "main", "head_sha": SHA, "event": "workflow_dispatch",
+            "path": workflow, "status": "completed", "conclusion": "success",
+            "run_attempt": 1, "actor": {"login": "scan-producer"},
+        }
+
+    def test_disposition_workflow_run_source_and_identity_must_match(self):
+        good = self.run(self.review_id, R5.REVIEW_WORKFLOW)
+        R5.validate_authenticated_run(good, SHA, self.review_id, R5.REVIEW_WORKFLOW)
+        for bad in (
+            dict(good, head_sha="0" * 40),
+            dict(good, path=R5.SCAN_WORKFLOW),
+            dict(good, id=self.review_id + 1),
+            dict(good, conclusion="skipped"),
+            dict(good, run_attempt=0),
+        ):
+            with self.subTest(bad=bad), self.assertRaises(R5.ReleaseBlocked):
+                R5.validate_authenticated_run(
+                    bad, SHA, self.review_id, R5.REVIEW_WORKFLOW)
+
+    def test_attestation_requires_correct_run_invocation_and_exact_hash(self):
+        result = self.root / "integration/disposition-verification.json"
+        run = self.run(self.review_id, R5.REVIEW_WORKFLOW)
+        expected = ("https://github.com/" + R5.REPOSITORY +
+                    "/actions/runs/" + str(self.review_id) + "/attempts/1")
+        def envelope(invocation, digest):
+            return json.dumps([{"verificationResult": {
+                "statement": {
+                    "subject": [{"digest": {"sha256": digest}}],
+                    "predicate": {"runDetails": {
+                        "metadata": {"invocationId": invocation}}},
+                },
+            }}])
+        with patch.object(R5, "run_command", side_effect=[
+            "gh version 2.102.0\n", envelope(expected, R5.hash_file(result)),
+        ]) as mocked:
+            R5.verify_attested_review_file(result, SHA, R5.REVIEW_WORKFLOW, run)
+        cmd = mocked.call_args_list[1].args[0]
+        for key, value in (
+            ("--repo", R5.REPOSITORY),
+            ("--source-ref", "refs/heads/main"),
+            ("--source-digest", SHA),
+            ("--signer-workflow", R5.REPOSITORY + "/" + R5.REVIEW_WORKFLOW),
+        ):
+            self.assertEqual(cmd[cmd.index(key) + 1], value)
+        for invocation, digest in (
+            (expected.replace("/attempts/1", "/attempts/2"), R5.hash_file(result)),
+            (expected.replace(str(self.review_id), str(self.review_id + 1)),
+             R5.hash_file(result)),
+            (expected, "0" * 64),
+        ):
+            with self.subTest(invocation=invocation), patch.object(
+                R5, "run_command", side_effect=[
+                    "gh version 2.102.0\n", envelope(invocation, digest),
+                ]), self.assertRaises(R5.ReleaseBlocked):
+                R5.verify_attested_review_file(
+                    result, SHA, R5.REVIEW_WORKFLOW, run)
+
+    def test_owner_latest_state_rejects_stale_revocation_and_trust(self):
+        values = {
+            name: base64.b64encode((name + ":synthetic").encode()).decode()
+            for name in R5.OWNER_STATE_VARIABLES[:-1]
+        }
+        values["SECURITY_DISPOSITION_LIFECYCLE_SHA256"] = (
+            "sha256:" + hashlib.sha256(
+                base64.b64decode(values["SECURITY_DISPOSITION_LIFECYCLE_B64"])
+            ).hexdigest())
+        values["SECURITY_DISPOSITION_STATE_READ_TOKEN"] = "read-only-fixture"
+        with patch.dict(os.environ, values):
+            def api_ok(path, *, token=None, **kwargs):
+                name = path.rsplit("/", 1)[-1]
+                self.assertEqual(token, "read-only-fixture")
+                return {"name": name, "value": values[name],
+                        "updated_at": "2026-11-10T01:00:00Z"}
+            with patch.object(R5, "api", side_effect=api_ok):
+                current = R5.owner_disposition_state(latest=True)
+                self.assertTrue(current["SECURITY_DISPOSITION_TRUST_B64"])
+            for changed in (
+                "SECURITY_DISPOSITION_TRUST_B64",
+                "SECURITY_DISPOSITION_LIFECYCLE_B64",
+                "SECURITY_DISPOSITION_LIFECYCLE_SIG_B64",
+                "SECURITY_DISPOSITION_LIFECYCLE_SHA256",
+            ):
+                with self.subTest(changed=changed):
+                    def api_changed(path, *, token=None, **kwargs):
+                        name = path.rsplit("/", 1)[-1]
+                        return {"name": name,
+                                "value": "replaced" if name == changed else values[name],
+                                "updated_at": "2026-11-10T01:01:00Z"}
+                    with patch.object(R5, "api", side_effect=api_changed):
+                        with self.assertRaises(R5.ReleaseBlocked):
+                            R5.owner_disposition_state(latest=True)
+            with patch.dict(os.environ, {
+                "SECURITY_DISPOSITION_LIFECYCLE_SHA256": "sha256:" + "0" * 64
+            }):
+                with patch.object(R5, "api", side_effect=lambda path, *, token=None:
+                                  {"name": path.rsplit("/", 1)[-1],
+                                   "value": os.environ[path.rsplit("/", 1)[-1]],
+                                   "updated_at": "2026-11-10T01:00:00Z"}):
+                    with self.assertRaises(R5.ReleaseBlocked):
+                        R5.owner_disposition_state(latest=True)
+
+    def test_missing_latest_state_credential_rejected(self):
+        with patch.dict(os.environ, {"SECURITY_DISPOSITION_STATE_READ_TOKEN": ""},
+                        clear=True), self.assertRaises(R5.ReleaseBlocked):
+            R5.owner_disposition_state(latest=True)
+
+    def test_live_recheck_runs_original_cli_and_rejects_revoked_review(self):
+        scans = {
+            self.scan_id: self.run(self.scan_id, R5.SCAN_WORKFLOW),
+            self.review_id: self.run(self.review_id, R5.REVIEW_WORKFLOW),
+        }
+        old_result = self.summary["disposition"]["result"]
+        context = {
+            "source_sha": SHA, "r3_run_id": R3, "scan_run_id": self.scan_id,
+            "producer_actor": self.document["producer_actor"],
+            "release_lock_sha256": "sha256:" + self.summary["lock_sha256"],
+        }
+        def mock_api(path, **kwargs):
+            return scans[int(path.rsplit("/", 1)[-1])]
+
+        def runner(command, *, output=False):
+            if command[:3] == ["gh", "run", "download"]:
+                dst = Path(command[command.index("--dir") + 1])
+                (dst / "context.json").write_text(json.dumps(context))
+                for file in ("release-lock.json", "scanner.json"):
+                    shutil.copyfile(self.root / file, dst / file)
+                (dst / "vulnerability-exceptions.json").write_bytes(
+                    (ROOT / "security/vulnerability-exceptions.json").read_bytes())
+                shutil.copytree(self.root / "reports", dst / "reports")
+            if "-m" in command and "scripts.verify_security_dispositions" in command:
+                out = Path(command[command.index("--output") + 1])
+                out.write_text(json.dumps(dict(
+                    old_result, lifecycle_sha256="sha256:" + "c" * 64)))
+            return ""
+        state = {
+            name: b"synthetic-owner-" + name.encode()
+            for name in R5.OWNER_STATE_VARIABLES[:-1]
+        }
+        with patch.object(R5, "api", side_effect=mock_api), patch.object(
+            R5, "verify_attested_review_file"
+        ), patch.object(R5, "owner_disposition_state", return_value=state), patch.object(
+            R5, "run_command", side_effect=runner
+        ) as invoked:
+            R5.revalidate_current_dispositions(self.root, self.summary, SHA,
+                                               latest=True)
+            self.assertTrue(any("scripts.verify_security_dispositions" in c.args[0]
+                                for c in invoked.call_args_list))
+        def revoked(command, *, output=False):
+            if "-m" in command and "scripts.verify_security_dispositions" in command:
+                raise R5.ReleaseBlocked("revoked independent signature")
+            return runner(command, output=output)
+        with patch.object(R5, "api", side_effect=mock_api), patch.object(
+            R5, "verify_attested_review_file"
+        ), patch.object(R5, "owner_disposition_state", return_value=state), patch.object(
+            R5, "run_command", side_effect=revoked
+        ), self.assertRaises(R5.ReleaseBlocked):
+            R5.revalidate_current_dispositions(
+                self.root, self.summary, SHA, latest=True)
+
 
 
 class ExternalGateTests(unittest.TestCase):
