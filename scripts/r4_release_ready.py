@@ -345,6 +345,35 @@ def stage_independent_dispositions(*, review_dir: Path, output: Path,
     }
 
 
+def validate_disposition_file_map(*, files: dict, output: Path,
+                                  dispositions: dict, binding: dict) -> None:
+    """Fail closed if any flat review proof is omitted from the signed v1 map."""
+    require(type(files) is dict and type(dispositions) is dict and
+            type(dispositions.get("records")) is list,
+            "Malformed signed release-ready disposition inventory")
+    fixed = {
+        "integration/disposition-verification.json",
+        "integration/security-dispositions.json",
+        "integration/security-disposition-signatures.json",
+    }
+    expected = set(fixed)
+    for item in dispositions["records"]:
+        require(type(item) is dict, "Malformed review proof record")
+        match = PROOF_BASENAME.fullmatch(item.get("proof_path", ""))
+        require(match is not None, "Invalid disposition proof path")
+        expected.add("integration/disposition-proof-" + match.group(1) + ".json")
+    actual = {key for key in files if key in fixed or
+              key.startswith("integration/disposition-proof-")}
+    require(actual == expected, "Signed file map omitted or added disposition proof")
+    for key in expected:
+        require(type(files[key]) is str and bool(HASH.fullmatch(files[key])) and
+                files[key] == sha_file(output / key),
+                "Altered or unsealed disposition evidence in signed file map")
+    require("sha256:" + files["integration/disposition-verification.json"] ==
+            binding["verification_sha256"],
+            "R4 signed file map has wrong independent verification hash")
+
+
 def assemble_bundle(*, source: str, r3_id: int, r4_id: int,
                     scan_id: int, review_id: int, scan_actor: str,
                     acceptance_id: int, approval_issue: int,
@@ -462,6 +491,9 @@ def assemble_bundle(*, source: str, r3_id: int, r4_id: int,
     review_path.write_text(json.dumps(review, sort_keys=True, indent=2) + "\n")
     file_hashes = {str(p.relative_to(output)): sha_file(p)
                    for p in output.rglob("*") if p.is_file()}
+    validate_disposition_file_map(
+        files=file_hashes, output=output, dispositions=dispositions,
+        binding=disposition_binding)
     verification = {
         "schema_version": 1, "version": "1.0.0", "source_sha": source,
         "r3_run_id": r3_id, "r4_run_id": r4_id,

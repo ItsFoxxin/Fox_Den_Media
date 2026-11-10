@@ -163,3 +163,27 @@ def test_workflow_requires_source_bound_signed_a_b_c_and_owner_trust():
                  "--lifecycle-path", "--lifecycle-signature-path"):
         assert flag in stage["run"]
     assert "--policy-path source-policy/vulnerability-exceptions.json" in stage["run"]
+
+
+def test_signed_file_map_cannot_omit_or_tamper_with_disposition_proof(tmp_path):
+    base, output, document, result, binding = fixture_review(tmp_path)
+    extension = pack(base, output, document, result, binding)
+    hashes = {str(p.relative_to(output)): r4.sha_file(p)
+              for p in output.rglob("*.json")}
+    r4.validate_disposition_file_map(
+        files=hashes, output=output, dispositions=document, binding=extension)
+    for broken in ("missing-proof", "altered-proof-hash",
+                   "missing-verification", "extra-proof"):
+        modified = dict(hashes)
+        if broken == "missing-proof":
+            modified.pop("integration/disposition-proof-finding-1.json")
+        elif broken == "altered-proof-hash":
+            modified["integration/disposition-proof-finding-1.json"] = "a" * 64
+        elif broken == "missing-verification":
+            modified.pop("integration/disposition-verification.json")
+        elif broken == "extra-proof":
+            modified["integration/disposition-proof-unknown.json"] = "a" * 64
+        with pytest.raises(r4.ReleaseEvidenceError):
+            r4.validate_disposition_file_map(
+                files=modified, output=output, dispositions=document,
+                binding=extension)

@@ -201,7 +201,8 @@ jobs:
           # invocation binds the retrieved subject to the queried run ID.
           verify_subject() {
             local file="$1" run="$2" signer="$3"
-            local output="$RUNNER_TEMP/attested-$(basename "$file").$run.json"
+            local output
+            output="$RUNNER_TEMP/attested-$(basename "$file").$run.json"
             gh attestation verify "$file" --repo "$GITHUB_REPOSITORY" \
               --source-ref "refs/heads/main" --source-digest "$SOURCE_SHA" \
               --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/$signer" \
