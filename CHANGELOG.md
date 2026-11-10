@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.9.7 - 2026-11-08
+
+### Fixed
+
+- Fixes #87: Replace retry-enabled, vulnerable Bookworm APT package verification in first-party image builds by upgrading `apt` and `libapt-pkg6.0` to Debian's fixed 2.6.2 security packages before later dependency installation.
+
+### Validation and rollback
+
+- Disable APT HTTP download retries during its initial self-upgrade to eliminate the vulnerable retry precondition. Fail the image build unless both APT packages meet the Debian-fixed version.
+- Validate Portal/Music/Media image builds and real Trivy/SBOM evidence, existing full tests, actionlint, CodeQL and Dependency Review. These CI images are not release artifacts.
+- Rollback requires a separate reviewed prior source and digest; no NAS or production mutation or publishing is performed.
+
 ## 0.9.6 - 2026-11-07
 
 ### Fixed

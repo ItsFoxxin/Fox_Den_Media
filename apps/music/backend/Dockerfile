@@ -15,7 +15,10 @@ ENV HOME=/config \
 
 RUN test "${APP_UID}" -gt 0 \
     && test "${APP_GID}" -gt 0 \
-    && apt-get update \
+    && apt-get -o Acquire::Retries=0 update \
+    && apt-get -o Acquire::Retries=0 install -y --no-install-recommends --only-upgrade apt libapt-pkg6.0 \
+    && dpkg --compare-versions "$(dpkg-query -W -f='${Version}' apt)" ge '2.6.2' \
+    && dpkg --compare-versions "$(dpkg-query -W -f='${Version}' libapt-pkg6.0)" ge '2.6.2' \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
         ffmpeg \
