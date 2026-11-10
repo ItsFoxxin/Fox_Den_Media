@@ -1,0 +1,172 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Fox Den independent security dispositions document v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "repository",
+    "source_sha",
+    "release_lock_sha256",
+    "r3_run_id",
+    "scan_run_id",
+    "created_at",
+    "reviewed_at",
+    "expires_at",
+    "records",
+    "producer_actor"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "repository": {
+      "const": "ItsFoxxin/Fox_Den_Media"
+    },
+    "source_sha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "release_lock_sha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "r3_run_id": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "scan_run_id": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "reviewed_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "expires_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "records": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "status",
+          "subject",
+          "proof_path",
+          "proof_sha256",
+          "reviewer_id"
+        ],
+        "properties": {
+          "status": {
+            "enum": [
+              "FIXED",
+              "NOT_AFFECTED"
+            ]
+          },
+          "subject": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "component",
+              "result_index",
+              "vulnerability_index",
+              "cve_id",
+              "target",
+              "ecosystem",
+              "package_name",
+              "installed_version",
+              "finding_sha256",
+              "image_repository",
+              "manifest_digest",
+              "platform_digest",
+              "trivy_report_sha256",
+              "spdx_sbom_sha256"
+            ],
+            "properties": {
+              "component": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_-]{0,39}$"
+              },
+              "result_index": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "vulnerability_index": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "cve_id": {
+                "type": "string",
+                "pattern": "^CVE-[0-9]{4}-[0-9]{4,}$"
+              },
+              "target": {
+                "type": "string",
+                "minLength": 1
+              },
+              "ecosystem": {
+                "type": "string",
+                "minLength": 1
+              },
+              "package_name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "installed_version": {
+                "type": "string",
+                "minLength": 1
+              },
+              "finding_sha256": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              },
+              "image_repository": {
+                "type": "string",
+                "minLength": 1
+              },
+              "manifest_digest": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              },
+              "platform_digest": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              },
+              "trivy_report_sha256": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              },
+              "spdx_sbom_sha256": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              }
+            }
+          },
+          "proof_path": {
+            "type": "string",
+            "pattern": "^proofs/[a-z0-9_-]+\\.json$"
+          },
+          "proof_sha256": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "reviewer_id": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "uniqueItems": true
+    },
+    "producer_actor": {
+      "type": "string",
+      "pattern": "^github:[A-Za-z0-9-]{1,39}$"
+    }
+  }
+}
