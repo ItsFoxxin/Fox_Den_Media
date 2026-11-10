@@ -196,6 +196,7 @@ def check_report(report: dict, expected_ref: str, image_id: str, *, allow_severe
            "Trivy report is not bound to inspected immutable image")
     ensure(type(report.get("Results")) is list and bool(report["Results"]),
            "Missing or empty Trivy scan results")
+    identities = set()
     for result in report["Results"]:
         ensure(type(result) is dict and type(result.get("Target")) is str and
                bool(result["Target"]) and type(result.get("Type")) is str and
@@ -209,8 +210,16 @@ def check_report(report: dict, expected_ref: str, image_id: str, *, allow_severe
                    type(vuln.get("PkgName")) is str and bool(vuln["PkgName"]) and
                    type(vuln.get("InstalledVersion")) is str and
                    bool(vuln["InstalledVersion"]) and
-                   vuln.get("Severity") in VALID_SEVERITIES,
+                   bool(re.fullmatch(r"CVE-[0-9]{4}-[0-9]{4,}", vuln["VulnerabilityID"])) and
+                   type(vuln.get("Severity")) is str and
+                   vuln["Severity"] in VALID_SEVERITIES,
                    "Malformed, unidentifiable or unknown vulnerability")
+            # Match the merged #93 verifier's underlying finding identity.
+            # Scanner metadata differences must not split duplicate CVE occurrences.
+            identity = (result["Target"], result["Type"], vuln["VulnerabilityID"],
+                        vuln["PkgName"], vuln["InstalledVersion"])
+            ensure(identity not in identities, "Ambiguous duplicate finding identity")
+            identities.add(identity)
             ensure(allow_severe or vuln["Severity"] not in {"HIGH", "CRITICAL", "UNKNOWN"},
                    f"Undispositioned required finding: {vuln['VulnerabilityID']}")
 
@@ -402,7 +411,7 @@ def severe_inventory(context: dict, reports: Path) -> dict:
                     ensure_ascii=True, allow_nan=False).encode()).hexdigest()
                 identity = (name, result["Target"], result["Type"],
                             vuln["VulnerabilityID"], vuln["PkgName"],
-                            vuln["InstalledVersion"], finding_hash)
+                            vuln["InstalledVersion"])
                 ensure(identity not in identities, "Ambiguous duplicate finding")
                 identities.add(identity)
                 if severity in {"HIGH", "CRITICAL"}:
@@ -430,7 +439,9 @@ def final_v2_contract(plan: dict, reports: Path, scanner: dict, policy: dict,
     A JSON "pass" by itself is NOT an authorization.
     """
     now = now or datetime.now(timezone.utc)
-    ensure(type(context) is dict and set(context) == CONTEXT_FIELDS,
+    ensure(type(context) is dict and set(context) == CONTEXT_FIELDS and
+           type(context.get("schema_version")) is int and
+           context["schema_version"] == 1,
            "Missing or extra signed scan context fields")
     expected = collect_v2_context(plan, reports, scanner, policy, lock_path,
                                   scanner_path, source, r3_run, scan_run,
@@ -439,7 +450,9 @@ def final_v2_contract(plan: dict, reports: Path, scanner: dict, policy: dict,
     ensure(type(review_run) is int and review_run > 0 and review_run != scan_run,
            "Nonindependent review run")
     ensure(type(reviewed) is dict and set(reviewed) == RESULT_FIELDS and
-           reviewed == revalidated and reviewed.get("schema_version") == 1 and
+           reviewed == revalidated and
+           type(reviewed.get("schema_version")) is int and
+           reviewed["schema_version"] == 1 and
            reviewed.get("decision") == "pass",
            "No matching signed and freshly revalidated independent review")
     ensure(reviewed["source_sha"] == source and reviewed["r3_run_id"] == r3_run
@@ -562,6 +575,11 @@ def main() -> None:
                 args.producer_actor, int(args.review_run_id))
             output = Path(args.output)
             output.parent.mkdir(parents=True, exist_ok=True)
+            # Cross-check the merged #93 v2 adapter; OIDC and current reviewer
+            # signatures/lifecycle are verified independently by Phase C workflow.
+            from scripts.verify_security_dispositions import require_r4_contract_v2
+            require_r4_contract_v2(value, strict_load(Path(args.reviewed_result)),
+                                   reviewed_bytes)
             output.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
             return
         if args.mode == "prepare":
