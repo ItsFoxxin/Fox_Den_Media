@@ -234,8 +234,8 @@ def revalidate_independent_dispositions(*, security: dict, lock: dict,
                                         lifecycle_signature_path: Path) -> tuple[dict, dict]:
     """Fresh independent Ed25519/lifecycle and raw A/C evidence verification.
 
-    The owning PR #93 provides this verifier. Absent/unmerged code blocks R4;
-    this consumer never substitutes a self-declared JSON "pass" for it.
+    The independently merged PR #93/#95 verifier is mandatory at runtime;
+    a self-declared JSON "pass" never substitutes for its cryptographic checks.
     """
     try:
         from scripts.verify_security_dispositions import (
@@ -243,7 +243,7 @@ def revalidate_independent_dispositions(*, security: dict, lock: dict,
         )
     except ImportError as exc:
         raise ReleaseEvidenceError(
-            "Independent disposition verifier PR #93 unavailable; R4 blocked"
+            "Mandatory integrated independent disposition verifier unavailable; R4 blocked"
         ) from exc
     binding = security["disposition_review"]
     require(binding["review_run_id"] == review_id,
