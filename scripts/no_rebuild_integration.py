@@ -144,7 +144,7 @@ def main() -> int:
             "images": {name: image["ref"] for name, image in lock["images"].items()},
         }
         args.report.parent.mkdir(parents=True, exist_ok=True)
-        args.report.write_text(json.dumps(payload, sort_keys=True, indent=2) + "\\n",
+        args.report.write_text(json.dumps(payload, sort_keys=True, indent=2) + "\n",
                                encoding="utf-8")
     print("R4 published-image no-rebuild synthetic integration passed")
     return 0
