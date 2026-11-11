@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.9.9 - 2026-11-11
+
+### Fixed
+
+- Fixes #94: Accept finite CVSS decimal metadata in authenticated original Trivy vulnerability reports while keeping signed/control JSON strict and preserving raw-byte evidence and complete-finding identity validation.
+
+### Validation and rollback
+
+- Limit finite binary64 decoding to original vulnerability reports; reject duplicate keys, nonfinite numbers, invalid JSON and inappropriate numeric identities in signed/control documents.
+- Preserve original Trivy/SPDX SHA-256 evidence, canonical finding hashes, separate Ed25519 reviewer and owner authorization, source/run/OCI bindings, review expiry/revocation and the R4 v2-only contract.
+- Exercise signed synthetic HIGH dispositions and negative regression tests, and require fresh Monorepo, CodeQL, Dependency Review and advisory Trivy checks before owner merge consideration.
+- Roll back only through a separately reviewed source revision; this patch provides no real CVE disposition, artifact publication, NAS deployment or release authorization.
+
+## 0.9.8 - 2026-11-10
+
+### Fixed
+
+- Fixes #85: Upgrade OpenSSL and libssl3 in all three first-party Bookworm images to Debian's security-fixed 3.0.22-1~deb12u2 or later, rejecting builds with vulnerable package versions.
+
+### Validation and rollback
+
+- Check both installed OpenSSL packages against the Debian security minimum during every first-party image build, after the already integrated APT security bootstrap.
+- Validate the three real image builds with Trivy JSON/CycloneDX evidence, security contracts, normal application and integration regressions, actionlint, CodeQL and Dependency Review; CI does not approve publication or NAS deployment.
+- Roll back only to separately reviewed source and immutable image digests following owner approval; do not change live services or data as part of this patch.
+
 ## 0.9.7 - 2026-11-08
 
 ### Fixed

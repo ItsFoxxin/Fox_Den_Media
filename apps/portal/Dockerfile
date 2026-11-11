@@ -9,6 +9,13 @@ RUN set -eu; \
     dpkg --compare-versions "$(dpkg-query -W -f='${Version}' apt)" ge '2.6.2'; \
     dpkg --compare-versions "$(dpkg-query -W -f='${Version}' libapt-pkg6.0)" ge '2.6.2'; \
     rm -rf /var/lib/apt/lists/*
+# Debian Bookworm DTLS security fix (CVE-2026-84782); fail closed for stale mirrors.
+RUN set -eu; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends --only-upgrade openssl libssl3; \
+    dpkg --compare-versions "$(dpkg-query -W -f='${Version}' openssl)" ge '3.0.22-1~deb12u2'; \
+    dpkg --compare-versions "$(dpkg-query -W -f='${Version}' libssl3)" ge '3.0.22-1~deb12u2'; \
+    rm -rf /var/lib/apt/lists/*
 RUN test "$APP_UID" -gt 0 && test "$APP_GID" -gt 0 \
     && groupadd -g "$APP_GID" foxden \
     && useradd -u "$APP_UID" -g "$APP_GID" -M foxden
