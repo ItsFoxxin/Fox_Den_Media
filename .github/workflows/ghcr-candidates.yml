@@ -68,8 +68,16 @@ jobs:
           python scripts/check_release_base_images.py
           python scripts/release_metadata.py --source-sha "$SOURCE_SHA" \
             --main-head "$actual" --version 1.0.0
-          gh api "repos/$GITHUB_REPOSITORY/commits/$SOURCE_SHA/check-runs?per_page=100" \
-            > "$RUNNER_TEMP/checks.json"
+          gh api --paginate --slurp \
+            "repos/$GITHUB_REPOSITORY/commits/$SOURCE_SHA/check-runs?per_page=100&filter=all" \
+            | jq -e '
+                (map(.total_count) | unique) as $counts |
+                [.[].check_runs[]] as $runs |
+                if ($counts | length) == 1 and ($counts[0] | type) == "number"
+                then {total_count:$counts[0],check_runs:$runs}
+                else error("Inconsistent check-run pagination")
+                end
+              ' > "$RUNNER_TEMP/checks.json"
           python scripts/verify_publisher_checks.py "$RUNNER_TEMP/checks.json" "$SOURCE_SHA"
 
   publish:
@@ -133,8 +141,16 @@ jobs:
             --comments-json "$RUNNER_TEMP/source-comments.json" \
             --repository "$GITHUB_REPOSITORY" --issue-number "$APPROVAL_ISSUE" \
             --source-sha "$SOURCE_SHA"
-          gh api "repos/$GITHUB_REPOSITORY/commits/$SOURCE_SHA/check-runs?per_page=100" \
-            > "$RUNNER_TEMP/rechecked-source-checks.json"
+          gh api --paginate --slurp \
+            "repos/$GITHUB_REPOSITORY/commits/$SOURCE_SHA/check-runs?per_page=100&filter=all" \
+            | jq -e '
+                (map(.total_count) | unique) as $counts |
+                [.[].check_runs[]] as $runs |
+                if ($counts | length) == 1 and ($counts[0] | type) == "number"
+                then {total_count:$counts[0],check_runs:$runs}
+                else error("Inconsistent check-run pagination")
+                end
+              ' > "$RUNNER_TEMP/rechecked-source-checks.json"
           python scripts/verify_publisher_checks.py "$RUNNER_TEMP/rechecked-source-checks.json" "$SOURCE_SHA"
       - name: Login to GHCR with workflow-scoped credentials
         env:
