@@ -353,3 +353,18 @@ def test_signed_v2_contract_rejects_unknown_and_nonempty_exception(tmp_path):
             expected_r3_run_id=113, expected_scan_run_id=235,
             expected_producer_actor="github:scan-bot",
         )
+
+
+def test_r4_exact_run_attempt_attestation_binding_and_owner_gate():
+    """The synthetic Ed25519 tests never substitute for real GitHub OIDC."""
+    source = Path(".github/workflows/ghcr-verify.yml").read_text()
+    assert 'attempt="$(jq -er .run_attempt "$RUNNER_TEMP/$kind-run.json")"' in source
+    assert "invocation == invocation_id" in source
+    assert '"$SCAN_RUN" trivy-digest-security.yml scan' in source
+    assert '"$REVIEW_RUN" security-disposition-review.yml review' in source
+    assert '"$SECURITY_RUN" trivy-digest-security.yml security' in source
+    assert "gh attestation verify" in source
+    assert '--source-ref "refs/heads/main"' in source
+    assert '--source-digest "$SOURCE_SHA"' in source
+    assert "SECURITY_DISPOSITION_STATE_READ_TOKEN" in source
+    assert 'test -n "$STATE_READ_TOKEN"' in source
