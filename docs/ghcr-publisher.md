@@ -88,14 +88,16 @@ It then runs isolated integration by pulling the locked images and removing
 all local build directives before Compose up. Synthetic temporary secrets and
 volumes are destroyed; no NAS or production credentials are used.
 
-**Critical dependency:** merged Trivy PRs #72/#74/#77 still provide
-*advisory, locally built image* scans, not release-digest acceptance.
-Separate draft security producer PR #84 / issue #83 implements the
-`trivy-digest-security.yml` interface; it has **not** been merged or
-run against real R3 candidate images. Its draft A/C implementation
-must pass independent review and be integrated into the separately approved
-main source before R4 can consume real signed release evidence. Do not weaken that gate, forge "pass" records or treat an
-R4 structural test as security acceptance.
+**Source integration complete; runtime evidence still blocked:** PR #93
+(independent Ed25519 verifier), PR #95 (finite-decimal scanner parsing),
+and PR #84 (A/C authenticated v2 producer) are merged on protected `dev`
+and incorporated into this R4 branch. The advisory Trivy PRs #72/#74/#77
+do not constitute release-digest acceptance. These merged contracts must
+still be present at a separately owner-approved immutable `main` SHA.
+No real R3/A/B/C runs, approved upstream signer inventory, independent
+dispositions, current owner lifecycle, release security PASS or NAS approval
+are established merely by this source merge. Do not forge evidence or turn
+structural tests into authorization.
 
 The mandatory `schema_version: 2` scan-security contract retains every
 original source, publisher, OCI, provenance, Trivy, SPDX, DB-age and
@@ -176,15 +178,16 @@ snapshots immediately before acceptance. A missing credential, changed
 newest state or inaccessible API fails closed. This PR provisions none of
 these settings or credentials.
 
-**External blockers:** PR #93's `scripts.verify_security_dispositions`
-is not merged onto this branch, so R4 deliberately refuses real acceptance
-until its independently reviewed verifier is available. PR #84 owns the
-future A/C producers; PR #80 owns mandatory R5 independent review
-revalidation. Protected Environment policy, owner Ed25519 trust/key
-custody, independent submission transport, latest owner-signed lifecycle
-publication and anti-rollback, actual severe-finding resolution, upstream
-provenance and owner approvals remain unverified or absent.
-No real CVE has been cleared by these synthetic integration changes.
+**External blockers:** The merged PR #93/#95 independent verifier and PR #84
+A/C producer are available in the consumer source and are exercised through
+synthetic cross-module tests. PR #80 separately owns R5 independent review
+revalidation. The protected-environment settings, owner Ed25519 trust/key
+custody, independent review submission transport, latest owner-signed
+lifecycle and anti-rollback state, real authenticated R3/A/B/C evidence,
+severe-finding resolution, upstream provenance and owner approvals remain
+unverified or absent. Issue #83 remains operationally open despite the source
+merge; Issues #76 and #18 remain release blockers. Synthetic signatures and
+generated test digests clear no real CVEs.
 
 
 ## Package presentation, permissions and release boundaries
@@ -246,10 +249,12 @@ rejection/acceptance of artificial inputs.
 
 ## Remaining integration and owner settings
 
-- **Draft PR #84** must pass independent review and merge with the same
-  contract; the producer currently has an intentionally empty
-  `security/upstream-provenance.json` allowlist. The owner must authenticate
-  and approve real upstream provenance or keep the release blocked.
+- **Producer integration:** PR #84 merged on protected `dev` at
+  `c63011d28afd4674f41d092d09c0420c79e3ff13`; the consumer uses its
+  actual strict v2 interface. The tracked
+  `security/upstream-provenance.json` allowlist is still empty. The owner
+  must separately authenticate and approve upstream signers and immutable
+  image provenance; source integration alone cannot satisfy this gate.
 - R3 `ghcr-candidates` and producer `ghcr-security` must each be an actual
   protected GitHub Environment with enforced independent required reviewers
   and branch restriction to protected `main`. Repository flags claiming
@@ -276,3 +281,22 @@ rejection/acceptance of artificial inputs.
   candidate digests, passing security evidence and NAS/copy-state
   acceptance do not exist yet. Separate source promotion, release
   publication and NAS production approvals remain mandatory.
+
+## Merged v2 consumer compatibility validation (PR #81)
+
+Following the authorized integration of protected `dev` at
+`c63011d28afd4674f41d092d09c0420c79e3ff13` (platform `VERSION=0.9.9`),
+the consumer retains its signed `foxden.r4.release-ready.v1` outer envelope
+and exact R5 flat file manifest. The merged original-byte Trivy/SPDX scanner,
+finite decimal CVSS parser, independent Ed25519 verifier and actual C v2
+contract assembler are available together; there is no scan-contract v1
+fallback. `tests/platform/test_r4_integrated_v2_consumer.py` exercises the
+real merged producer→verifier→R4 functions with generated, NON-LIVE keys,
+including 3.7/7.8/8.1 CVSS values, owner-signed CRITICAL NOT_AFFECTED,
+raw A/C evidence, empty proofs and fail-closed negative mutations.
+
+GitHub OIDC attestation verification, protected-main workflow/run identities,
+real GHCR digest signatures, independently managed latest owner lifecycle and
+separate operational acceptance are enforced by the actual runtime workflows,
+**not performed or certified by these synthetic tests**. No R3/R4 workflow
+was dispatched or production state changed during this integration.
