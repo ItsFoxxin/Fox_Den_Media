@@ -383,6 +383,176 @@ def test_invalid_json_numeric_encoding(tmp_path, raw):
         v.load_json(f)
 
 
+def test_signed_high_finding_accepts_original_nested_cvss_decimals(tmp_path):
+    c = case_factory(tmp_path, status="NOT_AFFECTED", severity="HIGH")
+    vuln = c["report"]["Results"][0]["Vulnerabilities"][0]
+    vuln["CVSS"] = {
+        "redhat": {"V2Vector": "AV:N/AC:L/Au:N/C:P/I:P/A:P",
+                   "V2Score": 3.7, "V3Score": 7.8},
+        "nvd": {"V3Score": 8.1},
+    }
+    c["report"]["Results"][0]["Class"] = "os-pkgs"
+    refresh(c)
+    path = tmp_path / "security/reports/portal.vuln.json"
+    original_bytes = path.read_bytes()
+    parsed = v.load_json(path, scanner_evidence=True)
+    parsed_vuln = parsed["Results"][0]["Vulnerabilities"][0]
+    expected_finding_hash = v.canonical_digest(parsed_vuln)
+    # Mirror PR #84's independent producer canonicalization without changing its branch.
+    producer_finding_hash = "sha256:" + hashlib.sha256(json.dumps(
+        parsed_vuln, sort_keys=True, separators=(",", ":"),
+        ensure_ascii=True, allow_nan=False).encode("utf-8")).hexdigest()
+    assert expected_finding_hash == producer_finding_hash
+    assert parsed_vuln["CVSS"]["redhat"]["V2Score"] == 3.7
+    assert expected_finding_hash == v.canonical_digest(vuln)
+    assert c["doc"]["records"][0]["subject"]["finding_sha256"] == expected_finding_hash
+    assert c["context"]["images"]["portal"]["trivy_report_sha256"] == v.raw_digest(path)
+    assert check(c)["cleared_finding_count"] == 1
+    v.validate_signatures(c["doc"], c["signatures"], c["trust"], False)
+    assert path.read_bytes() == original_bytes
+
+
+def test_finite_cvss_canonical_hash_normalizes_number_spelling_not_raw_bytes(tmp_path):
+    path = tmp_path / "scanner.json"
+    path.write_bytes(b'{"CVSS":{"nvd":{"V3Score":3.700}}}\n')
+    raw_first = v.raw_digest(path)
+    first = v.load_json(path, scanner_evidence=True)
+    path.write_bytes(b'{"CVSS":{"nvd":{"V3Score":3.7}}}\n')
+    raw_second = v.raw_digest(path)
+    second = v.load_json(path, scanner_evidence=True)
+    assert raw_first != raw_second
+    assert v.canonical(first) == v.canonical(second)
+    assert v.canonical_digest(first) == v.canonical_digest(second)
+    assert v.canonical(first) == b'{"CVSS":{"nvd":{"V3Score":3.7}}}'
+
+
+def test_modified_original_decimal_report_fails_raw_byte_binding(tmp_path):
+    c = case_factory(tmp_path, status="FIXED", severity="HIGH")
+    c["report"]["Results"][0]["Vulnerabilities"][0]["CVSS"] = {
+        "nvd": {"V3Score": 3.7}}
+    refresh(c)
+    path = tmp_path / "security/reports/portal.vuln.json"
+    original_bytes = path.read_bytes()
+    changed_bytes = original_bytes.replace(b'"V3Score":3.7', b'"V3Score":3.8')
+    assert original_bytes != changed_bytes
+    path.write_bytes(changed_bytes)
+    with pytest.raises(v.DispositionError, match="Modified original vulnerability report"):
+        check(c)
+
+
+@pytest.mark.parametrize("bad_number", [
+    "NaN", "Infinity", "-Infinity", "1e309", "-1e309", "9.9e99999",
+])
+def test_original_scanner_rejects_nonfinite_json_numbers(tmp_path, bad_number):
+    path = tmp_path / "scanner.json"
+    path.write_text('{"CVSS":{"nvd":{"V3Score":' + bad_number + '}}}',
+                    encoding="utf-8")
+    with pytest.raises(v.DispositionError, match="nonfinite|Nonfinite"):
+        v.load_json(path, scanner_evidence=True)
+
+
+def test_original_scanner_rejects_nested_duplicate_cvss_keys(tmp_path):
+    path = tmp_path / "scanner.json"
+    path.write_text('{"CVSS":{"nvd":{"V3Score":3.7,"V3Score":8.1}}}',
+                    encoding="utf-8")
+    with pytest.raises(v.DispositionError, match="Duplicate JSON key"):
+        v.load_json(path, scanner_evidence=True)
+
+
+@pytest.mark.parametrize("bad_bytes", [
+    b'{"CVSS":', b'{"CVSS":"' + bytes([255]) + b'"}', bytes([255]),
+])
+def test_original_scanner_rejects_malformed_json_or_utf8(tmp_path, bad_bytes):
+    path = tmp_path / "scanner.json"
+    path.write_bytes(bad_bytes)
+    with pytest.raises(v.DispositionError, match="Invalid UTF-8 JSON"):
+        v.load_json(path, scanner_evidence=True)
+
+
+def test_signed_control_document_still_rejects_finite_decimals(tmp_path):
+    path = tmp_path / "dispositions.json"
+    path.write_text('{"schema_version":1.0}', encoding="utf-8")
+    with pytest.raises(v.DispositionError, match="Unsupported floating-point"):
+        v.load_json(path)
+
+
+@pytest.mark.parametrize("document", ["context", "disposition", "publisher", "proof"])
+@pytest.mark.parametrize("bad_run_id", [101.0, True])
+def test_required_run_id_rejects_float_or_boolean(tmp_path, document, bad_run_id):
+    c = case_factory(tmp_path)
+    if document == "context":
+        c["context"]["r3_run_id"] = bad_run_id
+    elif document == "disposition":
+        c["doc"]["r3_run_id"] = bad_run_id
+        resign_document(c)
+    elif document == "publisher":
+        c["lock"]["publisher"]["run_id"] = bad_run_id
+        refresh(c)
+    else:
+        c["proof"]["r3_run_id"] = bad_run_id
+        proof_path = tmp_path / "review/proofs/proof.json"
+        put(proof_path, c["proof"])
+        c["doc"]["records"][0]["proof_sha256"] = v.raw_digest(proof_path)
+        resign_document(c)
+    with pytest.raises(v.DispositionError):
+        check(c)
+
+
+@pytest.mark.parametrize("bad_index", [0.0, False])
+def test_signed_occurrence_index_requires_exact_integer(tmp_path, bad_index):
+    c = case_factory(tmp_path)
+    c["doc"]["records"][0]["subject"]["result_index"] = bad_index
+    resign_document(c)
+    with pytest.raises(v.DispositionError, match="Invalid result index"):
+        check(c)
+
+
+def test_duplicate_finding_with_conflicting_decimal_metadata_rejected(tmp_path):
+    c = case_factory(tmp_path)
+    first = c["report"]["Results"][0]["Vulnerabilities"][0]
+    first["CVSS"] = {"nvd": {"V3Score": 3.7}}
+    second = copy.deepcopy(first)
+    second["CVSS"]["nvd"]["V3Score"] = 8.1
+    c["report"]["Results"][0]["Vulnerabilities"].append(second)
+    refresh(c)
+    with pytest.raises(v.DispositionError, match="Ambiguous duplicate finding identity"):
+        check(c)
+
+
+@pytest.mark.parametrize("bad_db_version", [2.0, True])
+def test_scanner_database_version_requires_exact_integer(tmp_path, bad_db_version):
+    c = case_factory(tmp_path)
+    c["scanner"]["VulnerabilityDB"]["Version"] = bad_db_version
+    refresh(c)
+    with pytest.raises(v.DispositionError, match="Wrong scanner version"):
+        check(c)
+
+
+@pytest.mark.parametrize("field,bad_run_id", [
+    ("r3_run_id", 101.0), ("r3_run_id", True),
+    ("scan_run_id", 202.0), ("scan_run_id", True),
+])
+def test_r4_v2_adapter_rejects_noninteger_review_result_runs(
+        tmp_path, field, bad_run_id):
+    c = case_factory(tmp_path)
+    result = check(c)
+    result[field] = bad_run_id
+    raw = v.canonical(result) + b"\n"
+    binding = {
+        "schema_version": 1,
+        "artifact_name": "security-disposition-review-v1",
+        "verification_file": "disposition-verification.json",
+        "verification_sha256": "sha256:" + hashlib.sha256(raw).hexdigest(),
+        "dispositions_sha256": result["disposition_document_sha256"],
+        "review_workflow": v.REVIEW_WORKFLOW,
+        "review_run_id": 404,
+        "verified_at": utc(NOW),
+    }
+    contract = {"schema_version": 2, "disposition_review": binding}
+    with pytest.raises(v.DispositionError, match="Invalid review result"):
+        v.require_r4_contract_v2(contract, result, raw)
+
+
 def test_missing_or_bad_reviewer_signature(tmp_path):
     c = case_factory(tmp_path)
     c["signatures"]["signatures"] = []
@@ -625,7 +795,7 @@ def test_r3_source_lock_tampering_rejected(tmp_path):
     with pytest.raises(v.DispositionError, match="R3 publisher"):
         check(c)
 
-@pytest.mark.parametrize("invalid_version", [True, False, "1", None])
+@pytest.mark.parametrize("invalid_version", [True, False, "1", None, 1.0])
 @pytest.mark.parametrize("document", [
     "context", "dispositions", "trust", "signatures",
     "lifecycle", "release_lock", "exceptions", "proof",
@@ -662,7 +832,7 @@ def test_schema_version_requires_exact_integer_with_valid_evidence(
         check(c)
 
 
-@pytest.mark.parametrize("invalid_version", [True, False, "1", None])
+@pytest.mark.parametrize("invalid_version", [True, False, "1", None, 1.0])
 @pytest.mark.parametrize("document", ["contract", "binding", "review_result"])
 def test_r4_v2_adapter_rejects_noninteger_schema_versions(
         tmp_path, document, invalid_version):

@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.9.9 - 2026-11-11
+
+### Fixed
+
+- Fixes #94: Accept finite CVSS decimal metadata in authenticated original Trivy vulnerability reports while keeping signed/control JSON strict and preserving raw-byte evidence and complete-finding identity validation.
+
+### Validation and rollback
+
+- Limit finite binary64 decoding to original vulnerability reports; reject duplicate keys, nonfinite numbers, invalid JSON and inappropriate numeric identities in signed/control documents.
+- Preserve original Trivy/SPDX SHA-256 evidence, canonical finding hashes, separate Ed25519 reviewer and owner authorization, source/run/OCI bindings, review expiry/revocation and the R4 v2-only contract.
+- Exercise signed synthetic HIGH dispositions and negative regression tests, and require fresh Monorepo, CodeQL, Dependency Review and advisory Trivy checks before owner merge consideration.
+- Roll back only through a separately reviewed source revision; this patch provides no real CVE disposition, artifact publication, NAS deployment or release authorization.
+
+## 0.9.8 - 2026-11-10
+
+### Fixed
+
+- Fixes #85: Upgrade OpenSSL and libssl3 in all three first-party Bookworm images to Debian's security-fixed 3.0.22-1~deb12u2 or later, rejecting builds with vulnerable package versions.
+
+### Validation and rollback
+
+- Check both installed OpenSSL packages against the Debian security minimum during every first-party image build, after the already integrated APT security bootstrap.
+- Validate the three real image builds with Trivy JSON/CycloneDX evidence, security contracts, normal application and integration regressions, actionlint, CodeQL and Dependency Review; CI does not approve publication or NAS deployment.
+- Roll back only to separately reviewed source and immutable image digests following owner approval; do not change live services or data as part of this patch.
+
+## 0.9.7 - 2026-11-08
+
+### Fixed
+
+- Fixes #87: Replace retry-enabled, vulnerable Bookworm APT package verification in first-party image builds by upgrading `apt` and `libapt-pkg6.0` to Debian's fixed 2.6.2 security packages before later dependency installation.
+
+### Validation and rollback
+
+- Disable APT HTTP download retries during its initial self-upgrade to eliminate the vulnerable retry precondition. Fail the image build unless both APT packages meet the Debian-fixed version.
+- Validate Portal/Music/Media image builds and real Trivy/SBOM evidence, existing full tests, actionlint, CodeQL and Dependency Review. These CI images are not release artifacts.
+- Rollback requires a separate reviewed prior source and digest; no NAS or production mutation or publishing is performed.
+
 ## 0.9.6 - 2026-11-07
 
 ### Fixed

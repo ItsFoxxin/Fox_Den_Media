@@ -12,6 +12,7 @@ import binascii
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
+import math
 from pathlib import Path
 import re
 import sys
@@ -86,7 +87,8 @@ def is_schema_version(value: object, expected: int) -> bool:
     return type(value) is int and value == expected
 
 
-def load_json(path: Path) -> dict:
+def load_json(path: Path, *, scanner_evidence: bool = False) -> dict:
+    """Only original scanner evidence may contain finite JSON decimal numbers."""
     raw = path.read_bytes()
     require(len(raw) <= 32 * 1024 * 1024, "Oversized JSON evidence")
     def pairs(items):
@@ -97,9 +99,14 @@ def load_json(path: Path) -> dict:
         return result
     def reject(_):
         raise DispositionError("Unsupported floating-point or nonfinite JSON")
+    def finite_decimal(value):
+        number = float(value)
+        require(math.isfinite(number), "Nonfinite scanner JSON number")
+        return number
     try:
         obj = json.loads(raw.decode("utf-8"), object_pairs_hook=pairs,
-                         parse_float=reject, parse_constant=reject)
+                         parse_float=finite_decimal if scanner_evidence else reject,
+                         parse_constant=reject)
     except (UnicodeError, json.JSONDecodeError) as exc:
         raise DispositionError("Invalid UTF-8 JSON") from exc
     require(type(obj) is dict, "JSON root must be object")
@@ -257,6 +264,7 @@ def validate_lock_coverage(lock: dict, context: dict) -> None:
             "R2 release lock source/version/platform mismatch")
     publisher = keys(lock["publisher"], {"workflow", "run_id", "source_sha"},
                      "R3 publisher identity")
+    integer(publisher["run_id"], "R3 publisher run ID")
     require(publisher["workflow"] == "ghcr-candidates.yml" and
             publisher["run_id"] == context["r3_run_id"] and
             publisher["source_sha"] == context["source_sha"],
@@ -324,7 +332,7 @@ def collect_findings(context: dict, evidence_dir: Path) -> dict:
                 sbom.get("SPDXID") == "SPDXRef-DOCUMENT" and
                 type(sbom.get("packages")) is list and len(sbom["packages"]) > 0,
                 "Invalid SPDX evidence")
-        report = load_json(report_path)
+        report = load_json(report_path, scanner_evidence=True)
         require(report.get("ArtifactName") ==
                 image["image_repository"] + "@" + image["manifest_digest"] and
                 report.get("ArtifactType") == "container_image" and
@@ -374,6 +382,8 @@ def validate_proof(record: dict, proof_dir: Path, context: dict) -> None:
             "Modified or missing proof bytes")
     proof = keys(load_json(proof_path), PROOF_FIELDS, "disposition proof")
     subject = record["subject"]
+    integer(proof["r3_run_id"], "proof R3 run ID")
+    integer(proof["scan_run_id"], "proof scan run ID")
     for k in ("source_sha", "release_lock_sha256", "r3_run_id", "scan_run_id"):
         require(proof[k] == context[k], "Proof for wrong source/lock/run")
     for k in ("image_repository", "manifest_digest", "platform_digest",
@@ -447,6 +457,8 @@ def verify(*, context: dict, dispositions: dict, signatures: dict, lifecycle: di
     require(is_schema_version(dispositions["schema_version"], 1) and
             dispositions["repository"] == context["repository"],
             "Unsupported disposition schema or repository")
+    integer(dispositions["r3_run_id"], "disposition R3 run ID")
+    integer(dispositions["scan_run_id"], "disposition scan run ID")
     for field in ("source_sha", "release_lock_sha256", "r3_run_id", "scan_run_id", "producer_actor"):
         require(dispositions[field] == context[field],
                 "Disposition source/lock/R3/scan mismatch")
@@ -524,6 +536,8 @@ def require_r4_contract_v2(contract: dict, review_result: dict,
             review_result.get("decision") == "pass",
             "Unapproved or unverified R4 disposition review")
     integer(binding["review_run_id"], "independent review run ID")
+    integer(review_result.get("r3_run_id"), "review result R3 run ID")
+    integer(review_result.get("scan_run_id"), "review result scan run ID")
     timestamp(binding["verified_at"])
     digest(binding["verification_sha256"], "review result hash")
     digest(binding["dispositions_sha256"], "disposition document hash")
