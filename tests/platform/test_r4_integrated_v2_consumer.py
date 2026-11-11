@@ -260,9 +260,9 @@ def test_real_integrated_v2_verifier_to_r4_signed_handoff(tmp_path, severity, st
 
 
 @pytest.mark.parametrize("mutation", [
-    "v1", "wrong-review-run", "wrong-source", "wrong-scan-actor",
-    "altered-a-report", "altered-c-spdx", "wrong-lock",
-    "missing-proof", "missing-owner", "stale-lifecycle",
+    "v1", "wrong-review-run", "wrong-r3-run", "wrong-source", "wrong-scan-actor",
+    "altered-a-report", "altered-c-spdx", "wrong-lock", "wrong-oci-digest",
+    "missing-proof", "missing-owner", "missing-lifecycle", "stale-lifecycle",
     "revoked-lifecycle", "tampered-lifecycle-signature",
     "tampered-review", "unresolved-high",
 ])
@@ -279,6 +279,8 @@ def test_real_integrated_consumer_rejects_broken_security_evidence(
         case["contract"]["schema_version"] = 1
     elif mutation == "wrong-review-run":
         overrides["review_id"] = 237
+    elif mutation == "wrong-r3-run":
+        overrides["r3_id"] = 114
     elif mutation == "wrong-source":
         overrides["source"] = "b" * 40
     elif mutation == "wrong-scan-actor":
@@ -292,6 +294,12 @@ def test_real_integrated_consumer_rejects_broken_security_evidence(
     elif mutation == "wrong-lock":
         path = case["scan"] / "release-lock.json"
         path.write_bytes(path.read_bytes() + b" ")
+    elif mutation == "wrong-oci-digest":
+        for root in (case["scan"], case["final"]):
+            path = root / "context.json"
+            context = verifier.load_json(path)
+            context["images"]["portal"]["manifest_digest"] = "sha256:" + "f" * 64
+            write(path, context)
     elif mutation == "missing-proof":
         (case["review"] / "review/proofs/finding.json").unlink()
     elif mutation == "missing-owner":
@@ -299,6 +307,8 @@ def test_real_integrated_consumer_rejects_broken_security_evidence(
         sigs = verifier.load_json(path)
         sigs["signatures"] = [s for s in sigs["signatures"] if s["role"] != "owner"]
         write(path, sigs)
+    elif mutation == "missing-lifecycle":
+        (case["trust"] / "lifecycle.json").unlink()
     elif mutation in ("stale-lifecycle", "revoked-lifecycle"):
         lifecycle = case["lifecycle"]
         if mutation == "stale-lifecycle":
