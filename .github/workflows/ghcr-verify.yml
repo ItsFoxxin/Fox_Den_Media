@@ -205,14 +205,16 @@ jobs:
           # gh establishes exact OIDC signer/repo/source; the signed SLSA
           # invocation binds the retrieved subject to the queried run ID.
           verify_subject() {
-            local file="$1" run="$2" signer="$3"
-            local output
+            local file="$1" run="$2" signer="$3" kind="$4"
+            local output attempt
+            attempt="$(jq -er .run_attempt "$RUNNER_TEMP/$kind-run.json")"
+            [[ "$attempt" =~ ^[1-9][0-9]*$ ]]
             output="$RUNNER_TEMP/attested-$(basename "$file").$run.json"
             gh attestation verify "$file" --repo "$GITHUB_REPOSITORY" \
               --source-ref "refs/heads/main" --source-digest "$SOURCE_SHA" \
               --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/$signer" \
               --format json > "$output"
-            python - "$output" "$file" "$run" "$GITHUB_REPOSITORY" <<'PY'
+            python - "$output" "$file" "$run" "$GITHUB_REPOSITORY" "$attempt" <<'PY'
           import hashlib
           import json
           import re
@@ -220,16 +222,15 @@ jobs:
           from pathlib import Path
           entries = json.loads(Path(sys.argv[1]).read_text())
           actual = hashlib.sha256(Path(sys.argv[2]).read_bytes()).hexdigest()
-          run, repo = sys.argv[3:]
-          prefix = "https://github.com/" + repo + "/actions/runs/" + run + "/attempts/"
+          run, repo, attempt = sys.argv[3:]
+          invocation_id = "https://github.com/" + repo + "/actions/runs/" + run + "/attempts/" + attempt
           def valid(entry):
               result = entry.get("verificationResult", {})
               statement = result.get("statement", {})
               predicate = statement.get("predicate", {})
               invocation = predicate.get("runDetails", {}).get("metadata", {}).get("invocationId")
               subjects = statement.get("subject", [])
-              return (isinstance(invocation, str) and
-                      re.fullmatch(re.escape(prefix) + r"[1-9][0-9]*", invocation) and
+              return (invocation == invocation_id and
                       isinstance(subjects, list) and
                       any(isinstance(x, dict) and
                           x.get("digest", {}).get("sha256") == actual for x in subjects))
@@ -238,14 +239,14 @@ jobs:
               raise SystemExit("Signed subject not bound to authenticated A/B/C run")
           PY
           }
-          verify_subject scan-inputs/context.json "$SCAN_RUN" trivy-digest-security.yml
+          verify_subject scan-inputs/context.json "$SCAN_RUN" trivy-digest-security.yml scan
           verify_subject review-evidence/security/disposition-verification.json \
-            "$REVIEW_RUN" security-disposition-review.yml
+            "$REVIEW_RUN" security-disposition-review.yml review
           for file in security/security-contract.json security/release-lock.json \
                       security/rendered-release-compose.json security/scanner.json \
                       security/context.json security/vulnerability-exceptions.json \
                       security/review/disposition-verification.json; do
-            verify_subject "$file" "$SECURITY_RUN" trivy-digest-security.yml
+            verify_subject "$file" "$SECURITY_RUN" trivy-digest-security.yml security
           done
       - name: Load owner-managed signed disposition lifecycle and reviewer trust
         shell: bash
