@@ -384,6 +384,9 @@ def v2_fixture(tmp_path, severity=None):
     reports.mkdir()
     synthetic_reports(reports, plan, severity=severity)
     lock, _rendered, _candidates, _signers = fixture()
+    # Match the complete R2 lock expected by the independently merged verifier.
+    lock.update({"schema_version": 1, "compose_sha256": "f" * 64,
+                 "rollback": {"version": "0.9.6", "lock_sha256": "e" * 64}})
     lock_path = tmp_path / "release-lock.json"
     lock_path.write_text(json.dumps(lock))
     scanner_path = tmp_path / "scanner.json"
@@ -783,3 +786,185 @@ def test_malformed_original_trivy_json_or_utf8_still_fails(tmp_path, bad_bytes):
     path.write_bytes(bad_bytes)
     with pytest.raises((ValueError, UnicodeError)):
         strict_load(path, scanner_evidence=True)
+
+
+@pytest.mark.parametrize("severity,status", [
+    ("HIGH", "FIXED"), ("CRITICAL", "NOT_AFFECTED"),
+])
+def test_v2_actual_merged_verifier_authenticates_decimal_a_b_c(
+        tmp_path, severity, status):
+    """Real merged verifier, synthetic Ed25519 signers and complete R2 evidence.
+
+    No OIDC attestation, live R3 images, owner identity or production review
+    is created here. The B decision is computed cryptographically by the
+    independent verifier rather than fabricated by the producer fixture.
+    """
+    import base64
+    from datetime import timedelta
+    import shutil
+
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    from scripts import verify_security_dispositions as verifier
+
+    plan, reports, lock_path, scanner_path, policy, context, original_path = (
+        decimal_trivy_fixture(tmp_path, severity=severity)
+    )
+    now = datetime(2026, 11, 9, 18, 0, tzinfo=timezone.utc)
+
+    # Authenticated Stage A's original byte streams are delivered unmodified
+    # to the independently implemented Stage B evidence directory.
+    evidence = tmp_path / "authenticated"
+    (evidence / "reports").mkdir(parents=True)
+    shutil.copyfile(lock_path, evidence / "release-lock.json")
+    shutil.copyfile(scanner_path, evidence / "scanner.json")
+    for source in reports.glob("*.vuln.json"):
+        shutil.copyfile(source, evidence / "reports" / source.name)
+    for source in reports.glob("*.sbom.spdx.json"):
+        shutil.copyfile(source, evidence / "reports" / source.name)
+
+    report = verifier.load_json(evidence / "reports/portal.vuln.json",
+                                scanner_evidence=True)
+    vulnerability = report["Results"][0]["Vulnerabilities"][0]
+    assert vulnerability["CVSS"]["redhat"]["V2Score"] == 3.7
+    assert vulnerability["CVSS"]["redhat"]["V3Score"] == 7.8
+    assert vulnerability["CVSS"]["nvd"]["V3Score"] == 8.1
+    subject = severe_inventory(context, reports)[("portal", 0, 0)]
+    verifier_subject = verifier.finding_subject(
+        "portal", 0, 0, report["Results"][0], vulnerability,
+        context["images"]["portal"])
+    assert subject == verifier_subject
+    assert subject["finding_sha256"] == verifier.canonical_digest(vulnerability)
+    assert context["images"]["portal"]["trivy_report_sha256"] == (
+        verifier.raw_digest(evidence / "reports/portal.vuln.json"))
+    assert context["images"]["portal"]["trivy_report_sha256"] == (
+        verifier.raw_digest(original_path))
+
+    reviewer = Ed25519PrivateKey.generate()
+    owner = Ed25519PrivateKey.generate()
+    def utc(value):
+        return value.strftime("%Y-%m-%dT%H:%M:%SZ")
+    def public(key):
+        return key.public_key().public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
+        ).decode("ascii")
+    def sign(key, domain, value):
+        digest = bytes.fromhex(verifier.canonical_digest(value)[7:])
+        return base64.b64encode(key.sign(domain + digest)).decode("ascii")
+
+    proof = {
+        "schema_version": 1, "kind": status,
+        "source_sha": context["source_sha"],
+        "release_lock_sha256": context["release_lock_sha256"],
+        "r3_run_id": context["r3_run_id"],
+        "scan_run_id": context["scan_run_id"],
+        "image_repository": subject["image_repository"],
+        "manifest_digest": subject["manifest_digest"],
+        "platform_digest": subject["platform_digest"],
+        "finding_sha256": subject["finding_sha256"],
+        "reference_url": "https://security.example.org/synthetic-2099",
+        "reference_sha256": "sha256:" + "d" * 64,
+        "verification_method": "Inspect exact signed synthetic installed image",
+        "binary_sha256": "sha256:" + "e" * 64,
+        "installed_version": subject["installed_version"],
+        "technical_basis": ("authoritative-remediation-and-installed-image"
+                            if status == "FIXED" else
+                            "vulnerable-implementation-absent"),
+    }
+    proof_dir = tmp_path / "review"
+    (proof_dir / "proofs").mkdir(parents=True)
+    proof_path = proof_dir / "proofs/synthetic.json"
+    proof_path.write_bytes(verifier.canonical(proof) + b"\n")
+    document = {
+        "schema_version": 1, "repository": context["repository"],
+        "source_sha": context["source_sha"],
+        "producer_actor": context["producer_actor"],
+        "release_lock_sha256": context["release_lock_sha256"],
+        "r3_run_id": context["r3_run_id"],
+        "scan_run_id": context["scan_run_id"],
+        "created_at": utc(now - timedelta(hours=2)),
+        "reviewed_at": utc(now - timedelta(hours=1)),
+        "expires_at": utc(now + timedelta(days=20)),
+        "records": [{
+            "status": status, "subject": subject,
+            "proof_path": "proofs/synthetic.json",
+            "proof_sha256": verifier.raw_digest(proof_path),
+            "reviewer_id": "github:independent-reviewer",
+        }],
+    }
+    signatures = {
+        "schema_version": 1,
+        "document_sha256": verifier.canonical_digest(document),
+        "signatures": [{
+            "role": "reviewer", "identity": "github:independent-reviewer",
+            "key_id": "independent-synthetic-key",
+            "signature_base64": sign(reviewer, b"foxden.dispositions.v1\n", document),
+        }],
+    }
+    if severity == "CRITICAL" and status == "NOT_AFFECTED":
+        signatures["signatures"].append({
+            "role": "owner", "identity": "github:ItsFoxxin",
+            "key_id": "owner-synthetic-key",
+            "signature_base64": sign(owner, b"foxden.dispositions.v1\n", document),
+        })
+    trust = {
+        "schema_version": 1, "repository": verifier.REPOSITORY,
+        "review_workflow": verifier.REVIEW_WORKFLOW,
+        "producer_workflow": verifier.PRODUCER_WORKFLOW,
+        "reviewers": {"github:independent-reviewer": {
+            "key_id": "independent-synthetic-key",
+            "public_key_pem": public(reviewer),
+        }},
+        "owner": {
+            "identity": "github:ItsFoxxin",
+            "key_id": "owner-synthetic-key",
+            "public_key_pem": public(owner),
+        },
+    }
+    lifecycle = {
+        "schema_version": 1,
+        "issued_at": utc(now - timedelta(minutes=30)),
+        "expires_at": utc(now + timedelta(hours=10)),
+        "revoked_document_sha256": [],
+        "superseded_document_sha256": [],
+    }
+    arguments = {
+        "context": context, "dispositions": document,
+        "signatures": signatures, "lifecycle": lifecycle,
+        "lifecycle_signature": sign(owner, b"foxden.lifecycle.v1\n", lifecycle),
+        "trust": trust, "evidence_dir": evidence, "proofs_dir": proof_dir,
+        "lock_path": evidence / "release-lock.json",
+        "scanner": metadata(), "scanner_path": evidence / "scanner.json",
+        "exceptions": policy, "expected_source_sha": SOURCE,
+        "expected_r3_run_id": 113, "expected_scan_run_id": 235,
+        "expected_producer_actor": "github:scan-bot", "now": now,
+    }
+    independently_verified = verifier.verify(**arguments)
+    assert independently_verified["decision"] == "pass"
+    assert independently_verified["cleared_finding_count"] == 1
+    signed_result_bytes = verifier.canonical(independently_verified) + b"\n"
+
+    final = final_v2_contract(
+        plan, reports, metadata(), policy, lock_path, scanner_path,
+        context, independently_verified, independently_verified,
+        signed_result_bytes, document, SOURCE, 113, 235,
+        "github:scan-bot", 236, now)
+    verifier.require_r4_contract_v2(
+        final, independently_verified, signed_result_bytes)
+    assert final["schema_version"] == 2
+    assert final["images"]["portal"]["decision"] == "pass"
+
+    if severity == "CRITICAL":
+        # Authentic reviewer alone cannot authorize CRITICAL NOT_AFFECTED.
+        missing_owner = deepcopy(signatures)
+        missing_owner["signatures"] = missing_owner["signatures"][:1]
+        with pytest.raises(verifier.DispositionError, match="owner concurrence"):
+            verifier.verify(**{**arguments, "signatures": missing_owner})
+
+    # Original bytes are immutable even with otherwise valid signatures.
+    signed_report = evidence / "reports/portal.vuln.json"
+    signed_report.write_bytes(signed_report.read_bytes().replace(
+        b'"V3Score":8.1', b'"V3Score":8.2'))
+    with pytest.raises(verifier.DispositionError, match="Modified original"):
+        verifier.verify(**arguments)
