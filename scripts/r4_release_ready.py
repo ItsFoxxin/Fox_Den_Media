@@ -264,6 +264,10 @@ def revalidate_independent_dispositions(*, security: dict, lock: dict,
     signatures = load_json(review_dir / "review/signatures.json")
     # The lifecycle and reviewer trust MUST originate from the independently
     # owner-managed environment, never from artifact B or C.
+    # Absence or symlink substitution is a hard input failure, not a fallback.
+    for owner_path in (trust_path, lifecycle_path, lifecycle_signature_path):
+        require(owner_path.is_file() and not owner_path.is_symlink(),
+                "Missing or unsafe owner-managed disposition trust/lifecycle input")
     fresh_result = verify(
         context=load_json(scan_dir / "context.json"),
         dispositions=dispositions,
