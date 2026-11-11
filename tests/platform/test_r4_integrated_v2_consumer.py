@@ -315,7 +315,8 @@ def test_real_integrated_consumer_rejects_broken_security_evidence(
             base64.b64encode(b"\0" * 64).decode(), encoding="ascii")
     elif mutation == "tampered-review":
         path = case["review"] / "review/dispositions.json"
-        path.write_bytes(path.read_bytes() + b" ")
+        path.write_bytes(path.read_bytes().replace(
+            b'"status":"FIXED"', b'"status":"NOT_AFFECTED"'))
     else:
         assert mutation == "unresolved-high"
         path = case["review"] / "review/dispositions.json"
@@ -333,7 +334,9 @@ def test_signed_v2_contract_rejects_unknown_and_nonempty_exception(tmp_path):
         tmp_path, severity="UNKNOWN")
     with pytest.raises(producer.EvidenceError, match="UNKNOWN"):
         producer.severe_inventory(context, reports)
-    case = evidence(tmp_path / "separate", "HIGH")
+    separate = tmp_path / "separate"
+    separate.mkdir()
+    case = evidence(separate, "HIGH")
     case["policy"]["exceptions"] = [{"unapproved": True}]
     with pytest.raises(verifier.DispositionError):
         verifier.verify(
