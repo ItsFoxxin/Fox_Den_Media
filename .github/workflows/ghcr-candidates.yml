@@ -1,0 +1,255 @@
+name: GHCR candidate images (R3; separately approved)
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: 'Exact, owner-approved immutable main commit SHA (40 lowercase hex)'
+        type: string
+        required: true
+      approval_issue:
+        description: 'Source promotion approval issue number'
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ghcr-candidates-${{ inputs.source_sha }}
+  cancel-in-progress: false
+
+jobs:
+  authorize:
+    name: Verify main SHA, owner authorization and required checks
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      checks: read
+      issues: read
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+      - name: Enforce separate source approval and exact current main
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          APPROVAL_ISSUE: ${{ inputs.approval_issue }}
+          APPROVED_SHA: ${{ vars.GHCR_APPROVED_SOURCE_SHA }}
+          APPROVED_ISSUE: ${{ vars.GHCR_SOURCE_APPROVAL_ISSUE }}
+          ENABLED: ${{ vars.GHCR_CANDIDATES_ENABLED }}
+          ENV_CONFIRMED: ${{ vars.GHCR_CANDIDATE_ENV_PROTECTED }}
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$APPROVAL_ISSUE" =~ ^[0-9]+$ ]]
+          test "$ENABLED" = true
+          test "$ENV_CONFIRMED" = true
+          test "$SOURCE_SHA" = "$APPROVED_SHA"
+          test "$APPROVAL_ISSUE" = "$APPROVED_ISSUE"
+          test "$GITHUB_SHA" = "$SOURCE_SHA"
+          actual="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')"
+          test "$actual" = "$SOURCE_SHA"
+          gh api "repos/$GITHUB_REPOSITORY/issues/$APPROVAL_ISSUE" > "$RUNNER_TEMP/source-issue.json"
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/issues/$APPROVAL_ISSUE/comments?per_page=100" \
+            | jq -e 'add' > "$RUNNER_TEMP/source-comments.json"
+          python scripts/verify_candidate_approval.py \
+            --issue-json "$RUNNER_TEMP/source-issue.json" \
+            --comments-json "$RUNNER_TEMP/source-comments.json" \
+            --repository "$GITHUB_REPOSITORY" --issue-number "$APPROVAL_ISSUE" \
+            --source-sha "$SOURCE_SHA"
+          python scripts/check_release.py
+          python scripts/check_release_base_images.py
+          python scripts/release_metadata.py --source-sha "$SOURCE_SHA" \
+            --main-head "$actual" --version 1.0.0
+          gh api --paginate --slurp \
+            "repos/$GITHUB_REPOSITORY/commits/$SOURCE_SHA/check-runs?per_page=100&filter=all" \
+            | jq -e '
+                (map(.total_count) | unique) as $counts |
+                [.[].check_runs[]] as $runs |
+                if ($counts | length) == 1 and ($counts[0] | type) == "number"
+                then {total_count:$counts[0],check_runs:$runs}
+                else error("Inconsistent check-run pagination")
+                end
+              ' > "$RUNNER_TEMP/checks.json"
+          python scripts/verify_publisher_checks.py "$RUNNER_TEMP/checks.json" "$SOURCE_SHA"
+
+  publish:
+    name: Publish approved candidate (${{ matrix.component }})
+    needs: authorize
+    runs-on: ubuntu-24.04
+    environment: ghcr-candidates
+    timeout-minutes: 50
+    permissions:
+      contents: read
+      packages: write
+      checks: read
+      issues: read
+      id-token: write
+      attestations: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - component: portal
+            repository: ghcr.io/itsfoxxin/fox-den-media-portal
+            context: apps/portal
+            dockerfile: apps/portal/Dockerfile
+            description: Fox Den Media Portal and authentication service
+          - component: music
+            repository: ghcr.io/itsfoxxin/fox-den-media-music
+            context: apps/music/backend
+            dockerfile: apps/music/backend/Dockerfile
+            description: Fox Den Media Music web and worker
+          - component: media
+            repository: ghcr.io/itsfoxxin/fox-den-media-media
+            context: .
+            dockerfile: apps/media/Dockerfile
+            description: Fox Den Media Movies and TV service
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Recheck main and release approval immediately before write
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          APPROVED_SHA: ${{ vars.GHCR_APPROVED_SOURCE_SHA }}
+          APPROVED_ISSUE: ${{ vars.GHCR_SOURCE_APPROVAL_ISSUE }}
+          APPROVAL_ISSUE: ${{ inputs.approval_issue }}
+          ENABLED: ${{ vars.GHCR_CANDIDATES_ENABLED }}
+          ENV_CONFIRMED: ${{ vars.GHCR_CANDIDATE_ENV_PROTECTED }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$ENABLED" = true && test "$ENV_CONFIRMED" = true
+          test "$SOURCE_SHA" = "$GITHUB_SHA"
+          test "$SOURCE_SHA" = "$APPROVED_SHA"
+          test "$APPROVAL_ISSUE" = "$APPROVED_ISSUE"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')" = "$SOURCE_SHA"
+          gh api "repos/$GITHUB_REPOSITORY/issues/$APPROVAL_ISSUE" > "$RUNNER_TEMP/source-issue.json"
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/issues/$APPROVAL_ISSUE/comments?per_page=100" \
+            | jq -e 'add' > "$RUNNER_TEMP/source-comments.json"
+          python scripts/verify_candidate_approval.py \
+            --issue-json "$RUNNER_TEMP/source-issue.json" \
+            --comments-json "$RUNNER_TEMP/source-comments.json" \
+            --repository "$GITHUB_REPOSITORY" --issue-number "$APPROVAL_ISSUE" \
+            --source-sha "$SOURCE_SHA"
+          gh api --paginate --slurp \
+            "repos/$GITHUB_REPOSITORY/commits/$SOURCE_SHA/check-runs?per_page=100&filter=all" \
+            | jq -e '
+                (map(.total_count) | unique) as $counts |
+                [.[].check_runs[]] as $runs |
+                if ($counts | length) == 1 and ($counts[0] | type) == "number"
+                then {total_count:$counts[0],check_runs:$runs}
+                else error("Inconsistent check-run pagination")
+                end
+              ' > "$RUNNER_TEMP/rechecked-source-checks.json"
+          python scripts/verify_publisher_checks.py "$RUNNER_TEMP/rechecked-source-checks.json" "$SOURCE_SHA"
+      - name: Login to GHCR with workflow-scoped credentials
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+      - name: Reject repeated candidate tag and unknown registry errors
+        env:
+          IMAGE: ${{ matrix.repository }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="$IMAGE:sha-$SOURCE_SHA"
+          if docker buildx imagetools inspect "$tag" > "$RUNNER_TEMP/tag-out" 2>&1; then
+            echo "::error::Commit candidate tag already exists; refusing to overwrite or rebuild"
+            exit 1
+          fi
+          if ! grep -Eiq '(not found|manifest unknown|404)' "$RUNNER_TEMP/tag-out"; then
+            cat "$RUNNER_TEMP/tag-out"
+            echo "::error::Registry availability/authorization unknown; refusing publication"
+            exit 1
+          fi
+      - name: Build once, push only commit-identified candidate
+        id: image
+        env:
+          IMAGE: ${{ matrix.repository }}
+          COMPONENT: ${{ matrix.component }}
+          DESCRIPTION: ${{ matrix.description }}
+          CONTEXT: ${{ matrix.context }}
+          DOCKERFILE: ${{ matrix.dockerfile }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker buildx create --use --name foxden-release
+          mkdir -p evidence
+          docker buildx build --platform linux/amd64 --pull \
+            --file "$DOCKERFILE" --provenance=mode=max --sbom=true \
+            --label "org.opencontainers.image.source=https://github.com/ItsFoxxin/Fox_Den_Media" \
+            --label "org.opencontainers.image.revision=$SOURCE_SHA" \
+            --label "org.opencontainers.image.version=1.0.0" \
+            --label "org.opencontainers.image.description=$DESCRIPTION" \
+            --annotation "index:org.opencontainers.image.description=$DESCRIPTION" \
+            --tag "$IMAGE:sha-$SOURCE_SHA" \
+            --metadata-file evidence/build.json --push "$CONTEXT"
+          digest="$(jq -er '."containerimage.digest" | select(test("^sha256:[0-9a-f]{64}$"))' evidence/build.json)"
+          docker buildx imagetools inspect "$IMAGE@$digest" --raw > evidence/manifest.json
+          platform_digest="$(jq -er '[.manifests[] | select(.platform.os == "linux" and .platform.architecture == "amd64") | .digest] | unique | if length == 1 then .[0] else error("platform missing/duplicated") end' evidence/manifest.json)"
+          docker pull --platform linux/amd64 "$IMAGE@$digest"
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$IMAGE@$digest")" = "$SOURCE_SHA"
+          jq -n --arg component "$COMPONENT" --arg image "$IMAGE" \
+            --arg sha "$SOURCE_SHA" --arg digest "$digest" --arg platform_digest "$platform_digest" \
+            --argjson run "$GITHUB_RUN_ID" \
+            '{component:$component, image:$image, source_sha:$sha, digest:$digest,
+              platform:"linux/amd64", platform_digest:$platform_digest,
+              workflow:"ghcr-candidates.yml", run_id:$run}' > "evidence/$COMPONENT.json"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+      - name: Attest the exact pushed digest
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ matrix.repository }}
+          subject-digest: ${{ steps.image.outputs.digest }}
+          push-to-registry: true
+          create-storage-record: false
+      # BuildKit SBOM remains enabled above; this *additional* SPDX document
+      # is signed by the trusted R3 workflow for R5's exact predicate gate.
+      # The existing digest is scanned, never rebuilt or retagged.
+      - name: Generate independently verifiable SPDX predicate for pushed digest
+        shell: bash
+        env:
+          IMAGE: ${{ matrix.repository }}
+          COMPONENT: ${{ matrix.component }}
+          DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          set -euo pipefail
+          bash scripts/install_trivy.sh "$RUNNER_TEMP/trivy-bin"
+          "$RUNNER_TEMP/trivy-bin/trivy" image --image-src docker \
+            --scanners vuln --format spdx-json --exit-code 0 \
+            --output "evidence/$COMPONENT.sbom.spdx.json" "$IMAGE@$DIGEST"
+          jq -e '.spdxVersion == "SPDX-2.3" and
+                 .SPDXID == "SPDXRef-DOCUMENT" and
+                 (.packages | type == "array" and length > 0)' \
+            "evidence/$COMPONENT.sbom.spdx.json" > /dev/null
+          test "$(stat -c %s "evidence/$COMPONENT.sbom.spdx.json")" -le 16777216
+      - name: Attest SPDX v2.3 SBOM to exact immutable OCI subject
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ matrix.repository }}
+          subject-digest: ${{ steps.image.outputs.digest }}
+          sbom-path: evidence/${{ matrix.component }}.sbom.spdx.json
+          push-to-registry: true
+          create-storage-record: false
+      - name: Upload digest identity evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ghcr-candidate-${{ matrix.component }}
+          path: evidence/
+          retention-days: 30
+          if-no-files-found: error

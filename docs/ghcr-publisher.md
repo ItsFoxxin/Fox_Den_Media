@@ -1,0 +1,368 @@
+# GHCR candidate publisher and verifier — R3/R4
+
+**Status:** implementation PR, not approval to publish. This design follows the
+[merged artifact-first policy](release-1.0-checklist.md). R1/R2 validators merged into protected `dev` in PR #79. They must still
+be included in a separately approved and fully checked `main` source SHA. All three first-party images must be built
+from **one owner-approved immutable main commit**.
+
+## Package names and roles
+
+- Portal: ghcr.io/itsfoxxin/fox-den-media-portal
+- Music web **and** worker: ghcr.io/itsfoxxin/fox-den-media-music
+- Movies/TV: ghcr.io/itsfoxxin/fox-den-media-media
+
+No fourth first-party package. NGINX, Firefox, Jellyfin, Gluetun and
+qBittorrent stay on reviewed upstream registries. The publisher builds only
+linux/amd64 for now. The root VERSION is not bumped by this PR.
+
+## R3 — separate source approval, no release publication
+
+The only trigger is **manual workflow_dispatch on main**, with the exact
+40-digit approved commit SHA and a source-approval issue number. The workflow
+checks the current remote main HEAD, root/Media version and changelog via R1,
+the matching admin-managed authorization values, **an explicit current owner GO**
+in the referenced issue, and GitHub's required main check-runs. An open issue
+or repository variables alone are not source authorization. The writer job also requests the `ghcr-candidates` GitHub
+Environment and rechecks the SHA/authorization before receiving its
+job-specific `packages: write` token. It has no deployment credentials.
+
+**Required GitHub settings, not configured by this PR:**
+
+1. Create an environment named `ghcr-candidates`. Configure a required
+   human reviewer and restrict permitted branches to protected `main`.
+   Check whether your plan supports required reviewers; if not, leave the
+   publisher disabled and choose an independently auditable approval process
+   before enabling it. Never infer that naming an environment protects it.
+2. Only after source promotion approval, set repository variables:
+   `GHCR_CANDIDATES_ENABLED=true`,
+   `GHCR_CANDIDATE_ENV_PROTECTED=true`,
+   `GHCR_APPROVED_SOURCE_SHA=<approved exact main SHA>`,
+   `GHCR_SOURCE_APPROVAL_ISSUE=<source-GO issue number>`.
+   The `ENV_PROTECTED` variable is an operator assertion and **not**
+   independent machine verification of environment review settings.
+3. Verify protected main's exact post-merge required checks all passed.
+   Check the source approval's scope and that it explicitly authorizes GHCR
+   **candidate** creation. The repository owner must place exactly one
+   standalone `GHCR-CANDIDATE-GO <40-hex-main-sha>` command in the referenced
+   issue. A later `GHCR-CANDIDATE-REVOKE <same-sha>` rescinds that GO.
+   The newest authenticated owner directive for the exact SHA must be GO
+   both at preflight and immediately before the publisher obtains registry
+   access. Missing, forged or revoked directives fail closed. Record owner,
+   approval time and the source authorization URL.
+4. Dispatch R3 **once** using the matching SHA/issue. It refuses to overwrite
+   existing commit tags or proceed when registry responses are ambiguous.
+   On partial publication, stop and inspect the existing digests — do not
+   re-run with force, retag or silently rebuild.
+5. Immediately disable the authorization variables after the authorized run.
+
+**Build reproducibility prerequisite:** all three Dockerfiles still reference
+mutable `python:3.12.13-slim-bookworm`. The updated R3 preflight now demands
+one identical independently reviewed immutable
+`python:3.12.15-slim-bookworm@sha256:<64-hex-digest>` in all three files.
+No base digest was fabricated and the Dockerfiles were not modified. R3
+publication remains blocked until the owner reviews and pins the real digest.
+
+The publisher records image, source SHA, linux/amd64 manifest digest, GitHub
+run ID and BuildKit provenance/SBOM. It also creates a GitHub-signed image
+attestation for the *published digest*, preserving package linkage through
+the repo's GITHUB_TOKEN and OCI source metadata.
+
+The only candidate tag is `sha-<full-source-sha>`. **Never** use `latest`,
+`1.0.0` or `v1.0.0` here. The digest, not the tag, is the release identity.
+OCI image metadata includes repository/source, revision, description and
+version. No license label is added until the licensing decision.
+
+## R4 — shared, independently signed security evidence
+
+The read-only `ghcr-verify.yml` now requires approved R3, original signed
+scan collection A, independent review B, and finalized signed v2 producer C,
+all on the same exact immutable approved `main` source. R4 independently
+authenticates A/B/C workflow, run, signer and source identities and verifies
+unchanged original Trivy/SPDX inputs against the complete R2 lock and the
+reviewed owner-controlled disposition lifecycle.
+
+R4 verifies the expected GitHub workflow/run/SHA, the security contract's
+attestation identity, every first-party image's GitHub attestation, OCI
+platform manifest, digest in the lock, policy decision and scan/SBOM subject.
+It then runs isolated integration by pulling the locked images and removing
+all local build directives before Compose up. Synthetic temporary secrets and
+volumes are destroyed; no NAS or production credentials are used.
+
+**Source integration complete; runtime evidence still blocked:** PR #93
+(independent Ed25519 verifier), PR #95 (finite-decimal scanner parsing),
+and PR #84 (A/C authenticated v2 producer) are merged on protected `dev`
+and incorporated into this R4 branch. The advisory Trivy PRs #72/#74/#77
+do not constitute release-digest acceptance. These merged contracts must
+still be present at a separately owner-approved immutable `main` SHA.
+No real R3/A/B/C runs, approved upstream signer inventory, independent
+dispositions, current owner lifecycle, release security PASS or NAS approval
+are established merely by this source merge. Do not forge evidence or turn
+structural tests into authorization.
+
+The mandatory `schema_version: 2` scan-security contract retains every
+original source, publisher, OCI, provenance, Trivy, SPDX, DB-age and
+`exceptions=[]` policy binding, plus the exact `disposition_review`
+extension from PR #93. Legacy scan-security v1 has **no fallback**.
+Only independently authenticated, technically verified FIXED or NOT_AFFECTED
+records may clear a HIGH/CRITICAL finding, and UNKNOWN always blocks.
+The source exception-policy hash semantics remain `v1:` without waivers.
+
+The R4 consumer now requires pass decisions, provenance verification and
+checksummed SPDX/Trivy evidence for **every enabled upstream image**, in
+addition to the three first-party subjects. No upstream exceptions are
+implicitly accepted. These are required input conditions, **not completed
+scans or dispositions**. A full signed A/B/C chain, original findings,
+reviewed proofs, newest owner lifecycle and separate full-profile
+acceptance remain mandatory.
+
+## PR #93 — Independent v2 disposition integration
+
+[Authoritative interface guide](https://github.com/ItsFoxxin/Fox_Den_Media/blob/5da5328c923f548794f7ee9568fd6c8c175dea13/docs/security-disposition-review.md).
+
+The reviewer interface is separate from release security acceptance.
+**A** collects complete unsuppressed original Trivy/SPDX bytes, signed
+`context.json`, scanner, policy and complete R2 lock as artifact
+`ghcr-security-contract-v2-inputs`. **B** independently verifies all findings
+and human Ed25519 review/owner concurrence in a protected main-only workflow
+and signs `disposition-verification.json` in artifact
+`security-disposition-review-v1`. **C** consumes A and B, preserving original
+reports, and signs the finalized `ghcr-security-contract-v2` with exact
+`disposition_review`. A successful scan collection is never a pass decision.
+
+At R4 acceptance, the workflow requires exact successful and distinct
+authenticated A/B/C run IDs and expected signer workflow, current approved
+source SHA, attested file-subject raw hash, independently authenticated scan
+producer actor, current R2/OCI identities and source exception policy. The
+trusted owner-managed review Environment must enforce required reviewers and
+protected main. Review signer public keys, fresh signed lifecycle,
+revocation/supersession, expiry, scanner age and every HIGH/CRITICAL
+finding/proof are independently re-evaluated through the PR #93 verifier.
+Producer-provided trust and stale lifecycle snapshots are not accepted.
+
+The final C security contract names the review artifact ROOT file
+`disposition-verification.json`. After validation, the R4 signed
+`verification.json` adds the exact `disposition_review` extension with
+`schema_version:1`, `artifact_name:security-disposition-review-v1`,
+`verification_file:integration/disposition-verification.json`,
+`verification_sha256`, `dispositions_sha256`, `review_workflow`,
+`review_run_id` and `verified_at`.
+
+The existing `foxden.r4.release-ready.v1` root envelope remains **unchanged**
+with precisely `schema_version`, `version`, `repository`, `workflow`,
+`source_sha`, `r3_run_id`, `r4_run_id` and `files`. The two existing
+file maps (in `verification.json` and the signed root) include SHA-256 of
+all the original copied disposition evidence:
+
+| Required flattened signed path | Exact origin |
+| --- | --- |
+| `integration/disposition-verification.json` | Independently B-signed verification result |
+| `integration/security-dispositions.json` | Original signed dispositions document |
+| `integration/security-disposition-signatures.json` | Detached reviewer/owner signatures |
+| `integration/disposition-proof-<slug>.json` | Every original `review/proofs/<slug>.json` |
+
+The original disposition document uses a **canonical** SHA-256; bundle
+file hashes cover the **raw original bytes**. A fully authenticated clean
+scan with `records: []` may omit the empty `review/proofs/` directory
+during artifact upload/download, or retain an empty directory; R4 accepts
+both without manufacturing a placeholder proof. Nonempty dispositions
+still require every referenced, hashed, regular proof file. Unexpected,
+duplicate, missing, altered or symlinked proofs, or missing signed-map
+entries, fail closed. No unsigned sidecar and no competing R5 schema
+are introduced.
+
+**Owner-state freshness versus monotonic continuity (F-04):** R4 requires a
+separately provisioned protected read-only credential
+'SECURITY_DISPOSITION_STATE_READ_TOKEN' to re-fetch GitHub Actions
+repository variables and compare the owner-managed trust/lifecycle values
+immediately before acceptance. Missing credentials, inaccessible APIs,
+changed values, invalid Ed25519 lifecycle signatures, expiry, revocation
+and supersession fail closed. **This detects drift relative to values
+currently served by GitHub; it does NOT independently prove monotonic
+lifecycle history.** If all lifecycle, signature, digest and trust variables
+are rolled back together, a previously valid unexpired signed lifecycle
+may be replayed without detection from snapshot equality alone.
+No independent append-only checkpoint, externally anchored sequence or
+separately controlled continuity authority was identified in this R4 path.
+**Independent lifecycle continuity: PENDING — NOT OPERATIONALLY VERIFIED.**
+Any stronger guarantee requires separately owner-authorized independent
+history/checkpoint design and renewed review. No environments, keys or
+history stores are configured by this PR.
+
+**External blockers:** The merged PR #93/#95 independent verifier and PR #84
+A/C producer are available in the consumer source and are exercised through
+synthetic cross-module tests. PR #80 separately owns R5 independent review
+revalidation. The protected-environment settings, owner Ed25519 trust/key
+custody, independent review submission transport, latest owner-signed
+lifecycle and anti-rollback state, real authenticated R3/A/B/C evidence,
+severe-finding resolution, upstream provenance and owner approvals remain
+unverified or absent. Issue #83 remains operationally open despite the source
+merge; Issues #76 and #18 remain release blockers. Synthetic signatures and
+generated test digests clear no real CVEs.
+
+
+## Package presentation, permissions and release boundaries
+
+After the **first authorized** candidate push, open each GHCR package page:
+verify that it is linked to `ItsFoxxin/Fox_Den_Media`, GitHub Actions has
+only the access needed, and visibility is set deliberately. Public code
+does not make packages automatically public. The connected GitHub tool
+cannot inspect/manage every GHCR package setting or environment reviewer.
+
+Source promotion GO, release publication GO and production NAS cutover GO
+remain three separate approvals. R3 does not make version tags, R4 does
+not publish or deploy, and this PR does not introduce R5 or R6.
+
+## Exact independent security-producer handoff (PR #84 / issue #83)
+
+The separate `.github/workflows/trivy-digest-security.yml` (not modified
+by this PR) requires separately authorized original scan collection A
+(`ghcr-security-contract-v2-inputs`) and finalized C
+(`ghcr-security-contract-v2`), on the **same main SHA and authenticated R3**,
+with independently signed review B (`security-disposition-review-v1`).
+Expected C-relative paths:
+
+| File | Required consumer binding |
+| --- | --- |
+| `security-contract.json` | Strict v2 fields, exact producer/source SHA/R3 run, scanner/policy, all first-party and enabled upstream decisions |
+| `release-lock.json` | R2 v1 lock with full profile/service set and immutable SHA256 images |
+| `rendered-release-compose.json` | **Sanitized** image-only Compose, no builds or sensitive environment values; maps exactly to lock |
+| `scanner.json` | Trivy `Version=0.76.2`, positive integer `VulnerabilityDB.Version`, parseable UTC `UpdatedAt`, not future or older than 14 days |
+| `reports/<name>.sbom.spdx.json` | SPDX package evidence; SHA-256 checksum matches signed v2 image entry |
+| `reports/<name>.vuln.json` | Unsuppressed vulnerabilities; SHA-256 checksum matches signed v2 image entry |
+
+`<name>` is exactly `portal`, `music`, `media` plus all enabled
+upstreams from `nginx`, `browser`, `jellyfin`, `gluetun`,
+`qbittorrent`. Music and Music Worker must map to the **same immutable**
+Music package and digest. Every scan record must use the exact image digest
+as both `scan_subject` and `sbom_subject` and report `decision=pass`,
+`exceptions=[]` and separately verified provenance. An upstream image
+without independently authenticated signer provenance is not accepted.
+
+Final C attests seven JSON subjects: contract, context, lock, sanitized
+Compose, scanner, exception ledger and the copied B verification result.
+A separately signs its collection context, lock, rendered Compose, scanner
+and policy; B signs its reviewed result. R4 authenticates exact signed
+subjects via `gh attestation verify` (GitHub CLI >= 2.102.0), approved
+source/workflow/run invocation, then reconstructs the complete review
+against unchanged raw A/C Trivy/SPDX and owner-managed lifecycle. The security contract's
+`policy_version` must be `v1:` plus the SHA256 of sorted-key,
+compact-serialized `security/vulnerability-exceptions.json` checked out
+at the approved source commit. No security exceptions, including otherwise
+approved time-limited exceptions, are compatible with v2. R4 checks raw DB
+schema version and matches the signed updated timestamp/version to the
+contract; malformed or old DBs fail closed. This avoids inventing an
+unreviewed contract v2 DB-version field while still verifying DB version.
+
+All proof above is a **required runtime contract**, not evidence the
+real release has passed it. Existing synthetic unit tests prove only
+rejection/acceptance of artificial inputs.
+
+## Remaining integration and owner settings
+
+- **Producer integration:** PR #84 merged on protected `dev` at
+  `c63011d28afd4674f41d092d09c0420c79e3ff13`; the consumer uses its
+  actual strict v2 interface. The tracked
+  `security/upstream-provenance.json` allowlist is still empty. The owner
+  must separately authenticate and approve upstream signers and immutable
+  image provenance; source integration alone cannot satisfy this gate.
+- R3 `ghcr-candidates` and producer `ghcr-security` must each be an actual
+  protected GitHub Environment with enforced independent required reviewers
+  and branch restriction to protected `main`. Repository flags claiming
+  protection **do not** prove configuration. Admin must review those settings.
+- R3 uses repo variables `GHCR_CANDIDATES_ENABLED`,
+  `GHCR_CANDIDATE_ENV_PROTECTED`, `GHCR_APPROVED_SOURCE_SHA` and
+  `GHCR_SOURCE_APPROVAL_ISSUE` only for a specifically authorized run;
+  clear/disable afterward. R3 has `packages: write` **only** on
+  the environment-gated candidate jobs. R4 has no package write capability.
+- Before any main publication, pin and independently review identical
+  Python base-image SHA256 digest in all three first-party Dockerfiles,
+  verify all required checks on the exact source, and obtain source GO.
+- **R4-to-R5 handoff is now implemented but not executed.** After every
+  real R4 gate succeeds, `scripts/r4_release_ready.py` stages a canonical
+  `foxden-r4-release-ready-v1.0.0` artifact with `release-ready.json`
+  (`foxden.r4.release-ready.v1`) and SHA-256 bindings for all included
+  evidence files. The R4 workflow authenticates and signs the exact root
+  manifest bytes through GitHub OIDC before uploading that bundle. Draft
+  R5 PR #80 verifies the independent R4 signer, source/workflow/run identity,
+  schema and file hashes under its canonical
+  `docs/r4-r5-release-ready-v1.schema.json` contract. No live R4 bundle or
+  R5 acceptance exists until an authorized run satisfies all prerequisites.
+- `main` currently uses `0.9.1`; a real `1.0.0` source, three
+  candidate digests, passing security evidence and NAS/copy-state
+  acceptance do not exist yet. Separate source promotion, release
+  publication and NAS production approvals remain mandatory.
+
+## Merged v2 consumer compatibility validation (PR #81)
+
+Following the authorized integration of protected `dev` at
+`c63011d28afd4674f41d092d09c0420c79e3ff13` (platform `VERSION=0.9.9`),
+the consumer retains its signed `foxden.r4.release-ready.v1` outer envelope
+and exact R5 flat file manifest. The merged original-byte Trivy/SPDX scanner,
+finite decimal CVSS parser, independent Ed25519 verifier and actual C v2
+contract assembler are available together; there is no scan-contract v1
+fallback. `tests/platform/test_r4_integrated_v2_consumer.py` exercises the
+real merged producer→verifier→R4 functions with generated, NON-LIVE keys,
+including 3.7/7.8/8.1 CVSS values, owner-signed CRITICAL NOT_AFFECTED,
+raw A/C evidence, empty proofs and fail-closed negative mutations.
+
+GitHub OIDC attestation verification, protected-main workflow/run identities,
+real GHCR digest signatures, independently managed latest owner lifecycle and
+separate operational acceptance are enforced by the actual runtime workflows,
+**not performed or certified by these synthetic tests**. No R3/R4 workflow
+was dispatched or production state changed during this integration.
+
+
+## PR #81 independent review corrections — F-01/F-02/F-03/F-04
+
+**F-01 — no-rebuild receipt serialization.** The existing
+scripts/no_rebuild_integration.py report writer emits one strict JSON
+document with an optional real newline *only after* successful pulled-digest
+integration. The regression executes the actual CLI writer in an isolated
+temporary directory with safely mocked Docker work, parses the generated bytes
+and passes the receipt to R4's downstream verification plus exact raw release
+lock SHA-256 comparison. Failed integration never emits a passing receipt;
+prior evidence is not overwritten. This is synthetic compatibility evidence,
+not live registry or NAS acceptance.
+
+**F-02 — protected-main contexts and authenticated publishers.** Active
+ruleset 26667058 requires ALL FOUR contexts: Monorepo strict gate (GitHub
+Actions App ID 15368), CodeQL (python) (App ID 15368),
+CodeQL (javascript-typescript) (App ID 15368), and aggregate CodeQL
+(CodeQL App ID 57789). Both R3 authorization gates retrieve all pages with
+filter=all, validate complete consistent API counts and require the newest
+run for every context to have the approved source SHA, expected GitHub App
+identity, completed status and successful conclusion. A newer failure,
+pending/skipped result or impostor invalidates an old green result. If the
+aggregate CodeQL context is absent under App ID 57789 on the approved source,
+R3 candidate publication remains BLOCKED. No fake success is created.
+
+**F-03 — GO reuse and partial-publication recovery.**
+The existing verify_candidate_approval.py permits the newest authenticated
+owner GHCR-CANDIDATE-GO <source-sha> until a later authenticated
+GHCR-CANDIDATE-REVOKE <source-sha>. This is SOURCE-SCOPED GO, **not a
+single-use, run-bound token**. Subsequent workflow dispatches can reuse an
+unchanged GO while the issue and variables remain valid. Each matrix job
+rejects an already-present sha-<source-sha> tag and ambiguous registry
+responses, preventing silent overwrite/rebuild of that component. However,
+following a partially successful dispatch, another run could still publish
+previously absent component tags using the unchanged source GO, while jobs
+for existing tags fail. This is an **operational retry authorization
+limitation**, not an enforced single-use guarantee. The owner must revoke or
+disable the old authorization after dispatch, inspect partial digests and
+explicitly authorize a scoped recovery plan before retrying. The existing
+operating rule is 'dispatch once'; automatic one-shot consumption or
+per-run authorization is NOT IMPLEMENTED. No force push, retag, second
+dispatch or GO authorization-model redesign is approved here. Any mandatory
+one-shot enforcement requires separately authorized scoped design/review.
+
+**F-04 — independent lifecycle continuity.** Owner-variable equality and
+signed freshness/expiry/revocation are NOT an externally anchored monotonic
+history. A coordinated rollback of all variables can replay a prior valid
+unexpired snapshot. Independent lifecycle continuity is **PENDING — NOT
+OPERATIONALLY VERIFIED**, pending a separately approved authoritative
+continuity mechanism and review.
+
+**Security boundaries:** All tests use synthetic evidence. No live R3/R4
+dispatch, GHCR publication, R5 handoff, source promotion, release or NAS
+deployment was performed or authorized. Issues #83, #76 and #18 remain
+operational release blockers; 1.0.0 remains NO-GO.
