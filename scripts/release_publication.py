@@ -649,6 +649,68 @@ def validate_authenticated_run(data: dict, source_sha: str, run_id: int,
             "Untrusted, failed, wrong-run or wrong-source disposition producer")
 
 
+
+CHAIN_INPUTS = ("source_sha", "publisher_run_id", "scan_run_id",
+                "review_run_id", "security_run_id")
+CHAIN_R3 = ".github/workflows/ghcr-candidates.yml"
+
+
+def run_input(run: dict, key: str, expected: str) -> None:
+    inputs = run.get("inputs")
+    require(isinstance(inputs, dict) and
+            isinstance(inputs.get(key), str) and inputs[key] == expected,
+            "Missing, stale or mismatched authenticated workflow input: " + key)
+
+
+def authenticated_chain(*, source_sha: str, r4_run: dict, r3_run: dict,
+                        scan_run: dict, review_run: dict, final_run: dict,
+                        r3_id: int, scan_id: int, review_id: int,
+                        final_id: int) -> None:
+    """Independently authenticate R3/A/B/C/R4 before rechecking signed bytes.
+
+    Workflow run inputs link C's otherwise absent ID to the independently
+    authenticated R4 run. JSON reports from a producer cannot supply these.
+    """
+    validate_authenticated_run(r4_run, source_sha, r4_run.get("id"), R4_WORKFLOW)
+    for run, ident, workflow in (
+        (r3_run, r3_id, CHAIN_R3),
+        (scan_run, scan_id, SCAN_WORKFLOW),
+        (review_run, review_id, REVIEW_WORKFLOW),
+        (final_run, final_id, SCAN_WORKFLOW),
+    ):
+        validate_authenticated_run(run, source_sha, ident, workflow)
+        run_input(run, "source_sha", source_sha)
+    require(len({r3_id, scan_id, review_id, final_id, r4_run["id"]}) == 5,
+            "Reused candidate/scan/review/finalization/R4 run identity")
+    for field, expected in (
+        ("source_sha", source_sha), ("publisher_run_id", str(r3_id)),
+        ("scan_run_id", str(scan_id)), ("review_run_id", str(review_id)),
+        ("security_run_id", str(final_id)),
+    ):
+        run_input(r4_run, field, expected)
+    run_input(scan_run, "stage", "collect")
+    run_input(final_run, "stage", "finalize")
+    run_input(scan_run, "publisher_run_id", str(r3_id))
+    for key, value in (("publisher_run_id", str(r3_id)),
+                       ("scan_run_id", str(scan_id)),
+                       ("review_run_id", str(review_id))):
+        run_input(final_run, key, value)
+    run_input(review_run, "r3_run_id", str(r3_id))
+    run_input(review_run, "scan_run_id", str(scan_id))
+    require(isinstance(scan_run.get("actor"), dict)
+            and isinstance(review_run.get("actor"), dict)
+            and isinstance(scan_run["actor"].get("login"), str)
+            and scan_run["actor"]["login"]
+            and isinstance(review_run["actor"].get("login"), str)
+            and review_run["actor"]["login"]
+            and scan_run["actor"]["login"] != review_run["actor"]["login"],
+            "Independent B reviewer workflow actor is the A producer")
+    times = [utc_instant(run.get("created_at")) for run in
+             (r3_run, scan_run, review_run, final_run, r4_run)]
+    require(all(first < later for first, later in zip(times, times[1:])),
+            "R3/A/B/C/R4 run sequence is not independent/chronological")
+
+
 def verify_attested_review_file(path: Path, source_sha: str,
                                 workflow: str, run: dict) -> None:
     """Validate GitHub's verified SLSA subject *and* exact workflow run.
@@ -854,37 +916,20 @@ def verify_registry(lock: dict, source_sha: str) -> None:
             ])
 
 
-def verify_signed_release_ready(root: Path, source_sha: str, r4_id: int) -> None:
-    """Verify the exact manifest bytes against a trusted R4 GitHub attestation."""
-    require(valid_sha(source_sha) and r4_id > 0, "Invalid signed R4 identity")
-    manifest_path = safe_file(root, "release-ready.json")
-    version_output = run_command(["gh", "--version"], output=True)
-    match = re.search(r"^gh version (\d+)\.(\d+)\.(\d+)", version_output)
-    require(match is not None and tuple(map(int, match.groups())) >= (2, 102, 0),
-            "gh CLI >= 2.102.0 required for exact signer-workflow verification")
-    result = run_command([
-        "gh", "attestation", "verify", str(manifest_path),
-        "--repo", REPOSITORY,
-        "--source-ref", "refs/heads/main",
-        "--source-digest", source_sha,
-        "--signer-workflow", R4_SIGNER_WORKFLOW,
-        "--predicate-type", "https://slsa.dev/provenance/v1",
-        "--format", "json",
-    ], output=True)
-    try:
-        attestations = json.loads(result)
-    except json.JSONDecodeError as err:
-        raise ReleaseBlocked("Malformed cryptographic attestation response") from err
-    digest = hash_file(manifest_path)
-    require(isinstance(attestations, list) and any(
-        isinstance(item, dict)
-        and isinstance(item.get("verificationResult"), dict)
-        and any(isinstance(subject, dict)
-                and isinstance(subject.get("digest"), dict)
-                and subject["digest"].get("sha256") == digest
-                for subject in item["verificationResult"].get("statement", {}).get("subject", []))
-        for item in attestations
-    ), "No verified signature on exact R4 release-ready manifest bytes")
+def verify_signed_release_ready(root: Path, source_sha: str, r4_id: int,
+                                *, run: dict | None = None) -> None:
+    """Require the exact GitHub-attested R4 file and dispatch invocation.
+
+    A genuine attestation from a *different* R4 run on the same main source
+    must not authenticate this run's release-ready artifact.
+    """
+    require(valid_sha(source_sha) and type(r4_id) is int and r4_id > 0,
+            "Invalid signed R4 identity")
+    if run is None:
+        run = api("repos/" + REPOSITORY + "/actions/runs/" + str(r4_id))
+    validate_authenticated_run(run, source_sha, r4_id, R4_WORKFLOW)
+    verify_attested_review_file(safe_file(root, "release-ready.json"),
+                                source_sha, R4_WORKFLOW, run)
 
 
 def stage_assets(root: Path, target: Path) -> None:
