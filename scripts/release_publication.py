@@ -793,10 +793,27 @@ def revalidate_current_dispositions(root: Path, summary: dict,
     binding = disposition["binding"]
     scan_id = document["scan_run_id"]
     review_id = binding["review_run_id"]
+    # The signed R4 manifest does not carry a separate C run field. R4's
+    # authenticated workflow_dispatch inputs bind that C run, R3, A and B.
+    r4_id = summary["release_ready"]["r4_run_id"]
+    r4_run = api("repos/" + REPOSITORY + "/actions/runs/" + str(r4_id))
+    r3_id = summary["lock"]["publisher"]["run_id"]
+    r3_run = api("repos/" + REPOSITORY + "/actions/runs/" + str(r3_id))
     scan_run = api("repos/" + REPOSITORY + "/actions/runs/" + str(scan_id))
     review_run = api("repos/" + REPOSITORY + "/actions/runs/" + str(review_id))
-    validate_authenticated_run(scan_run, source_sha, scan_id, SCAN_WORKFLOW)
-    validate_authenticated_run(review_run, source_sha, review_id, REVIEW_WORKFLOW)
+    inputs = r4_run.get("inputs") if isinstance(r4_run, dict) else None
+    candidate_c = inputs.get("security_run_id") if isinstance(inputs, dict) else None
+    require(isinstance(candidate_c, str) and
+            re.fullmatch(r"[1-9][0-9]*", candidate_c) is not None,
+            "Authenticated R4 run does not identify final C security producer")
+    final_id = int(candidate_c)
+    final_run = api("repos/" + REPOSITORY + "/actions/runs/" + str(final_id))
+    authenticated_chain(
+        source_sha=source_sha, r4_run=r4_run, r3_run=r3_run,
+        scan_run=scan_run, review_run=review_run, final_run=final_run,
+        r3_id=r3_id, scan_id=scan_id, review_id=review_id,
+        final_id=final_id,
+    )
     require(document["producer_actor"] ==
             "github:" + scan_run.get("actor", {}).get("login", ""),
             "Original scan actor differs from signed disposition producer identity")
@@ -842,6 +859,36 @@ def revalidate_current_dispositions(root: Path, summary: dict,
                 require(hash_file(safe_file(security, rel)) ==
                         hash_file(safe_file(root, rel)),
                         "Original scan report/SPDX differs from signed R4 bytes: " + rel)
+        # Independently authenticate finalized C, not just R4's assertion.
+        # C's OIDC signature must identify the exact finalization run.
+        finalized = staging / "final-c"
+        finalized.mkdir()
+        run_command(["gh", "run", "download", str(final_id),
+                     "--repo", REPOSITORY,
+                     "--name", "ghcr-security-contract-v2",
+                     "--dir", str(finalized)])
+        c_contract = safe_file(finalized, "security-contract.json")
+        verify_attested_review_file(c_contract, source_sha, SCAN_WORKFLOW,
+                                    final_run)
+        for name in ("security-contract.json", "release-lock.json",
+                     "scanner.json", "rendered-release-compose.json"):
+            raw_c = safe_file(finalized, name)
+            require(hash_file(raw_c) == hash_file(safe_file(root, name)),
+                    "Final C authenticated bytes differ from signed R4: " + name)
+        for name in ("context.json", "vulnerability-exceptions.json"):
+            require(hash_file(safe_file(finalized, name)) ==
+                    hash_file(safe_file(security, name)),
+                    "Final C altered signed original A input: " + name)
+        require(hash_file(safe_file(finalized,
+                                   "review/disposition-verification.json")) ==
+                hash_file(attested),
+                "Final C independent B review bytes differ from signed R4")
+        for component in summary["lock"]["images"]:
+            for suffix in (".vuln.json", ".sbom.spdx.json"):
+                rel = "reports/" + component + suffix
+                require(hash_file(safe_file(finalized, rel)) ==
+                        hash_file(safe_file(security, rel)),
+                        "Final C changed original scanned evidence: " + rel)
         # R4 maps review/proofs/foo.json to exact integration/disposition-proof-foo.json.
         (review / "proofs").mkdir()
         shutil.copyfile(safe_file(root, "integration/security-dispositions.json"),
