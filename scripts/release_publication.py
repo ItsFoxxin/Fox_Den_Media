@@ -20,8 +20,15 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import stat
 import urllib.error
 import urllib.request
+
+from scripts.verify_publisher_checks import (
+    REQUIRED as REQUIRED_CHECK_APPS,
+    RequiredChecksError,
+    verify_checks as verify_publisher_checks,
+)
 
 REPOSITORY = "ItsFoxxin/Fox_Den_Media"
 VERSION = "1.0.0"
@@ -54,12 +61,16 @@ FIRST_PARTY = {
     "music": "ghcr.io/itsfoxxin/fox-den-media-music",
     "media": "ghcr.io/itsfoxxin/fox-den-media-media",
 }
-REQUIRED_CHECKS = (
-    "Monorepo strict gate",
-    "CodeQL (python)",
-    "CodeQL (javascript-typescript)",
-    "CodeQL",
-)
+REQUIRED_CHECKS = tuple(REQUIRED_CHECK_APPS)
+# Protected-main ruleset 26667058; no unapproved publisher substitution.
+PROTECTED_MAIN_CHECK_APPS = {
+    "Monorepo strict gate": 15368,
+    "CodeQL (python)": 15368,
+    "CodeQL (javascript-typescript)": 15368,
+    "CodeQL": 57789,
+}
+CHECK_PAGE_SIZE = 100
+MAX_CHECK_RUNS = 10_000
 NOTE_HEADINGS = (
     "Release summary", "Major features", "Bug fixes", "Security changes",
     "Compatibility", "Installation and upgrade", "Images and immutable digests",
@@ -106,6 +117,37 @@ def valid_digest(value: object) -> bool:
     return isinstance(value, str) and DIGEST.fullmatch(value) is not None
 
 
+def validate_extracted_artifact(root: Path) -> None:
+    """Reject symlink/special/unsafe artifact entries before copying to workspace.
+
+    The workflow gates gh >= 2.102.0 *before* any gh run download and extracts
+    into a fresh private RUNNER_TEMP directory, never directly into repo state.
+    """
+    require(root.is_dir() and not root.is_symlink(),
+            "Missing or unsafe isolated R5 artifact extraction directory")
+    root_resolved = root.resolve()
+    require((root / "release-ready.json").is_file() and
+            not (root / "release-ready.json").is_symlink(),
+            "Missing regular signed R4 release-ready root")
+    entries = 0
+    for item in root.rglob("*"):
+        entries += 1
+        require(entries <= 20_000,
+                "Oversized untrusted artifact path inventory")
+        relative = item.relative_to(root)
+        require(all(re.fullmatch(r"[A-Za-z0-9_.-]+", part) and
+                    part not in (".", "..") and
+                    not part.startswith(".") for part in relative.parts),
+                "Unsafe extracted artifact path")
+        require(not item.is_symlink() and
+                item.resolve().is_relative_to(root_resolved),
+                "Symlink or escaping R5 artifact path")
+        mode = item.stat(follow_symlinks=False).st_mode
+        require(stat.S_ISDIR(mode) or stat.S_ISREG(mode),
+                "Nonregular file in downloaded R5 evidence")
+    require(entries > 0, "Empty extracted R5 artifact")
+
+
 def safe_file(root: Path, relative: str) -> Path:
     require(isinstance(relative, str) and relative and not relative.startswith("/"),
             "Invalid artifact path")
@@ -120,17 +162,51 @@ def safe_file(root: Path, relative: str) -> Path:
 
 
 def validate_checks(payload: dict, source_sha: str) -> None:
-    require(valid_sha(source_sha), "Source SHA must be a full 40-character hex commit")
-    checks = payload.get("check_runs")
-    require(isinstance(checks, list) and checks, "Missing check-run evidence")
-    for name in REQUIRED_CHECKS:
-        matches = [c for c in checks if isinstance(c, dict) and c.get("name") == name]
-        require(matches, "Missing required check: " + name)
-        # The live API uses filter=latest; do not choose a stale green run.
-        require(all(c.get("head_sha") == source_sha for c in matches),
-                "Required check has wrong source identity: " + name)
-        require(all(c.get("status") == "completed" and c.get("conclusion") == "success"
-                    for c in matches), "Required check not successful: " + name)
+    """Reuse merged R3 check provenance; no weaker R5 approval shortcut."""
+    require(REQUIRED_CHECK_APPS == PROTECTED_MAIN_CHECK_APPS,
+            "Protected-main required publisher mapping changed; owner review required")
+    try:
+        verify_publisher_checks(payload, source_sha)
+    except (RequiredChecksError, TypeError, AttributeError) as exc:
+        raise ReleaseBlocked("Unauthenticated or incomplete required source checks: " +
+                             str(exc)) from exc
+
+
+def fetch_all_check_runs(source_sha: str) -> dict:
+    """Fetch filter=all, every page; fail closed on incomplete/racing snapshots.
+
+    GitHub returns a total_count on each response, but the API is not a
+    transactional snapshot. Changed totals, shifted/duplicated IDs, oversized
+    or truncated pages cannot be treated as proof of a successful latest run.
+    """
+    require(valid_sha(source_sha), "Invalid check-run source commit")
+    base = ("repos/" + REPOSITORY + "/commits/" + source_sha +
+            "/check-runs?filter=all&per_page=100&page=")
+    total = None
+    collected = []
+    page = 1
+    while True:
+        batch = api(base + str(page))
+        require(isinstance(batch, dict) and
+                type(batch.get("total_count")) is int and
+                0 <= batch["total_count"] <= MAX_CHECK_RUNS and
+                type(batch.get("check_runs")) is list,
+                "Malformed or oversized GitHub check-run page")
+        count = batch["total_count"]
+        if total is None:
+            total = count
+            require(total > 0, "Required check-run history is empty")
+        require(count == total, "GitHub check-run total changed during pagination")
+        expected = min(CHECK_PAGE_SIZE, total - len(collected))
+        require(expected > 0 and len(batch["check_runs"]) == expected,
+                "Truncated, duplicated or oversized check-run page")
+        collected.extend(batch["check_runs"])
+        if len(collected) == total:
+            break
+        page += 1
+    result = {"total_count": total, "check_runs": collected}
+    validate_checks(result, source_sha)
+    return result
 
 
 def validate_adopted_policy(content: str) -> None:
@@ -598,11 +674,9 @@ def live_check(source_sha: str, r4_id: int, *, approval_issue: int = 0,
         Path("docs/release-1.0-checklist.md").read_text(encoding="utf-8"))
     branch = api("repos/" + REPOSITORY + "/branches/main")
     require(branch["commit"]["sha"] == source_sha, "main advanced since approval")
-    checks = api("repos/" + REPOSITORY +
-                 "/commits/" + source_sha + "/check-runs?filter=latest&per_page=100")
-    require(isinstance(checks, dict) and checks.get("total_count", 0) <= 100,
-            "Cannot attest to complete check history")
-    validate_checks(checks, source_sha)
+    # Both read-only preflight and final publication approval use the exact
+    # same complete, GitHub-App-authenticated source check history.
+    fetch_all_check_runs(source_sha)
     # Do not depend only on a mutable label; master acceptance is mandatory.
     master = api("repos/" + REPOSITORY + "/issues/18")
     validate_master_acceptance_issue(master)
@@ -1054,7 +1128,7 @@ def check_published(source_sha: str, root: Path, r4_id: int) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("live", "bundle", "registry", "assets", "approval", "published", "dispositions"))
+    parser.add_argument("command", choices=("live", "bundle", "registry", "assets", "approval", "published", "dispositions", "extracted"))
     parser.add_argument("--source-sha", required=True)
     parser.add_argument("--r4-run-id", required=True, type=int)
     parser.add_argument("--evidence-dir", type=Path, default=Path("release-evidence"))
@@ -1065,7 +1139,9 @@ def main() -> int:
     try:
         require(valid_sha(args.source_sha) and args.r4_run_id > 0,
                 "Invalid source commit or R4 run ID")
-        if args.command == "published":
+        if args.command == "extracted":
+            validate_extracted_artifact(args.evidence_dir)
+        elif args.command == "published":
             verify_signed_release_ready(args.evidence_dir, args.source_sha, args.r4_run_id)
             check_published(args.source_sha, args.evidence_dir, args.r4_run_id)
         elif args.command in ("live", "approval"):
