@@ -16,6 +16,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
 SPEC = importlib.util.spec_from_file_location(
     "r5", ROOT / "scripts" / "release_publication.py")
@@ -537,6 +539,91 @@ class BundleTests(unittest.TestCase):
         annotated["object"]["sha"] = "0" * 40
         with self.assertRaises(R5.ReleaseBlocked):
             R5.verify_published_records(tag_ref, annotated, release, SHA, assets)
+
+
+
+@pytest.mark.parametrize("severity,status", [
+    ("HIGH", "FIXED"),
+    ("CRITICAL", "NOT_AFFECTED"),
+    ("CLEAN", "FIXED"),
+])
+def test_merged_r4_v2_signed_bundle_handoff_to_r5(tmp_path, severity, status):
+    """Real merged A/C producer + B Ed25519 verifier -> R4 flattened files -> R5.
+
+    Offline synthetic evidence: tests real functions, not GitHub OIDC or NAS.
+    """
+    from test_r4_integrated_v2_consumer import (
+        evidence as authentic_evidence, accept,
+    )
+    from scripts import r4_release_ready as r4
+    from scripts import verify_security_dispositions as independent
+
+    case = authentic_evidence(tmp_path, severity, status)
+    signed, document = accept(case)
+    binding = r4.stage_independent_dispositions(
+        review_dir=case["review"], output=case["output"],
+        dispositions=document, signed_result=signed,
+        binding=case["contract"]["disposition_review"], review_id=236,
+    )
+    original_files = {
+        path.relative_to(case["output"]).as_posix(): r4.sha_file(path)
+        for path in case["output"].rglob("*.json")
+    }
+    r4.validate_disposition_file_map(
+        files=original_files, output=case["output"],
+        dispositions=document, binding=binding,
+    )
+    (case["output"] / "security-contract.json").write_text(
+        json.dumps(case["contract"]), encoding="utf-8")
+    original_files["security-contract.json"] = R5.hash_file(
+        case["output"] / "security-contract.json")
+    verification = {"disposition_review": binding, "files": original_files}
+    source_sha = document["source_sha"]
+    lock_sha = R5.hash_file(case["scan"] / "release-lock.json")
+    result = R5.validate_disposition_bundle(
+        case["output"], verification, source_sha, lock_sha,
+        case["lock"],
+    )
+    assert result["document"] == document
+    assert result["result"]["image_count"] == len(case["lock"]["images"])
+    assert result["result"]["cleared_finding_count"] == len(document["records"])
+    # Genuine Ed25519 reviewer/owner and current owner-signed lifecycle check.
+    fresh = independent.verify(
+        context=case["context"], dispositions=document,
+        signatures=independent.load_json(
+            case["review"] / "review/signatures.json"),
+        lifecycle=case["lifecycle"],
+        lifecycle_signature=(
+            case["trust"] / "lifecycle.sig").read_text(encoding="ascii"),
+        trust=independent.load_json(case["trust"] / "trust.json"),
+        evidence_dir=case["scan"], proofs_dir=case["review"] / "review",
+        lock_path=case["scan"] / "release-lock.json",
+        scanner=case["scanner"], scanner_path=case["scan"] / "scanner.json",
+        exceptions=case["policy"], expected_source_sha=source_sha,
+        expected_r3_run_id=113, expected_scan_run_id=235,
+        expected_producer_actor="github:scan-bot",
+    )
+    assert all(result["result"][key] == value
+               for key, value in fresh.items()
+               if key != "lifecycle_sha256")
+    proofs = [p for p in original_files if p.startswith(
+        "integration/disposition-proof-")]
+    assert len(proofs) == len(document["records"])
+    if proofs:
+        (case["output"] / proofs[0]).write_bytes(b'{"tampered":true}')
+        with pytest.raises(R5.ReleaseBlocked):
+            R5.validate_disposition_bundle(
+                case["output"], verification, source_sha, lock_sha,
+                case["lock"])
+    else:
+        # Zero-record clean review is valid only with an empty proof inventory.
+        fake = "integration/disposition-proof-orphan.json"
+        (case["output"] / fake).write_text("{}")
+        verification["files"][fake] = R5.hash_file(case["output"] / fake)
+        with pytest.raises(R5.ReleaseBlocked):
+            R5.validate_disposition_bundle(
+                case["output"], verification, source_sha, lock_sha,
+                case["lock"])
 
 
 class SignedEnvelopeTests(unittest.TestCase):
