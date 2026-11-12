@@ -8,23 +8,21 @@
 
 ## 1. Source and decision boundary
 
-| Item | Verified at document creation (2026-11-08) |
+| Item | Verified current integration state (2026-11-12 UTC) |
 | --- | --- |
-| Repository / integration | [`ItsFoxxin/Fox_Den_Media`](https://github.com/ItsFoxxin/Fox_Den_Media), `dev` |
-| Frozen source baseline | [`9d770faa5427551f76dac504c9e069887d52aba9`](https://github.com/ItsFoxxin/Fox_Den_Media/commit/9d770faa5427551f76dac504c9e069887d52aba9), `VERSION=0.9.6` |
-| Stable/default branch | `main`; not an approved 1.0.0 source promotion |
-| Master register | [Issue #18](https://github.com/ItsFoxxin/Fox_Den_Media/issues/18) — open, 1.0.0 **NO-GO** |
-| Exact-base automated runs | [Monorepo strict gate](https://github.com/ItsFoxxin/Fox_Den_Media/actions/runs/42479159395), [CodeQL](https://github.com/ItsFoxxin/Fox_Den_Media/actions/runs/42479159531), and [advisory Trivy](https://github.com/ItsFoxxin/Fox_Den_Media/actions/runs/42479159484) completed successfully for this SHA; these runs are **not** a copied-state test or security release disposition |
-| Historical rehearsal | Test51/Test57 and other older NAS results are background evidence **only**; Test57 was pinned to an older `0.9.1` commit. No authorized rehearsal of this exact source is established |
-| Related blocker outside this handoff | [Security/CVE disposition #76](https://github.com/ItsFoxxin/Fox_Den_Media/issues/76) remains separate; no runtime test or this document can waive that gate |
-| Operational procedures | [Earlier detailed NAS checklist](nas-current-dev-acceptance.md), [release checklist](release-1.0-checklist.md), [readiness](production-readiness.md), [compatibility](production-compatibility-0.9.md), [migration](production-migration-rehearsal.md), [recovery](recovery.md) |
+| Repository / target | [`ItsFoxxin/Fox_Den_Media`](https://github.com/ItsFoxxin/Fox_Den_Media), integration branch `dev`; PR #90 remains a separate, documentation-only branch |
+| **Current candidate, NOT an accepted source freeze** | [`460cd50749903e00b3066e30715e8fd411cc12ec`](https://github.com/ItsFoxxin/Fox_Den_Media/commit/460cd50749903e00b3066e30715e8fd411cc12ec), root `VERSION=0.9.9`; an **unaccepted operational candidate**, not a 1.0.0 tested deployment |
+| **Future actual rehearsal freeze — PENDING** | `EXACT_OWNER_APPROVED_TEST_SHA`, matching `VERSION`, Compose profiles, architecture, exact upstream and locally built test image identities, configuration ID, source/target state snapshot and approval ID: **NOT SET**. Operator must freeze and re-review at A1/A2, regardless of the observed 0.9.9 candidate |
+| Historical source represented by the original PR #90 | [`9d770faa5427551f76dac504c9e069887d52aba9`](https://github.com/ItsFoxxin/Fox_Den_Media/commit/9d770faa5427551f76dac504c9e069887d52aba9), `0.9.6`; **superseded as a current-code inventory**, retained only for provenance. Historical CI is not portable to a 0.9.9 rehearsal |
+| Protected/stable source | `main` was still `0.9.1` at verification; no approved 1.0.0 source promotion |
+| Master register | [Issue #18](https://github.com/ItsFoxxin/Fox_Den_Media/issues/18) — **OPEN**; 1.0.0 **NO-GO**. Historical prose within this register is not proof of its latest source version |
+| **Integrated release source (R1–R5, NOT dispatched)** | R1/R2 metadata, immutable lock foundation [PR #79](https://github.com/ItsFoxxin/Fox_Den_Media/pull/79); R3 candidate publisher/R4 signed v2 consumer [PR #81](https://github.com/ItsFoxxin/Fox_Den_Media/pull/81); independent A/C security producer [PR #84](https://github.com/ItsFoxxin/Fox_Den_Media/pull/84), B verifier [PR #93](https://github.com/ItsFoxxin/Fox_Den_Media/pull/93) and finite-decimal fix [PR #95](https://github.com/ItsFoxxin/Fox_Den_Media/pull/95); R5 manual publication gate [PR #80](https://github.com/ItsFoxxin/Fox_Den_Media/pull/80). **All named source PRs merged to `dev`**, not permission to run their workflows. R6 production remains an independent approval boundary |
+| Current candidate hosted CI | [Monorepo](https://github.com/ItsFoxxin/Fox_Den_Media/actions/runs/43310773853), [CodeQL](https://github.com/ItsFoxxin/Fox_Den_Media/actions/runs/43310774108), [advisory Trivy](https://github.com/ItsFoxxin/Fox_Den_Media/actions/runs/43310773890) succeeded for observed `460cd507...` source; **PASS IN CI only**, not real image scan, verified R4 security review, runtime PASS or owner acceptance |
+| Historical NAS | Test51/Test57 used **older** code and images; their evidence is context only. Never attach their mount paths, credentials, project names, volumes or container instances to the new test. No new exact-SHA copied-state acceptance has been established |
+| Distinct security blockers | [#76 unresolved actual HIGH/CRITICAL image-CVE disposition](https://github.com/ItsFoxxin/Fox_Den_Media/issues/76); [#83 authentic R4 digest-security producer and A/B/C real-provenance acceptance](https://github.com/ItsFoxxin/Fox_Den_Media/issues/83); [F-03 reusable owner GO and partial-publication authorization](ghcr-publisher.md); [F-04 independent monotonic lifecycle continuity](release-publication-r5.md). Source implementations do not resolve actual release-security authorization |
+| Operator references | [Earlier detailed NAS checklist](nas-current-dev-acceptance.md), [release checklist](release-1.0-checklist.md), [readiness](production-readiness.md), [compatibility](production-compatibility-0.9.md), [migration](production-migration-rehearsal.md), [recovery](recovery.md) |
 
-**Freshness:** Every future rehearsal must record the *actual* approved commit, root `VERSION`,
-Compose profile, immutable per-image digests, environment configuration identifier and
-test timestamp. Recompute acceptance impact if `dev`, Compose, image digests, database
-schema, IdP settings or third-party images change. Historical PR CI is useful but does
-not transfer a runtime PASS to a new SHA. Do not edit or check off the independent
-[release checklist](release-1.0-checklist.md) from this planning PR.
+**Observed candidate ≠ authorized test freeze ≠ OWNER ACCEPTED.** A0 can inventory the current host and candidate deployment topology without freezing an executable rehearsal commit. For any later copied-state run, obtain a new explicit source/image/config/rollback approval and retain the exact commit in each result. If `dev` advances, do not silently relabel previous evidence as current.
 
 ### Evidence state machine (not interchangeable)
 
@@ -43,13 +41,79 @@ rather than silently passing. A suspected vulnerability belongs in the private
 
 ## 2. Operator authorization, inventory and evidence contract
 
-**Approval requests, in order (not yet granted):**
+### Initial A0 — read-only host inventory (separate approval; no deployment)
 
-1. **A0 / inventory:** explicit read-only NAS inspection scope, target, operator and evidence handling.
-2. **A1 / copied state:** explicitly approve source-writer quiescence, consistent backup and media/torrent snapshots, isolation root, ownership checks, copied-state transfer and empty-target recovery. An inventory approval alone does not authorize a copy or stop.
-3. **A2 / isolated execution:** approve a NEW named Compose project, unique ports, read/write test-only mount allowlist, image digests, new credentials, client access, test window, local/out-of-band recovery owner and reversible test failures. Never reuse Test51/Test57/production services or writable paths.
-4. **A3 / disruptive rehearsal:** separately approve test-only identity manipulation, intentional tunnel break, qBittorrent state changes, injected filesystem errors and stop/restore/rollback. No production tracker/peer contact without separate permission.
-5. **A4 / acceptance:** owner explicitly accepts each result and the source-bound readiness report. Source promotion, GHCR publication, tag/Release and **production NAS GO** each require later independent approvals; A4 grants none of them.
+**Purpose:** learn the actual host/storage, existing writers, snapshot and
+recovery capabilities, without altering the NAS. A0 is an inventory visit,
+**not** permission to create a test environment. The operator first obtains
+the owner's explicit authorization identifying host, read-only account,
+permitted inspection scope, operator, collection window and confidential
+report destination. No access has been granted or exercised by this PR.
+
+**A0 procedure when authorized** (review the source and CLI on an approved
+operator workstation; inspect only metadata needed for planning):
+
+1. Record source candidate SHA, `VERSION`, UTC time, NAS OS/architecture,
+   Docker/Compose versions, active project/container names, images/digests,
+   stopped/running states, service relationships and health as observations
+   only. Inspect no raw container environment or secrets.
+2. Record **sanitized** mount/volume *identities* and RO/RW modes, unique
+   filesystem IDs, capacity/free space, ACL and numeric UID/GID requirements,
+   `/dev/dri` availability if relevant, and all current writers (including
+   SQLite databases, worker inbox/staging, Jellyfin and torrent appdata).
+   Identify cross-project or shared paths **privately**, never in public PRs.
+3. Inventory available backup/snapshot locations, external dependencies and
+   reverse-proxy / Authentik / VPN / client boundaries **without** logging in
+   as clients or probing credentials. Verify old Test51/Test57/production
+   objects are labelled **EXCLUDED / NEVER REUSE**.
+4. Where approved, run the existing
+   [sanitized host inventory](production-migration-rehearsal.md) with its
+   private `--output` pointing to an operator-controlled, preexisting
+   confidential report location **outside all NAS application/state mounts**.
+   The report-file write is not a volume/service modification; if no safe
+   private output location exists, record `BLOCKED` and do not substitute
+   an operational path.
+5. Privately review and hash the redacted report, compare candidate profiles,
+   expected mount owners and available disk to the real host, flag missing
+   sources/writers, and propose — **do not create** — unique future
+   rehearsal project, empty copy roots, backup destinations and port ranges.
+
+**A0 prohibitions:** no new/start/stop/restart/recreate containers; no
+`docker compose up`, `pull`, `build`, `down`, `exec` into live
+services, image download or update; no create/attach/delete volumes,
+directories or bind mounts in NAS state; no changing ACLs/UID/GID,
+environment, firewall, routing, VPN, Authentik, Jellyfin, qBittorrent,
+databases or media; no service quiescence, credentials, test accounts,
+production traffic injection or Test51/Test57 replacement. Avoid commands
+that expand the full private Compose environment into logs. **STOP** if
+read-only scope cannot be maintained.
+
+**A0 artifacts:** `A01-inventory.json` (private, timestamped, SHA-bound to
+the observed candidate), redacted mount/port/writer matrix, exclusions,
+snapshot/storage capability, permission observations, unresolved questions
+and operator + owner record. A0 can be **PASS as inventory completeness**
+without any application case reaching **PASS IN ISOLATED NAS**. A0
+authorization/collection is **PENDING / NOT PERFORMED**.
+
+### Later approvals — separate, not inherited from A0
+
+1. **A1 / copied state:** independently approve each required live-writer
+   quiescence, consistent database/appdata backup, SHA-256 verification,
+   large-media/torrent snapshots and copying data to new empty isolated roots.
+   A0 grants no stop, backup, snapshot or copying authority.
+2. **A2 / isolated startup:** separately authorize an explicitly frozen source
+   SHA, reviewed image digests, a **NEW uniquely named** Compose project,
+   non-overlapping test-only mounts/ports/credentials, isolated client access,
+   operator window and out-of-band recovery. Do not reuse Test51, Test57,
+   legacy managed stack or production objects.
+3. **A3 / disruptive rehearsal:** separately authorize synthetic download/import,
+   scoped permission failures, temporary test-identity manipulation, actual
+   controlled VPN tunnel interruption, qBittorrent recovery and test-only
+   rollback/failure injection. Include an onsite/out-of-band recovery owner.
+4. **A4 / acceptance:** owner independently reviews each PASS/FAIL/BLOCKED,
+   exact frozen source/image identities, private artifacts and residual risks.
+   Source promotion, GHCR publication, tag/GitHub Release and production NAS
+   cutover all require **later independent authorizations**; A4 grants none.
 
 **Isolation STOP rules:** Unknown/shared writable mount, preexisting Compose project/container/port,
 active unaccounted writer, insufficient or unverified backup, any unplanned production
@@ -94,7 +158,7 @@ test name before elevating a case to `PASS IN CI`. Procedures are proposed,
 
 | Case / issue | Prerequisite and operator procedure **after authorization** | Required PASS / explicit FAIL condition | Existing synthetic implementation evidence | Real evidence artifact **still required — NOT TESTED** | Preserved-state risk / rollback boundary; approval |
 | --- | --- | --- | --- | --- | --- |
-| **A01: source, inventory, isolation** · #18 | A0: freeze reviewed SHA and actual image refs; read-only host/container, mounts, filesystem, UID/GID, external auth/proxy, qBittorrent and Jellyfin inventory; A2: verify isolated project/ports and no shared write mounts | SHA, images, ACL/mount/port matrix and writers reconciled; FAIL on missing writer, path overlap, placeholder/untested image | Sanitizing host and hardware inventory fixtures, Compose validations | `A01-inventory.json`, SHA/digest map, authorized operator signoff, redacted isolation diff | Read-only first; no state changes. **A0** for inventory; **A2** separately for test layout. See [NAS inventory](nas-inventory-checklist.md), [compatibility](production-compatibility-0.9.md) |
+| **A01: A0-only read-only inventory / later isolation** · #18 | **A0 approval only:** record exact observed 0.9.9 candidate SHA and host/container/image/volume/mount/UID/ACL/writer/backup-capacity metadata, privately exclude Test51/Test57/production; **do not** create/start/stop any container, download image, create volume, copy state, modify service or run credentials. **A2 only later:** examine the separately approved unique isolated project/ports and no shared write mounts | A0 PASS means complete, traceable, nonmutating inventory and explicit excluded paths, **NOT application runtime PASS**; FAIL/BLOCK on unknown writer, missing access scope or unsafe data exposure | Sanitizing inventory fixtures and Compose profile validation exist in CI | **NOT TESTED A0:** `A01-inventory.json`, SHA/version, privately redacted mount/port/writer/inventory hash, operator scope/approval, explicit exclusions and missing facts | **A0 read-only; minimal metadata exposure**. Stop inspection if it risks mutating the host; A1 backup/copy and A2 test startup require distinct approvals. [Inventory](nas-inventory-checklist.md) |
 | **A02: consistent backup** · #18 | A1/A3: enumerate every Portal/Music/Media/Jellyfin/qBittorrent writer, SQLite WAL/SHM, secrets/config/plugins/browser appdata; quiesce only authorized state; separately snapshot large media/torrent payloads; archive and verify SHA-256 | Consistent small-state archive + external and per-file hashes + protected large-data snapshot; FAIL if a writer persists or a file/hash is missing | Backup-plan, manifest and corruption-rejection fixtures | `A02-writer-stop.json`, `A02-backup-verify.json`, immutable archive and media snapshot manifest/checksums | **High**: live state and user history. Quiesce/backup only under **A1/A3**, no in-place restoration; follow [migration rehearsal](production-migration-rehearsal.md) |
 | **A03: empty-target restore** · #18 | A1/A3: restore verified archive into a different *empty* test-only root; compare checksums, permissions, SQLite integrity, user counts, payload mounts; boot compatible copies only afterward | Byte/state match and no original writes; FAIL on nonempty destination, missing WAL/data, schema mismatch or corrupt hash | Empty-root, no-overwrite and rollback fixture tests | `A03-restore.json` + before/after SHA-256 and test-only startup proof | **High**: database overwrite/history. Stop test writers and restore **only another empty copy** under **A3**; see [recovery](recovery.md) |
 | **B01: secret ownership RB-01** · #18 / merged [#20](https://github.com/ItsFoxxin/Fox_Den_Media/pull/20) | A2/A3: audit actual numeric UID:GID/ACLs, test-only private secret bind reads, explicit opt-in `init --apply-permissions` and `--check-service-owners` | Portal/Music/Media/Jellyfin reads work at scoped 0600 owner-only mode; no secret rotated, world-readable or shared media ownership changed | CI covers opt-in scoped creation/ownership and validation | `B01-owner-audit.json`, secret **hash only**, numeric stat before/after and service status | **High**: secret loss or shared ACL mutation. Provision *only approved test leaves*; revert metadata from snapshot, not global chown. **A3** |
@@ -112,7 +176,7 @@ test name before elevating a case to `PASS IN CI`. Procedures are proposed,
 | **G02: Intel N100 transcoding (if selected)** · #18 | A0 inventory; A2/A3: confirm render/video numeric device groups, reviewed opt-in hardware override and actual media transcode on copied state while observing VA-API/QSV and resource usage | Working stream backed by *observed* hardware decoder/encoder usage, acceptable playback/seek; FAIL on `/dev/dri` existence or FFmpeg advertised support alone. If hardware disabled, owner explicitly signs off `NOT APPLICABLE` with software-playback evidence | Device/identity discovery only; no real transcode proof | `G02-n100.json`, sanitized session/log and GPU/CPU usage with source, digest, device/group IDs | **Medium**: device mapping/performance. Drop override or stop test-only stream; no host driver changes. **A2/A3**; [N100 validation](n100-hardware-validation.md) |
 | **G03: clients and outage recovery** · #18 | A2: on approved desktop/mobile/TV clients test Portal, Music, Jellyfin direct play/seek/subtitles, Firefox mobile, logout and restart; simulate test-only Jellyfin/IdP/module outage | Authorized clients work, expected error/recovery and no token/admin leak; history and queued state persist after restart; FAIL on silent loss or unprotected fallback | HTTP/security/outage fixtures, not native real devices | `G03-clients.json`, redacted platform/version, fixture/media-session matrix, timestamps | **Medium/high**: user privacy/client state. Disable test route, restore copied DB if needed; no production client pointing at test secrets. **A2/A3** |
 | **H01: full rollback rehearsal** · #18 | A3: inject a test-only failure after successful backups, stop all new writers, preserve failing deployment, validate immutable archive/snapshot, restore to **third empty root**, run prior compatible images/config, test identity, media, seeding over VPN and Jellyfin history | No mixed-version writes, restored bytes/hashes/user counts and prior stack functions; record measured RTO/RPO. FAIL if unable to restore, keys or history lost or VPN bypass | Synthetic `rollback-rehearsal` empty-target fixture only | `H01-rollback.json`, restore hash diff, image IDs, operation timeline, measured RTO/RPO and signed reviewer | **Critical**: prior data. Stop new writers first; never use in-place overwrite, `down -v` or old image on new DB. **A3**, [recovery order](recovery.md) |
-| **H02: readiness and owner acceptance** · #18 | After all prior cases: source-bound private evidence index, version/CI checks, unresolved #23 cause/disposition and security #76, operator + owner review; run readiness report on reviewed evidence | Every required case has reviewable actual PASS or explicit owner-approved disposition; no unknown FAIL/BLOCKED; correct SHA; readiness tool output and separate source approval. **NO-GO** otherwise | Readiness schema validation and fail-closed fixtures | `H02-readiness.json` and human report, signed decision with exact SHA/image/Compose/risk references | **Release critical**: false readiness. Never close blocker on CI alone; no deployment by report generation. **A4 owner acceptance**, then **separate** source-promotion/publication/production decisions |
+| **H02: readiness and owner acceptance** · #18 | After authorized A0–A3 cases: source-bound private evidence, actual CI checks, #23 cause/disposition and separate security gates **#76**, **#83**, **F-03**, **F-04**; obtain independent operator/owner review and current owner-approved test freeze; use readiness schema on real evidence only | Every required case has actual reviewable real PASS or a properly authorized, explicit disposition; no unknown FAIL/BLOCKED, source/image mismatch or unapproved severe finding; **NO-GO** otherwise | Synthetic readiness/schema/fail-closed tests only. Merged R1–R5 source is **not** R3 images, R4 signed live review, R5 publication or A4 acceptance | **NOT TESTED:** `H02-readiness.json` and human report plus explicit source SHA, image/config hashes, separate recorded signoffs and real operator run references | **Release critical**: avoid false readiness and reused GO. No source/publish/deploy by report generation. **A4** and later separately scoped source-promotion, security, publication, production approvals |
 
 **Implementation reconciliation:** PRs [#19](https://github.com/ItsFoxxin/Fox_Den_Media/pull/19),
 [#20](https://github.com/ItsFoxxin/Fox_Den_Media/pull/20),
@@ -136,14 +200,9 @@ For #23 the actual historical `OSError` errno/operation/root cause are
 ## 4. Authorized operator order of operations (NOT a run log)
 
 Follow the **detailed** [NAS current-dev acceptance](nas-current-dev-acceptance.md)
-for scoped commands, and confirm each command still matches the **frozen test
-source** before execution; that document predates 0.9.6 and contains some stale
-"draft/not merged" statements for #37/#57/#62. This matrix's current GitHub
-merge facts supersede those older point-in-time labels, **not** their safety rules.
+for scoped commands, and confirm each command matches the **future owner-approved exact test source** before execution. That earlier checklist predates the current 0.9.9 integration and can contain stale "draft/not merged" status for #37/#57/#62; the current merged-source facts here supersede only those historical status labels, **not** its safety rules.
 
-1. **Read-only A0:** inspect the frozen source and CI; approve read-only inventory.
-   Create a redacted mount/port/writer/UID/digest comparison without rendering
-   full Compose JSON or secrets in a public terminal transcript.
+1. **Read-only A0:** request owner-scoped access to inspect current host and observed candidate metadata **without starting/stopping containers, pulling images, creating volumes, touching credentials, mounting or copying data, changing services or using Test51/Test57 objects**. Write sanitized inventory only to approved private operator report location, then propose (not create) isolation requirements.
 2. **Authorize A1/A2:** document mutually exclusive writable roots, test-only
    identities/ports and immutable backup target. Confirm an onsite operator has
    out-of-band access; source snapshot and copied state must never be co-writers.
@@ -176,9 +235,10 @@ git rev-parse HEAD
 cat VERSION
 python scripts/check_release.py
 
-# After A0: read-only approved inventory (output contains private topology)
+# After A0 approval only: read-only host observation (private output file ONLY
+# outside all NAS state/application mounts; no create/start/stop/pull/volume actions)
 python scripts/migration.py host-inventory --env APPROVED_PRIVATE_ENV \
-  --expected-mode full-managed --output PRIVATE_REPORT/host-inventory.json
+  --expected-mode full-managed --output APPROVED_OPERATOR_PRIVATE_REPORT/host-inventory.json
 
 # After A1/A3: backup planning is read-only; --execute writes, requires stopped writers
 python scripts/migration.py backup --env APPROVED_PRIVATE_ENV \
@@ -208,27 +268,78 @@ source CLI and paths. Some flags only parse when the real confidential
 environment is supplied; deliberate placeholders are expected to fail closed.
 An `--execute` flag must never be inferred from a successful dry-run.
 
-## 5. Dependency and handoff decisions
+## 5. Release-security boundaries and dependencies (distinct from NAS acceptance)
 
-**Pre-source GO:** all required A–H operational cases, real auth/session/browser,
-VPN resume/no-leak, data recovery, client checks, owner disposition of unknown #23
-root cause, and security issue #76 must be explicitly reviewed. The release
-[checklist](release-1.0-checklist.md) requires a signed readiness report tied to
-an exact `dev` SHA **before** independent `dev` → `main` source approval.
+**Present implementation, no live execution:** [R1/R2 #79](https://github.com/ItsFoxxin/Fox_Den_Media/pull/79),
+[R3/R4 v2 consumer #81](https://github.com/ItsFoxxin/Fox_Den_Media/pull/81),
+[A/C producer #84](https://github.com/ItsFoxxin/Fox_Den_Media/pull/84),
+[B verifier #93](https://github.com/ItsFoxxin/Fox_Den_Media/pull/93),
+[finite-decimal fix #95](https://github.com/ItsFoxxin/Fox_Den_Media/pull/95)
+and [R5 publication gate #80](https://github.com/ItsFoxxin/Fox_Den_Media/pull/80)
+are **merged source** at current `dev` `0.9.9`. The
+[artifact-first acceptance policy](release-1.0-checklist.md) is in `dev`
+through merged #63. This does **not** establish R3 OCI candidate publication,
+an attested real A/B/C review, a valid signed R4 result, an R5 tag/Release,
+an actual production deployment or an owner-approved test baseline.
 
-**Post-source GO:** R3 first-party GHCR candidate image digests are generated
-**after** approved promotion to `main`, followed by R4 verified/signed lock and
-separate R5 publication decision. Do **not** require those final R3/R4 digests
-to authorize pre-promotion copied-state tests. Conversely, source GO does
-**not** approve image publication or cutover. Before production NAS changes,
-a **new independent** owner GO must identify the release-lock digest,
-production target, operator, maintenance window, fresh final backup and
-rollback owner. See [release checklist](release-1.0-checklist.md).
+**Four security prerequisites MUST remain independent of this operational map:**
+
+- **[#76 — image CVEs](https://github.com/ItsFoxxin/Fox_Den_Media/issues/76):**
+  real locked-image HIGH/CRITICAL finding inventory and individually verified
+  fixed/not-affected dispositions; neither advisory Trivy workflow success
+  nor an A0/NAS check proves image security.
+- **[#83 — trusted evidence producer](https://github.com/ItsFoxxin/Fox_Den_Media/issues/83):**
+  producer/independent verifier source is merged but real exact-digest
+  provenance, owner-controlled protected-environment/signer/trust settings,
+  authorized R3 → A collection → independent B human review → C finalization,
+  signed R4 acceptance and live owner-lifecycle proof remain unaccepted.
+- **[F-03 — reusable authorization/partial retry](ghcr-publisher.md)** and
+  [R5 publication GO reuse](release-publication-r5.md): existing source-/SHA-
+  scoped GO is **not guaranteed one-shot**. Partial candidate publication
+  or a stopped publication attempt may leave an authorization reusable.
+  Revoke/disable and independently review a scoped recovery plan; do
+  not silently re-dispatch or claim automatic single-use safeguards.
+- **[F-04 — lifecycle continuity](release-publication-r5.md):**
+  checking current GitHub variables, owner-signed lifecycle freshness,
+  expiry and revocation does **not** prove independently anchored monotonic
+  history against a coordinated rollback of owner-managed state. A separately
+  reviewed continuity anchor/mitigation is pending; no security waiver.
+
+These are **NOT a reason to block A0 read-only inventory** when A0 itself is
+separately approved; they **do** block any assertion of completed release
+security, protected release publications or final 1.0.0 GO. Do not
+fold them into #23/#27/#37/#57/#62 runtime case closure, clear them
+through synthetic CI, weaken the controls or mark them accepted by this PR.
+
+**Pre-promotion operational GO:** A0 metadata alone is insufficient.
+When owner authorizes A1–A3, freeze the **actual** reviewed SHA/image/config,
+complete consistent copied-state backup/empty restore, real VPN fail-closed,
+Auth/OIDC/live WebSocket, browser, Jellyfin/user history, client and rollback
+checks with redacted artifact hashes. Resolve or explicitly disposition #23
+and retain #76/#83/F-03/F-04 as independent release-security NO-GO until
+their own evidence/decisions. Obtain signed owner acceptance **before**
+separately approved `dev` → `main` source promotion.
+
+**Post-promotion sequence (not authorized):** only after separate source GO
+and successful promotion to an immutable `main` release source should
+R3 create GHCR candidates; R4 consumes independently authenticated and
+dispositioned A/B/C evidence and finalizes the signed locked manifest;
+R5 separately verifies it at publication. **No final first-party R3/R4
+digests are prerequisite for A0 or pre-source copied-state testing.**
+An entirely new, independent R6/NAS production GO must identify exact
+release-lock digest, target, operator, maintenance window, fresh final
+backup and rollback owner. See [release checklist](release-1.0-checklist.md),
+[R3/R4 producer](ghcr-digest-security-producer.md),
+[R3/R4 verifier](ghcr-publisher.md),
+[R5 publication](release-publication-r5.md), and
+[production/publication boundary](production-publication-boundary.md).
 
 **Next authorization owner:** repository owner through Coordinator; **next
 execution owner:** expressly assigned NAS operator only after A0–A3 approvals.
 The documentation Worker has not accessed any NAS, test project, credential,
 VPN tunnel, state copy, browser session or production service.
 
-**Current release result at publication of this document: 1.0.0 NO-GO.
-All new isolated NAS runtime cases: NOT TESTED. Owner acceptance: NOT GRANTED.**
+**Current integration result (2026-11-12): `0.9.9` unaccepted candidate;
+1.0.0 NO-GO. A0 inventory: NOT PERFORMED. All new isolated NAS runtime
+cases: NOT TESTED. Owner acceptance: NOT GRANTED. No live R3/R4/R5 release
+publication or production operation is claimed.**
