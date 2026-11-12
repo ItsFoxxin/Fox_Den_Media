@@ -548,17 +548,31 @@ class SignedEnvelopeTests(unittest.TestCase):
         self.root = Path(self.tmp.name)
         make_bundle(self.root)
         self.manifest_digest = R5.hash_file(self.root / "release-ready.json")
+        self.r4_run = {
+            "id": R4, "run_attempt": 1,
+            "repository": {"full_name": R5.REPOSITORY},
+            "path": R5.R4_WORKFLOW, "head_branch": "main",
+            "head_sha": SHA, "event": "workflow_dispatch",
+            "status": "completed", "conclusion": "success",
+        }
 
-    def attestation(self, digest=None):
-        return json.dumps([{"verificationResult": {
-            "statement": {"subject": [{"digest": {"sha256":
-                digest if digest is not None else self.manifest_digest}}]}}}])
+    def attestation(self, digest=None, invocation=None):
+        invocation = invocation or (
+            "https://github.com/" + R5.REPOSITORY +
+            "/actions/runs/" + str(R4) + "/attempts/1")
+        return json.dumps([{"verificationResult": {"statement": {
+            "subject": [{"digest": {"sha256":
+                digest if digest is not None else self.manifest_digest}}],
+            "predicate": {"runDetails": {"metadata": {
+                "invocationId": invocation,
+            }}},
+        }}}])
 
     def test_verified_signature_requires_exact_repo_workflow_source(self):
         with patch.object(R5, "run_command", side_effect=[
             "gh version 2.102.0 (synthetic)\n", self.attestation()
         ]) as run:
-            R5.verify_signed_release_ready(self.root, SHA, R4)
+            R5.verify_signed_release_ready(self.root, SHA, R4, run=self.r4_run)
         cmd = run.call_args_list[1].args[0]
         self.assertEqual(cmd[:3], ["gh", "attestation", "verify"])
         for flag, required in (
@@ -577,23 +591,31 @@ class SignedEnvelopeTests(unittest.TestCase):
                 with patch.object(R5, "run_command", side_effect=[
                     "gh version 2.102.0\n", response,
                 ]), self.assertRaises(R5.ReleaseBlocked):
-                    R5.verify_signed_release_ready(self.root, SHA, R4)
+                    R5.verify_signed_release_ready(self.root, SHA, R4, run=self.r4_run)
+
+    def test_r4_signed_manifest_rejects_other_run_attempt(self):
+        with patch.object(R5, "run_command", side_effect=[
+            "gh version 2.102.0\n",
+            self.attestation(invocation="https://github.com/" + R5.REPOSITORY +
+                             "/actions/runs/" + str(R4) + "/attempts/2"),
+        ]), self.assertRaises(R5.ReleaseBlocked):
+            R5.verify_signed_release_ready(self.root, SHA, R4, run=self.r4_run)
 
     def test_untrusted_attestation_verifier_failure_fails(self):
         with patch.object(R5, "run_command", side_effect=[
             "gh version 2.102.0\n",
             R5.ReleaseBlocked("untrusted signer or missing signature"),
         ]), self.assertRaises(R5.ReleaseBlocked):
-            R5.verify_signed_release_ready(self.root, SHA, R4)
+            R5.verify_signed_release_ready(self.root, SHA, R4, run=self.r4_run)
 
     def test_vulnerable_gh_or_missing_manifest_fails(self):
         for version in ("gh version 2.101.0\n", "gh version unknown\n"):
             with patch.object(R5, "run_command", return_value=version):
                 with self.assertRaises(R5.ReleaseBlocked):
-                    R5.verify_signed_release_ready(self.root, SHA, R4)
+                    R5.verify_signed_release_ready(self.root, SHA, R4, run=self.r4_run)
         (self.root / "release-ready.json").unlink()
         with self.assertRaises(R5.ReleaseBlocked):
-            R5.verify_signed_release_ready(self.root, SHA, R4)
+            R5.verify_signed_release_ready(self.root, SHA, R4, run=self.r4_run)
 
 
 
