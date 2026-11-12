@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ItsFoxxin/Fox_Den_Media/blob/dev/docs/r4-r5-release-ready-v1.schema.json",
+  "title": "Fox Den Media R4 -> R5 signed release-ready manifest v1",
+  "description": "Canonical file release-ready.json inside artifact foxden-r4-release-ready-v1.0.0. Its exact bytes require a GitHub SLSA attestation signed by ghcr-verify.yml on the approved main SHA.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "version",
+    "repository",
+    "workflow",
+    "source_sha",
+    "r3_run_id",
+    "r4_run_id",
+    "files"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "foxden.r4.release-ready.v1"
+    },
+    "version": {
+      "const": "1.0.0"
+    },
+    "repository": {
+      "const": "ItsFoxxin/Fox_Den_Media"
+    },
+    "workflow": {
+      "const": ".github/workflows/ghcr-verify.yml"
+    },
+    "source_sha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "r3_run_id": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "r4_run_id": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "files": {
+      "type": "object",
+      "minProperties": 7,
+      "propertyNames": {
+        "pattern": "^(release-lock\\.json|verification\\.json|release-notes\\.md|security-contract\\.json|scanner\\.json|rendered-release-compose\\.json|(?:reports|provenance|integration)/[A-Za-z0-9_.-]+\\.json)$"
+      },
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "required": [
+        "release-lock.json",
+        "verification.json",
+        "release-notes.md",
+        "security-contract.json",
+        "scanner.json",
+        "rendered-release-compose.json"
+      ]
+    }
+  }
+}

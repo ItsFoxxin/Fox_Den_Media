@@ -1,0 +1,243 @@
+name: Fox Den Media — manually approved GitHub Release (R5)
+
+# R5 ONLY: no push/tag/release/package triggers and NO production deployment.
+# This workflow is intentionally unusable until R3/R4 and the protected
+# release-publication environment are independently approved/configured.
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact approved 40-character main commit SHA (VERSION=1.0.0)
+        type: string
+        required: true
+      r4_run_id:
+        description: Successful signed ghcr-verify.yml R4 run ID
+        type: string
+        required: true
+      approval_issue:
+        description: Independent owner approval issue number (required for publication)
+        type: string
+        required: true
+      publish:
+        description: Publish v1.0.0 after independent environment approval (false = evidence-only preflight)
+        type: boolean
+        default: false
+        required: true
+      confirmation:
+        description: For publishing, enter PUBLISH v1.0.0 exactly
+        type: string
+        required: false
+
+permissions: {}
+concurrency:
+  group: foxden-r5-publish-v1.0.0
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    name: Verify release readiness without mutation
+    if: github.ref == 'refs/heads/main' && github.repository == 'ItsFoxxin/Fox_Den_Media'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: read
+      checks: read
+      issues: read
+      packages: read
+      attestations: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SOURCE_SHA: ${{ inputs.source_sha }}
+      R4_RUN_ID: ${{ inputs.r4_run_id }}
+      # Read-only preview uses the current owner-managed repository variables.
+      SECURITY_DISPOSITION_TRUST_B64: ${{ vars.SECURITY_DISPOSITION_TRUST_B64 }}
+      SECURITY_DISPOSITION_LIFECYCLE_B64: ${{ vars.SECURITY_DISPOSITION_LIFECYCLE_B64 }}
+      SECURITY_DISPOSITION_LIFECYCLE_SIG_B64: ${{ vars.SECURITY_DISPOSITION_LIFECYCLE_SIG_B64 }}
+      SECURITY_DISPOSITION_LIFECYCLE_SHA256: ${{ vars.SECURITY_DISPOSITION_LIFECYCLE_SHA256 }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+      - name: Validate main source, required checks, open blockers and R4 run
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/check_release.py
+          python -m scripts.release_publication live --source-sha "$SOURCE_SHA" --r4-run-id "$R4_RUN_ID"
+      - name: Require patched gh CLI before any artifact download
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh_version="$(gh --version | sed -n '1{s/.* version //;s/ .*//;p;}')"
+          # Reuse the merged R3 policy gate: reject unknown or <2.102.0.
+          python scripts/ghcr_digest_security.py check-gh-version "$gh_version"
+      - name: Download exact approved R4 evidence (never build)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Always extract into a fresh private directory, not the worktree.
+          staging="$(mktemp -d "${RUNNER_TEMP}/r5-r4.XXXXXXXX")"
+          trap 'rm -rf -- "$staging"' EXIT
+          gh run download "$R4_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name foxden-r4-release-ready-v1.0.0 --dir "$staging"
+          python -m scripts.release_publication extracted \
+            --source-sha "$SOURCE_SHA" --r4-run-id "$R4_RUN_ID" \
+            --evidence-dir "$staging"
+          test ! -e release-evidence && test ! -L release-evidence
+          mv -- "$staging" release-evidence
+          trap - EXIT
+      - name: Verify signed R4 root manifest, evidence and policy status
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m scripts.release_publication bundle --source-sha "$SOURCE_SHA" --r4-run-id "$R4_RUN_ID"
+          python scripts/release_lock.py release-evidence/release-lock.json \
+            --compose deploy/compose.yaml \
+            --rendered release-evidence/rendered-release-compose.json \
+            --source-sha "$SOURCE_SHA"
+      - name: Revalidate independently signed security dispositions (preview)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # This is the PR #93 verifier, not a second scanner or approval source.
+          python -m pip install cryptography==50.0.2
+          python -m scripts.release_publication dispositions \
+            --source-sha "$SOURCE_SHA" --r4-run-id "$R4_RUN_ID"
+      - name: Verify published GHCR manifest identities and signed provenance/SBOM
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          python -m scripts.release_publication registry --source-sha "$SOURCE_SHA" --r4-run-id "$R4_RUN_ID"
+          docker logout ghcr.io
+      - name: Carry verified evidence to the gated publisher
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: r5-validated-evidence
+          path: release-evidence/
+          retention-days: 1
+          if-no-files-found: error
+
+  publish:
+    name: Independently approved GitHub Release only
+    needs: preflight
+    if: inputs.publish == true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    # REQUIRED SETUP: environment restricted to main with required reviewers,
+    # plus an environment-only RELEASE_PUBLICATION_ARMED secret.
+    # If unconfigured, this job MUST fail and cannot publish.
+    environment:
+      name: release-publication
+    permissions:
+      contents: write
+      actions: read
+      checks: read
+      issues: read
+      packages: read
+      attestations: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SOURCE_SHA: ${{ inputs.source_sha }}
+      R4_RUN_ID: ${{ inputs.r4_run_id }}
+      APPROVAL_ISSUE: ${{ inputs.approval_issue }}
+      CONFIRMATION: ${{ inputs.confirmation }}
+      RELEASE_PUBLICATION_ARMED: ${{ secrets.RELEASE_PUBLICATION_ARMED }}
+      # Protection-gated read-only credential, scoped to repository Variables: read.
+      # Unlike job-start 'vars', it lets R5 reject supersession/revocation
+      # that happens between the earlier R4 and current publication approval.
+      SECURITY_DISPOSITION_STATE_READ_TOKEN: ${{ secrets.SECURITY_DISPOSITION_STATE_READ_TOKEN }}
+      SECURITY_DISPOSITION_TRUST_B64: ${{ vars.SECURITY_DISPOSITION_TRUST_B64 }}
+      SECURITY_DISPOSITION_LIFECYCLE_B64: ${{ vars.SECURITY_DISPOSITION_LIFECYCLE_B64 }}
+      SECURITY_DISPOSITION_LIFECYCLE_SIG_B64: ${{ vars.SECURITY_DISPOSITION_LIFECYCLE_SIG_B64 }}
+      SECURITY_DISPOSITION_LIFECYCLE_SHA256: ${{ vars.SECURITY_DISPOSITION_LIFECYCLE_SHA256 }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+      - name: Enforce explicit publication intent and configured environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$CONFIRMATION" != "PUBLISH v1.0.0" || "$RELEASE_PUBLICATION_ARMED" != "enabled" ]]; then
+            echo "::error::Explicit publication confirmation or protected release environment configuration is missing"
+            exit 1
+          fi
+      - name: Require patched gh CLI before any artifact download
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh_version="$(gh --version | sed -n '1{s/.* version //;s/ .*//;p;}')"
+          # Reuse the merged R3 policy gate: reject unknown or <2.102.0.
+          python scripts/ghcr_digest_security.py check-gh-version "$gh_version"
+      - name: Retrieve verified evidence from this exact workflow run
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Independently re-extract and inspect; preflight job is not
+          # authority for unvalidated bytes in this protected publishing job.
+          staging="$(mktemp -d "${RUNNER_TEMP}/r5-publish.XXXXXXXX")"
+          trap 'rm -rf -- "$staging"' EXIT
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name r5-validated-evidence --dir "$staging"
+          python -m scripts.release_publication extracted \
+            --source-sha "$SOURCE_SHA" --r4-run-id "$R4_RUN_ID" \
+            --evidence-dir "$staging"
+          test ! -e release-evidence && test ! -L release-evidence
+          mv -- "$staging" release-evidence
+          trap - EXIT
+      - name: Revalidate latest main, statuses, R4 evidence and owner comment
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/check_release.py
+          python -m scripts.release_publication bundle --source-sha "$SOURCE_SHA" --r4-run-id "$R4_RUN_ID"
+          python scripts/release_lock.py release-evidence/release-lock.json \
+            --compose deploy/compose.yaml \
+            --rendered release-evidence/rendered-release-compose.json \
+            --source-sha "$SOURCE_SHA"
+          python -m scripts.release_publication approval --source-sha "$SOURCE_SHA" \
+            --r4-run-id "$R4_RUN_ID" --approval-issue "$APPROVAL_ISSUE"
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          python -m scripts.release_publication registry --source-sha "$SOURCE_SHA" --r4-run-id "$R4_RUN_ID"
+          docker logout ghcr.io
+          mkdir -p release-assets
+          python -m scripts.release_publication assets --source-sha "$SOURCE_SHA" \
+            --r4-run-id "$R4_RUN_ID"
+      - name: Reauthenticate current reviewer trust, revocations and publication GO
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install cryptography==50.0.2
+          # CURRENT owner variables are re-read via GitHub's Variables API
+          # using an environment-only credential; stale or changed means NO-GO.
+          python -m scripts.release_publication dispositions \
+            --source-sha "$SOURCE_SHA" --r4-run-id "$R4_RUN_ID" \
+            --approval-issue "$APPROVAL_ISSUE" --final
+      - name: Create immutable annotated tag and GitHub Release from verified assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          # A race or existing tag is a hard failure. No force push, tag move,
+          # rebuild, GHCR retag or production access in this workflow.
+          gh auth setup-git
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git tag -a v1.0.0 "$SOURCE_SHA" -m "Fox Den Media v1.0.0 — separately approved immutable release"
+          git push origin refs/tags/v1.0.0
+          gh release create v1.0.0 release-assets/* \
+            --repo "$GITHUB_REPOSITORY" --verify-tag --target "$SOURCE_SHA" \
+            --title 'Fox Den Media v1.0.0' \
+            --notes-file release-evidence/release-notes.md
+          test "$(gh release view v1.0.0 --repo "$GITHUB_REPOSITORY" \
+            --json tagName --jq '.tagName')" = v1.0.0
+          echo "GitHub Release published; NO NAS deployment was triggered."

@@ -24,7 +24,7 @@ The earlier stacked PR/rename steps are retained for provenance in [historical m
 
 ## Production change approval
 
-Complete the following milestones **in order**. This PR proposes a policy change; until it is explicitly approved and merged, the existing release acceptance order remains authoritative. No approval is implied by CI or by another milestone.
+Complete the following milestones **in order**. The artifact-first policy was approved and merged into `dev` in [PR #63](https://github.com/ItsFoxxin/Fox_Den_Media/pull/63). **The workflow order is now policy, but every unchecked acceptance and authorization gate remains mandatory.** No source-promotion, release-publication or NAS-production approval is implied by the policy merge, successful CI or another milestone.
 
 ### 1. Pre-promotion operational acceptance and source authorization
 
