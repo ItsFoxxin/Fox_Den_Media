@@ -68,7 +68,7 @@ jobs:
         run: |
           set -euo pipefail
           python scripts/check_release.py
-          python scripts/release_publication.py live --source-sha "$SOURCE_SHA" --r4-run-id "$R4_RUN_ID"
+          python -m scripts.release_publication live --source-sha "$SOURCE_SHA" --r4-run-id "$R4_RUN_ID"
       - name: Require patched gh CLI before any artifact download
         shell: bash
         run: |
@@ -85,7 +85,7 @@ jobs:
           trap 'rm -rf -- "$staging"' EXIT
           gh run download "$R4_RUN_ID" --repo "$GITHUB_REPOSITORY" \
             --name foxden-r4-release-ready-v1.0.0 --dir "$staging"
-          python scripts/release_publication.py extracted \
+          python -m scripts.release_publication extracted \
             --source-sha "$SOURCE_SHA" --r4-run-id "$R4_RUN_ID" \
             --evidence-dir "$staging"
           test ! -e release-evidence && test ! -L release-evidence
@@ -95,7 +95,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python scripts/release_publication.py bundle --source-sha "$SOURCE_SHA" --r4-run-id "$R4_RUN_ID"
+          python -m scripts.release_publication bundle --source-sha "$SOURCE_SHA" --r4-run-id "$R4_RUN_ID"
           python scripts/release_lock.py release-evidence/release-lock.json \
             --compose deploy/compose.yaml \
             --rendered release-evidence/rendered-release-compose.json \
@@ -106,14 +106,14 @@ jobs:
           set -euo pipefail
           # This is the PR #93 verifier, not a second scanner or approval source.
           python -m pip install cryptography==50.0.2
-          python scripts/release_publication.py dispositions \
+          python -m scripts.release_publication dispositions \
             --source-sha "$SOURCE_SHA" --r4-run-id "$R4_RUN_ID"
       - name: Verify published GHCR manifest identities and signed provenance/SBOM
         shell: bash
         run: |
           set -euo pipefail
           printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
-          python scripts/release_publication.py registry --source-sha "$SOURCE_SHA" --r4-run-id "$R4_RUN_ID"
+          python -m scripts.release_publication registry --source-sha "$SOURCE_SHA" --r4-run-id "$R4_RUN_ID"
           docker logout ghcr.io
       - name: Carry verified evidence to the gated publisher
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -189,7 +189,7 @@ jobs:
           trap 'rm -rf -- "$staging"' EXIT
           gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" \
             --name r5-validated-evidence --dir "$staging"
-          python scripts/release_publication.py extracted \
+          python -m scripts.release_publication extracted \
             --source-sha "$SOURCE_SHA" --r4-run-id "$R4_RUN_ID" \
             --evidence-dir "$staging"
           test ! -e release-evidence && test ! -L release-evidence
@@ -200,18 +200,18 @@ jobs:
         run: |
           set -euo pipefail
           python scripts/check_release.py
-          python scripts/release_publication.py bundle --source-sha "$SOURCE_SHA" --r4-run-id "$R4_RUN_ID"
+          python -m scripts.release_publication bundle --source-sha "$SOURCE_SHA" --r4-run-id "$R4_RUN_ID"
           python scripts/release_lock.py release-evidence/release-lock.json \
             --compose deploy/compose.yaml \
             --rendered release-evidence/rendered-release-compose.json \
             --source-sha "$SOURCE_SHA"
-          python scripts/release_publication.py approval --source-sha "$SOURCE_SHA" \
+          python -m scripts.release_publication approval --source-sha "$SOURCE_SHA" \
             --r4-run-id "$R4_RUN_ID" --approval-issue "$APPROVAL_ISSUE"
           printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
-          python scripts/release_publication.py registry --source-sha "$SOURCE_SHA" --r4-run-id "$R4_RUN_ID"
+          python -m scripts.release_publication registry --source-sha "$SOURCE_SHA" --r4-run-id "$R4_RUN_ID"
           docker logout ghcr.io
           mkdir -p release-assets
-          python scripts/release_publication.py assets --source-sha "$SOURCE_SHA" \
+          python -m scripts.release_publication assets --source-sha "$SOURCE_SHA" \
             --r4-run-id "$R4_RUN_ID"
       - name: Reauthenticate current reviewer trust, revocations and publication GO
         shell: bash
@@ -220,7 +220,7 @@ jobs:
           python -m pip install cryptography==50.0.2
           # CURRENT owner variables are re-read via GitHub's Variables API
           # using an environment-only credential; stale or changed means NO-GO.
-          python scripts/release_publication.py dispositions \
+          python -m scripts.release_publication dispositions \
             --source-sha "$SOURCE_SHA" --r4-run-id "$R4_RUN_ID" \
             --approval-issue "$APPROVAL_ISSUE" --final
       - name: Create immutable annotated tag and GitHub Release from verified assets
