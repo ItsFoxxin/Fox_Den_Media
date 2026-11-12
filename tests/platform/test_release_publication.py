@@ -1183,8 +1183,87 @@ class R5ArtifactExtractionAndWorkflowOrderTests(unittest.TestCase):
             self.assertGreater(download, gate, job_name)
             self.assertIn('check-gh-version "$gh_version"', job[gate:download])
             self.assertIn('mktemp -d "', job[gate:download])
-            self.assertIn("release_publication.py extracted", job[gate:])
+            self.assertIn("scripts.release_publication extracted", job[gate:])
             self.assertIn("mv -- \"$staging\" release-evidence", job)
+
+
+
+class R5CleanEnvironmentCliTests(unittest.TestCase):
+    """Run the supported R5 workflow entrypoint in a clean child interpreter.
+
+    Loading release_publication through importlib/pytest alone cannot prove
+    that its imports resolve when launched as a GitHub Actions CLI command.
+    """
+
+    @staticmethod
+    def invoke(*arguments):
+        env = os.environ.copy()
+        env.pop("PYTHONPATH", None)
+        env["PYTHONNOUSERSITE"] = "1"
+        env["PYTHONDONTWRITEBYTECODE"] = "1"
+        return subprocess.run(
+            [sys.executable, "-m", "scripts.release_publication", *arguments],
+            cwd=ROOT, env=env, capture_output=True, text=True,
+            check=False, timeout=30,
+        )
+
+    def test_module_help_without_pythonpath(self):
+        result = self.invoke("--help")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("usage:", result.stdout.lower())
+        self.assertIn("--source-sha", result.stdout)
+        self.assertIn("--r4-run-id", result.stdout)
+        self.assertIn("extracted", result.stdout)
+        self.assertIn("dispositions", result.stdout)
+        self.assertNotIn("ModuleNotFoundError", result.stderr)
+        self.assertNotIn("ImportError", result.stderr)
+
+    def test_extracted_cli_dispatch_succeeds_and_fails_closed_without_pythonpath(self):
+        with tempfile.TemporaryDirectory(prefix="r5-cli-fixture-") as td:
+            evidence = Path(td) / "isolated"
+            evidence.mkdir()
+            args = (
+                "extracted", "--source-sha", SHA, "--r4-run-id", str(R4),
+                "--evidence-dir", str(evidence),
+            )
+            # Extraction validation is structural only. This harmless fixture
+            # does not substitute for later signed R4 bundle verification.
+            (evidence / "release-ready.json").write_text("{}\\n", encoding="utf-8")
+            good = self.invoke(*args)
+            self.assertEqual(good.returncode, 0, good.stderr)
+            self.assertIn("R5 extracted checks passed", good.stdout)
+            self.assertNotIn("ModuleNotFoundError", good.stderr)
+
+            (evidence / "release-ready.json").unlink()
+            missing = self.invoke(*args)
+            self.assertNotEqual(missing.returncode, 0)
+            self.assertIn("R5 BLOCKED:", missing.stderr)
+            self.assertNotIn("ModuleNotFoundError", missing.stderr)
+
+    def test_every_workflow_r5_entrypoint_uses_module_execution(self):
+        workflow = (ROOT / ".github/workflows/release-publish.yml").read_text(
+            encoding="utf-8")
+        self.assertNotIn("python scripts/release_publication.py", workflow)
+        sections = re.split(r"(?m)^  (preflight|publish):\\s*$", workflow)
+        expected = {
+            "preflight": ("live", "extracted", "bundle",
+                          "dispositions", "registry"),
+            "publish": ("extracted", "bundle", "approval",
+                        "registry", "assets", "dispositions"),
+        }
+        commands = re.findall(
+            r"(?m)^\\s*python(?:3)?\\s+(?:-m\\s+scripts\\.release_publication|"
+            r"scripts/release_publication\\.py)\\s+(\\w+)", workflow)
+        self.assertEqual(len(commands), sum(map(len, expected.values())))
+        for job, required_commands in expected.items():
+            index = sections.index(job)
+            section = sections[index + 1]
+            seen = re.findall(
+                r"(?m)^\\s*python -m scripts\\.release_publication\\s+(\\w+)",
+                section,
+            )
+            self.assertEqual(tuple(seen), required_commands, job)
+
 
 
 class ExternalGateTests(unittest.TestCase):
