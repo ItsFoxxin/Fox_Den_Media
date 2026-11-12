@@ -633,13 +633,72 @@ class DispositionContractRuntimeTests(unittest.TestCase):
         self.scan_id = self.document["scan_run_id"]
         self.review_id = self.summary["disposition"]["binding"]["review_run_id"]
 
-    def mock_run(self, ident, workflow):
+    def mock_run(self, ident, workflow, *, at="2026-11-01T00:00:00Z",
+                 actor="scan-producer", inputs=None):
         return {
             "id": ident, "repository": {"full_name": R5.REPOSITORY},
             "head_branch": "main", "head_sha": SHA, "event": "workflow_dispatch",
             "path": workflow, "status": "completed", "conclusion": "success",
-            "run_attempt": 1, "actor": {"login": "scan-producer"},
+            "run_attempt": 1, "actor": {"login": actor},
+            "created_at": at, "inputs": inputs or {"source_sha": SHA},
         }
+
+    def chain_runs(self):
+        a, b, c = self.scan_id, self.review_id, 56789
+        ids = {"publisher_run_id": str(R3), "scan_run_id": str(a),
+               "review_run_id": str(b)}
+        return {
+            R3: self.mock_run(R3, R5.CHAIN_R3),
+            a: self.mock_run(a, R5.SCAN_WORKFLOW,
+                             at="2026-11-02T00:00:00Z",
+                             inputs={"source_sha": SHA, "stage": "collect",
+                                     "publisher_run_id": str(R3)}),
+            b: self.mock_run(b, R5.REVIEW_WORKFLOW,
+                             at="2026-11-03T00:00:00Z",
+                             actor="independent-reviewer",
+                             inputs={"source_sha": SHA, "r3_run_id": str(R3),
+                                     "scan_run_id": str(a)}),
+            c: self.mock_run(c, R5.SCAN_WORKFLOW,
+                             at="2026-11-04T00:00:00Z",
+                             inputs={"source_sha": SHA, "stage": "finalize", **ids}),
+            R4: self.mock_run(R4, R5.R4_WORKFLOW,
+                              at="2026-11-05T00:00:00Z",
+                              inputs={"source_sha": SHA,
+                                      "security_run_id": str(c), **ids}),
+        }
+
+    def assert_chain(self, runs):
+        R5.authenticated_chain(
+            source_sha=SHA, r4_run=runs[R4], r3_run=runs[R3],
+            scan_run=runs[self.scan_id], review_run=runs[self.review_id],
+            final_run=runs[56789], r3_id=R3, scan_id=self.scan_id,
+            review_id=self.review_id, final_id=56789,
+        )
+
+    def test_authenticate_complete_r3_a_b_c_r4_chain(self):
+        self.assert_chain(self.chain_runs())
+
+    def test_reject_stale_misordered_or_wrong_stage_chain(self):
+        for ident, field, altered in (
+            (R4, "inputs", {"source_sha": SHA, "publisher_run_id": str(R3),
+                             "scan_run_id": str(self.scan_id),
+                             "review_run_id": str(self.review_id),
+                             "security_run_id": "8"}),
+            (56789, "inputs", {"source_sha": SHA, "stage": "collect",
+                               "publisher_run_id": str(R3),
+                               "scan_run_id": str(self.scan_id),
+                               "review_run_id": str(self.review_id)}),
+            (self.review_id, "created_at", "2026-10-29T00:00:00Z"),
+            (R3, "head_sha", "0" * 40),
+            (self.scan_id, "inputs", {"source_sha": SHA, "stage": "finalize",
+                                      "publisher_run_id": str(R3)}),
+            (self.review_id, "actor", {"login": "scan-producer"}),
+        ):
+            with self.subTest(ident=ident, field=field):
+                runs = self.chain_runs()
+                runs[ident][field] = altered
+                with self.assertRaises(R5.ReleaseBlocked):
+                    self.assert_chain(runs)
 
     def test_disposition_workflow_run_source_and_identity_must_match(self):
         good = self.mock_run(self.review_id, R5.REVIEW_WORKFLOW)
@@ -743,10 +802,7 @@ class DispositionContractRuntimeTests(unittest.TestCase):
             R5.owner_disposition_state(latest=True)
 
     def test_live_recheck_runs_original_cli_and_rejects_revoked_review(self):
-        scans = {
-            self.scan_id: self.mock_run(self.scan_id, R5.SCAN_WORKFLOW),
-            self.review_id: self.mock_run(self.review_id, R5.REVIEW_WORKFLOW),
-        }
+        scans = self.chain_runs()
         old_result = self.summary["disposition"]["result"]
         context = {
             "source_sha": SHA, "r3_run_id": R3, "scan_run_id": self.scan_id,
@@ -759,12 +815,21 @@ class DispositionContractRuntimeTests(unittest.TestCase):
         def runner(command, *, output=False):
             if command[:3] == ["gh", "run", "download"]:
                 dst = Path(command[command.index("--dir") + 1])
+                artifact = command[command.index("--name") + 1]
                 (dst / "context.json").write_text(json.dumps(context))
                 for file in ("release-lock.json", "scanner.json"):
                     shutil.copyfile(self.root / file, dst / file)
                 (dst / "vulnerability-exceptions.json").write_bytes(
                     (ROOT / "security/vulnerability-exceptions.json").read_bytes())
                 shutil.copytree(self.root / "reports", dst / "reports")
+                if artifact == "ghcr-security-contract-v2":
+                    for file in ("security-contract.json",
+                                 "rendered-release-compose.json"):
+                        shutil.copyfile(self.root / file, dst / file)
+                    (dst / "review").mkdir()
+                    shutil.copyfile(
+                        self.root / "integration/disposition-verification.json",
+                        dst / "review/disposition-verification.json")
             if "-m" in command and "scripts.verify_security_dispositions" in command:
                 out = Path(command[command.index("--output") + 1])
                 out.write_text(json.dumps(dict(
