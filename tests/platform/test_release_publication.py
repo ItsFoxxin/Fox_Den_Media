@@ -10,6 +10,9 @@ import os
 import hashlib
 import importlib.util
 import json
+import re
+import subprocess
+import sys
 import shutil
 from pathlib import Path
 import tempfile
@@ -965,6 +968,225 @@ class DispositionContractRuntimeTests(unittest.TestCase):
 
 
 
+
+class R5RequiredCheckProvenanceTests(unittest.TestCase):
+    """Synthetic API payloads; no external GitHub accounts or approval."""
+
+    @staticmethod
+    def authentic():
+        return [
+            {"id": i + 100, "name": name, "head_sha": SHA,
+             "status": "completed", "conclusion": "success",
+             "app": {"id": R5.PROTECTED_MAIN_CHECK_APPS[name]}}
+            for i, name in enumerate(R5.REQUIRED_CHECKS)
+        ]
+
+    def test_all_four_apps_and_newest_run_pass(self):
+        runs = self.authentic()
+        # A newer genuine check replaces a previous failing attempt.
+        runs.append(dict(runs[0], id=200, conclusion="success"))
+        payload = {"total_count": len(runs), "check_runs": runs}
+        R5.validate_checks(payload, SHA)
+
+    def test_wrong_or_missing_app_rejected(self):
+        for app in (None, {}, {"id": 57789}, {"id": "15368"},
+                    {"id": True}):
+            with self.subTest(app=app):
+                runs = self.authentic()
+                runs[0]["app"] = app
+                with self.assertRaises(R5.ReleaseBlocked):
+                    R5.validate_checks(
+                        {"total_count": len(runs), "check_runs": runs}, SHA)
+
+    def test_newer_failed_or_untrusted_run_cannot_be_hidden(self):
+        for status, conclusion, app in (
+            ("completed", "failure", 15368),
+            ("completed", "cancelled", 15368),
+            ("completed", "skipped", 15368),
+            ("queued", None, 15368),
+            ("completed", "success", 57789),
+        ):
+            with self.subTest(status=status, conclusion=conclusion, app=app):
+                runs = self.authentic()
+                runs.append(dict(
+                    runs[0], id=999, status=status, conclusion=conclusion,
+                    app={"id": app}))
+                with self.assertRaises(R5.ReleaseBlocked):
+                    R5.validate_checks(
+                        {"total_count": len(runs), "check_runs": runs}, SHA)
+
+    def test_malformed_duplicate_truncated_and_wrong_sha_rejected(self):
+        valid = self.authentic()
+        mutants = [
+            (valid + [dict(valid[0])], len(valid) + 1),
+            ([dict(valid[0], id=0)] + valid[1:], len(valid)),
+            ([dict(valid[0], id="100")] + valid[1:], len(valid)),
+            ([dict(valid[0], id=True)] + valid[1:], len(valid)),
+            ([dict(valid[0], head_sha="0" * 40)] + valid[1:], len(valid)),
+            ([dict(valid[0], name="untrusted")] + valid[1:], len(valid)),
+            (valid[:-1], len(valid)),
+            (valid, len(valid) + 1),
+            (valid, "4"),
+        ]
+        for runs, count in mutants:
+            with self.subTest(count=count, runs=runs), self.assertRaises(
+                R5.ReleaseBlocked
+            ):
+                R5.validate_checks(
+                    {"total_count": count, "check_runs": runs}, SHA)
+
+    def test_filter_all_complete_109_checks_across_two_api_pages(self):
+        checks = self.authentic() + [
+            {"id": 1000 + i, "name": "other-context-" + str(i),
+             "head_sha": SHA, "status": "completed", "conclusion": "success"}
+            for i in range(105)
+        ]
+        requests = []
+        def fake_api(path):
+            requests.append(path)
+            self.assertIn("filter=all&per_page=100&page=", path)
+            page = int(path.rsplit("page=", 1)[1])
+            return {"total_count": len(checks),
+                    "check_runs": checks[(page-1)*100:page*100]}
+        with patch.object(R5, "api", side_effect=fake_api):
+            result = R5.fetch_all_check_runs(SHA)
+        self.assertEqual(result["total_count"], 109)
+        self.assertEqual(len(result["check_runs"]), 109)
+        self.assertEqual(len(requests), 2)
+        self.assertTrue(requests[0].endswith("page=1"))
+        self.assertTrue(requests[1].endswith("page=2"))
+
+    def test_api_pagination_fails_closed_for_partial_drift_and_duplicate(self):
+        base = self.authentic() + [
+            {"id": 500 + i, "name": "other-" + str(i),
+             "head_sha": SHA, "status": "completed", "conclusion": "success"}
+            for i in range(102)
+        ]
+        first = {"total_count": 106, "check_runs": base[:100]}
+        cases = [
+            {"total_count": 106, "check_runs": base[100:-1]},
+            {"total_count": 107, "check_runs": base[100:]},
+            {"total_count": 106, "check_runs": base[:6]},
+            {"total_count": "106", "check_runs": base[100:]},
+            {"total_count": 106, "check_runs": base[100:] + [base[100]]},
+        ]
+        for page_two in cases:
+            with self.subTest(page_two=page_two), patch.object(
+                R5, "api", side_effect=[first, page_two]
+            ), self.assertRaises(R5.ReleaseBlocked):
+                R5.fetch_all_check_runs(SHA)
+        duplicate = dict(base[100], id=base[0]["id"])
+        with patch.object(R5, "api", side_effect=[
+            first, {"total_count": 106, "check_runs": [duplicate] + base[101:]}
+        ]), self.assertRaises(R5.ReleaseBlocked):
+            R5.fetch_all_check_runs(SHA)
+
+    def test_live_and_final_approval_both_query_full_check_history(self):
+        checks = self.authentic() + [
+            {"id": 2000 + i, "name": "unrelated-" + str(i),
+             "head_sha": SHA, "status": "completed", "conclusion": "success"}
+            for i in range(101)
+        ]
+        calls = []
+        def fake_api(path, **kwargs):
+            calls.append(path)
+            if "/check-runs?" in path:
+                page = int(path.rsplit("page=", 1)[1])
+                return {"total_count": len(checks),
+                        "check_runs": checks[(page-1)*100:page*100]}
+            if path.endswith("/branches/main"):
+                return {"commit": {"sha": SHA}}
+            if path.endswith("/issues/18"):
+                return {"number": 18, "state": "closed", "pull_request": None}
+            if path.endswith("/actions/runs/" + str(R4)):
+                return {"id": R4, "repository": {"full_name": R5.REPOSITORY},
+                        "path": R5.R4_WORKFLOW, "event": "workflow_dispatch",
+                        "head_branch": "main", "head_sha": SHA,
+                        "status": "completed", "conclusion": "success",
+                        "updated_at": "2026-11-12T00:00:00Z"}
+            if path.endswith("/issues/123"):
+                return {"number": 123, "state": "open"}
+            if "/git/ref/tags/" in path or "/releases/tags/" in path:
+                return None
+            raise AssertionError("unexpected synthetic API request: " + path)
+        with patch.dict(os.environ, {
+            "GITHUB_REPOSITORY": R5.REPOSITORY,
+            "GITHUB_REF": "refs/heads/main",
+            "GITHUB_SHA": SHA,
+        }), patch.object(R5.Path, "read_text", return_value="1.0.0"), patch.object(
+            R5, "validate_adopted_policy"
+        ), patch.object(R5, "api", side_effect=fake_api), patch.object(
+            R5, "pages", return_value=[]
+        ), patch.object(R5, "validate_approval") as approval:
+            R5.live_check(SHA, R4)
+            R5.live_check(SHA, R4, approval_issue=123,
+                          lock_sha="f" * 64, require_approval=True)
+            approval.assert_called_once()
+        requests = [path for path in calls if "/check-runs?" in path]
+        self.assertEqual(len(requests), 4)
+        self.assertTrue(all("filter=all" in path for path in requests))
+
+
+class R5ArtifactExtractionAndWorkflowOrderTests(unittest.TestCase):
+    def test_extraction_accepts_normal_signed_bundle_and_rejects_symlinks(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "isolated"
+            root.mkdir()
+            make_bundle(root)
+            R5.validate_extracted_artifact(root)
+            (root / "integration" / "evil.json").symlink_to(
+                root / "release-ready.json")
+            with self.assertRaises(R5.ReleaseBlocked):
+                R5.validate_extracted_artifact(root)
+
+    def test_extraction_rejects_unsafe_paths_and_missing_manifest(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "isolated"
+            root.mkdir()
+            (root / "release-ready.json").write_text("{}")
+            bad = root / ".hidden.json"
+            bad.write_text("{}")
+            with self.assertRaises(R5.ReleaseBlocked):
+                R5.validate_extracted_artifact(root)
+            bad.unlink()
+            (root / "release-ready.json").unlink()
+            with self.assertRaises(R5.ReleaseBlocked):
+                R5.validate_extracted_artifact(root)
+
+    def test_old_invalid_and_supported_cli_versions(self):
+        from scripts.ghcr_digest_security import check_gh_cli_version
+        for version in ("2.102.0", "2.103.7"):
+            check_gh_cli_version(version)
+        for version in ("2.101.99", "unknown", "2.102", "2.102.0.1",
+                        "2.102.0-rc1", ""):
+            with self.subTest(version=version), self.assertRaises(ValueError):
+                check_gh_cli_version(version)
+        # Exercise the command executed before both workflow downloads.
+        for version, success in (("2.102.0", True), ("2.101.9", False),
+                                 ("garbage", False)):
+            completed = subprocess.run([
+                sys.executable, str(ROOT / "scripts/ghcr_digest_security.py"),
+                "check-gh-version", version,
+            ], capture_output=True, text=True, cwd=ROOT, check=False)
+            self.assertEqual(completed.returncode == 0, success)
+
+    def test_each_gh_run_download_follows_early_cli_gate_in_same_job(self):
+        source = (ROOT / ".github/workflows/release-publish.yml").read_text()
+        self.assertEqual(source.count("gh run download"), 2)
+        sections = re.split(r"(?m)^  (preflight|publish):\s*$", source)
+        for job_name in ("preflight", "publish"):
+            idx = sections.index(job_name)
+            job = sections[idx + 1]
+            gate = job.find("- name: Require patched gh CLI before any artifact download")
+            download = job.find("gh run download")
+            self.assertGreaterEqual(gate, 0, job_name)
+            self.assertGreater(download, gate, job_name)
+            self.assertIn('check-gh-version "$gh_version"', job[gate:download])
+            self.assertIn('mktemp -d "', job[gate:download])
+            self.assertIn("release_publication.py extracted", job[gate:])
+            self.assertIn("mv -- \"$staging\" release-evidence", job)
+
+
 class ExternalGateTests(unittest.TestCase):
     def test_r4_workflow_identity_matches_r3_r4_workstream(self):
         self.assertEqual(R5.R4_WORKFLOW, ".github/workflows/ghcr-verify.yml")
@@ -986,10 +1208,11 @@ class ExternalGateTests(unittest.TestCase):
 
     def test_required_checks_all_success(self):
         items = {"check_runs": [
-            {"name": name, "status": "completed",
-             "conclusion": "success", "head_sha": SHA}
-            for name in R5.REQUIRED_CHECKS
-        ]}
+            {"id": index + 1, "name": name, "status": "completed",
+             "conclusion": "success", "head_sha": SHA,
+             "app": {"id": R5.PROTECTED_MAIN_CHECK_APPS[name]}}
+            for index, name in enumerate(R5.REQUIRED_CHECKS)
+        ], "total_count": len(R5.REQUIRED_CHECKS)}
         R5.validate_checks(items, SHA)
         for index in range(len(items["check_runs"])):
             test = json.loads(json.dumps(items))
@@ -999,19 +1222,28 @@ class ExternalGateTests(unittest.TestCase):
 
     def test_missing_stale_or_skipped_checks_fail(self):
         checks = {"check_runs": [
-            {"name": name, "status": "completed",
-             "conclusion": "success", "head_sha": SHA}
-            for name in R5.REQUIRED_CHECKS
-        ]}
+            {"id": index + 1, "name": name, "status": "completed",
+             "conclusion": "success", "head_sha": SHA,
+             "app": {"id": R5.PROTECTED_MAIN_CHECK_APPS[name]}}
+            for index, name in enumerate(R5.REQUIRED_CHECKS)
+        ], "total_count": len(R5.REQUIRED_CHECKS)}
         with self.assertRaises(R5.ReleaseBlocked):
-            R5.validate_checks({"check_runs": checks["check_runs"][:2]}, SHA)
+            R5.validate_checks(
+                {"check_runs": checks["check_runs"][:2], "total_count": 2},
+                SHA)
         checks["check_runs"][0]["head_sha"] = "0" * 40
         with self.assertRaises(R5.ReleaseBlocked):
             R5.validate_checks(checks, SHA)
         checks["check_runs"][0]["head_sha"] = SHA
-        checks["check_runs"][0]["conclusion"] = "skipped"
-        with self.assertRaises(R5.ReleaseBlocked):
-            R5.validate_checks(checks, SHA)
+        for status, conclusion in (
+            ("completed", "skipped"), ("in_progress", None),
+            ("completed", "cancelled"),
+        ):
+            with self.subTest(status=status, conclusion=conclusion):
+                check = json.loads(json.dumps(checks))
+                check["check_runs"][0].update(status=status, conclusion=conclusion)
+                with self.assertRaises(R5.ReleaseBlocked):
+                    R5.validate_checks(check, SHA)
 
     def test_existing_release_tag_or_release_blocks_publication(self):
         R5.validate_release_absence(None, None)
