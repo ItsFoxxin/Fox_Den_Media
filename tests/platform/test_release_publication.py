@@ -1228,7 +1228,7 @@ class R5CleanEnvironmentCliTests(unittest.TestCase):
             )
             # Extraction validation is structural only. This harmless fixture
             # does not substitute for later signed R4 bundle verification.
-            (evidence / "release-ready.json").write_text("{}\\n", encoding="utf-8")
+            (evidence / "release-ready.json").write_text("{}\n", encoding="utf-8")
             good = self.invoke(*args)
             self.assertEqual(good.returncode, 0, good.stderr)
             self.assertIn("R5 extracted checks passed", good.stdout)
@@ -1244,7 +1244,7 @@ class R5CleanEnvironmentCliTests(unittest.TestCase):
         workflow = (ROOT / ".github/workflows/release-publish.yml").read_text(
             encoding="utf-8")
         self.assertNotIn("python scripts/release_publication.py", workflow)
-        sections = re.split(r"(?m)^  (preflight|publish):\\s*$", workflow)
+        sections = re.split(r"(?m)^  (preflight|publish):\s*$", workflow)
         expected = {
             "preflight": ("live", "extracted", "bundle",
                           "dispositions", "registry"),
@@ -1252,14 +1252,14 @@ class R5CleanEnvironmentCliTests(unittest.TestCase):
                         "registry", "assets", "dispositions"),
         }
         commands = re.findall(
-            r"(?m)^\\s*python(?:3)?\\s+(?:-m\\s+scripts\\.release_publication|"
-            r"scripts/release_publication\\.py)\\s+(\\w+)", workflow)
+            r"(?m)^\s*python(?:3)?\s+(?:-m\s+scripts\.release_publication|"
+            r"scripts/release_publication\.py)\s+(\w+)", workflow)
         self.assertEqual(len(commands), sum(map(len, expected.values())))
         for job, required_commands in expected.items():
             index = sections.index(job)
             section = sections[index + 1]
             seen = re.findall(
-                r"(?m)^\\s*python -m scripts\\.release_publication\\s+(\\w+)",
+                r"(?m)^\s*python -m scripts\.release_publication\s+(\w+)",
                 section,
             )
             self.assertEqual(tuple(seen), required_commands, job)
