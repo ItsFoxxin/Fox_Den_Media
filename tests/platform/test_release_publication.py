@@ -946,6 +946,22 @@ class DispositionContractRuntimeTests(unittest.TestCase):
         ), self.assertRaises(R5.ReleaseBlocked):
             R5.revalidate_current_dispositions(
                 self.root, self.summary, SHA, latest=True)
+        def tampered_final(command, *, output=False):
+            result = runner(command, output=output)
+            if (command[:3] == ["gh", "run", "download"]
+                    and command[command.index("--name") + 1]
+                    == "ghcr-security-contract-v2"):
+                dst = Path(command[command.index("--dir") + 1])
+                (dst / "security-contract.json").write_bytes(
+                    b'{"schema_version":1,"tampered":true}')
+            return result
+        with patch.object(R5, "api", side_effect=mock_api), patch.object(
+            R5, "verify_attested_review_file"
+        ), patch.object(R5, "owner_disposition_state", return_value=state), patch.object(
+            R5, "run_command", side_effect=tampered_final
+        ), self.assertRaisesRegex(R5.ReleaseBlocked, "Final C"):
+            R5.revalidate_current_dispositions(
+                self.root, self.summary, SHA, latest=True)
 
 
 
