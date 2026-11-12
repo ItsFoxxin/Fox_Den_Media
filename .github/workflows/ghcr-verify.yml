@@ -1,0 +1,469 @@
+name: GHCR digest verification (R4; fail-closed)
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: 'Exact approved immutable main commit'
+        required: true
+        type: string
+      publisher_run_id:
+        description: 'Successful R3 run with three candidate artifacts'
+        required: true
+        type: string
+      scan_run_id:
+        description: 'A: original signed scanner collection run'
+        required: true
+        type: string
+      review_run_id:
+        description: 'B: signed independent disposition review run'
+        required: true
+        type: string
+      security_run_id:
+        description: 'C: finalized signed security-contract v2 producer run'
+        required: true
+        type: string
+      acceptance_run_id:
+        description: 'Separately signed release-readiness/rollback evidence run'
+        required: true
+        type: string
+      source_approval_issue:
+        description: 'Issue holding authenticated source-promotion and rollback GO'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ghcr-r4-${{ inputs.source_sha }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify published digests without rebuilding
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    environment: security-disposition-review
+    permissions:
+      contents: read
+      actions: read
+      packages: read
+      issues: read
+      security-events: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+      - name: Prove exact main and source producer runs
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          PUBLISHER_RUN: ${{ inputs.publisher_run_id }}
+          SCAN_RUN: ${{ inputs.scan_run_id }}
+          REVIEW_RUN: ${{ inputs.review_run_id }}
+          SECURITY_RUN: ${{ inputs.security_run_id }}
+          ENABLED: ${{ vars.SECURITY_DISPOSITION_REVIEW_ENABLED }}
+          APPROVED_SHA: ${{ vars.SECURITY_DISPOSITION_APPROVED_SOURCE_SHA }}
+          ACCEPTANCE_RUN: ${{ inputs.acceptance_run_id }}
+          SOURCE_ISSUE: ${{ inputs.source_approval_issue }}
+        run: |
+          set -euo pipefail
+          # All artifact download and verifier commands need a patched gh CLI.
+          # gh <= 2.101.0 allowed prefix matches for --signer-workflow.
+          gh_version="$(gh --version | head -n1 | awk '{print $3}')"
+          python - "$gh_version" <<'PY'
+          import sys
+          try:
+              parts = tuple(int(x) for x in sys.argv[1].split(".")[:3])
+          except ValueError as exc:
+              raise SystemExit("Unknown gh version; fail closed") from exc
+          if parts < (2, 102, 0):
+              raise SystemExit("gh 2.102+ required for exact workflow signer validation")
+          PY
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$PUBLISHER_RUN" =~ ^[1-9][0-9]*$ ]]
+          [[ "$SCAN_RUN" =~ ^[1-9][0-9]*$ ]]
+          [[ "$REVIEW_RUN" =~ ^[1-9][0-9]*$ ]]
+          [[ "$SECURITY_RUN" =~ ^[1-9][0-9]*$ ]]
+          test "$SCAN_RUN" != "$REVIEW_RUN"
+          test "$REVIEW_RUN" != "$SECURITY_RUN"
+          test "$SCAN_RUN" != "$SECURITY_RUN"
+          test "$ENABLED" = true
+          test "$APPROVED_SHA" = "$SOURCE_SHA"
+          [[ "$ACCEPTANCE_RUN" =~ ^[1-9][0-9]*$ ]]
+          [[ "$SOURCE_ISSUE" =~ ^[1-9][0-9]*$ ]]
+          test "$GITHUB_SHA" = "$SOURCE_SHA"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')" = "$SOURCE_SHA"
+          gh api "repos/$GITHUB_REPOSITORY/environments/security-disposition-review" > "$RUNNER_TEMP/review-environment.json"
+          jq -e '.deployment_branch_policy.protected_branches == true and
+            ([.protection_rules[]? | select(.type == "required_reviewers" and
+            (.reviewers | type == "array" and length > 0))] | length > 0)' \
+            "$RUNNER_TEMP/review-environment.json" >/dev/null
+          gh api "repos/$GITHUB_REPOSITORY/branches/main" | jq -e '.protected == true' >/dev/null
+          for kind in publisher scan review security; do
+            case "$kind" in
+              publisher) run="$PUBLISHER_RUN"; workflow=".github/workflows/ghcr-candidates.yml" ;;
+              scan) run="$SCAN_RUN"; workflow=".github/workflows/trivy-digest-security.yml" ;;
+              review) run="$REVIEW_RUN"; workflow=".github/workflows/security-disposition-review.yml" ;;
+              security) run="$SECURITY_RUN"; workflow=".github/workflows/trivy-digest-security.yml" ;;
+            esac
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run" > "$RUNNER_TEMP/$kind-run.json"
+            jq -e --argjson id "$run" --arg repo "$GITHUB_REPOSITORY" \
+              --arg sha "$SOURCE_SHA" --arg path "$workflow" \
+              '.id == $id and .repository.full_name == $repo and
+               .head_sha == $sha and .head_branch == "main" and
+               .event == "workflow_dispatch" and .path == $path and
+               .status == "completed" and .conclusion == "success" and
+               (.actor.login | type == "string" and length > 0)' \
+              "$RUNNER_TEMP/$kind-run.json" >/dev/null
+          done
+          scan_actor="$(jq -er .actor.login "$RUNNER_TEMP/scan-run.json")"
+          review_actor="$(jq -er .actor.login "$RUNNER_TEMP/review-run.json")"
+          test "$scan_actor" != "$review_actor"
+          test "$(jq -er .created_at "$RUNNER_TEMP/scan-run.json")" \
+            \< "$(jq -er .created_at "$RUNNER_TEMP/review-run.json")"
+          test "$(jq -er .created_at "$RUNNER_TEMP/review-run.json")" \
+            \< "$(jq -er .created_at "$RUNNER_TEMP/security-run.json")"
+          echo "SCAN_ACTOR=github:$scan_actor" >> "$GITHUB_ENV"
+          # A separate successful, signed operational acceptance run is needed
+          # for final release notes and actual rollback verification.
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$ACCEPTANCE_RUN" \
+            > "$RUNNER_TEMP/acceptance-run.json"
+          jq -e --arg sha "$SOURCE_SHA" --argjson run "$ACCEPTANCE_RUN" \
+            --arg repo "$GITHUB_REPOSITORY" '
+              .id == $run and .repository.full_name == $repo and
+              .head_sha == $sha and .head_branch == "main" and
+              .event == "workflow_dispatch" and
+              .path == ".github/workflows/release-acceptance.yml" and
+              .status == "completed" and .conclusion == "success"
+            ' "$RUNNER_TEMP/acceptance-run.json"
+      - name: Download exact R3 candidate identities
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLISHER_RUN: ${{ inputs.publisher_run_id }}
+        run: |
+          set -euo pipefail
+          mkdir -p candidates
+          for name in portal music media; do
+            mkdir -p "candidates/$name"
+            gh run download "$PUBLISHER_RUN" \
+              --repo "$GITHUB_REPOSITORY" --name "ghcr-candidate-$name" \
+              --dir "candidates/$name"
+            test -s "candidates/$name/$name.json"
+            cp "candidates/$name/$name.json" "candidates/$name.json"
+          done
+      - name: Preserve approved source security policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p source-policy
+          git show HEAD:security/vulnerability-exceptions.json \
+            > source-policy/vulnerability-exceptions.json
+          test -s source-policy/vulnerability-exceptions.json
+      - name: Authenticate exact A B C signed artifact subjects
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SCAN_RUN: ${{ inputs.scan_run_id }}
+          REVIEW_RUN: ${{ inputs.review_run_id }}
+          SECURITY_RUN: ${{ inputs.security_run_id }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p scan-inputs review-evidence security
+          gh run download "$SCAN_RUN" --repo "$GITHUB_REPOSITORY" \
+            --name ghcr-security-contract-v2-inputs --dir scan-inputs
+          gh run download "$REVIEW_RUN" --repo "$GITHUB_REPOSITORY" \
+            --name security-disposition-review-v1 --dir review-evidence
+          gh run download "$SECURITY_RUN" --repo "$GITHUB_REPOSITORY" \
+            --name ghcr-security-contract-v2 --dir security
+          for file in scan-inputs/context.json scan-inputs/release-lock.json \
+                      scan-inputs/scanner.json scan-inputs/vulnerability-exceptions.json \
+                      review-evidence/security/disposition-verification.json \
+                      review-evidence/review/dispositions.json \
+                      review-evidence/review/signatures.json \
+                      security/security-contract.json security/release-lock.json \
+                      security/rendered-release-compose.json security/scanner.json \
+                      security/context.json security/vulnerability-exceptions.json \
+                      security/review/disposition-verification.json; do
+            test -s "$file"
+          done
+          test -d scan-inputs/reports
+          test -d security/reports
+          # A clean signed B review may have zero records and no proofs directory
+          # after artifact extraction. Proof completeness and absence of extras
+          # are checked against the authenticated review document at staging.
+          test "$(jq -er .schema_version security/security-contract.json)" = 2
+          # gh establishes exact OIDC signer/repo/source; the signed SLSA
+          # invocation binds the retrieved subject to the queried run ID.
+          verify_subject() {
+            local file="$1" run="$2" signer="$3" kind="$4"
+            local output attempt
+            attempt="$(jq -er .run_attempt "$RUNNER_TEMP/$kind-run.json")"
+            [[ "$attempt" =~ ^[1-9][0-9]*$ ]]
+            output="$RUNNER_TEMP/attested-$(basename "$file").$run.json"
+            gh attestation verify "$file" --repo "$GITHUB_REPOSITORY" \
+              --source-ref "refs/heads/main" --source-digest "$SOURCE_SHA" \
+              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/$signer" \
+              --format json > "$output"
+            python - "$output" "$file" "$run" "$GITHUB_REPOSITORY" "$attempt" <<'PY'
+          import hashlib
+          import json
+          import re
+          import sys
+          from pathlib import Path
+          entries = json.loads(Path(sys.argv[1]).read_text())
+          actual = hashlib.sha256(Path(sys.argv[2]).read_bytes()).hexdigest()
+          run, repo, attempt = sys.argv[3:]
+          invocation_id = "https://github.com/" + repo + "/actions/runs/" + run + "/attempts/" + attempt
+          def valid(entry):
+              result = entry.get("verificationResult", {})
+              statement = result.get("statement", {})
+              predicate = statement.get("predicate", {})
+              invocation = predicate.get("runDetails", {}).get("metadata", {}).get("invocationId")
+              subjects = statement.get("subject", [])
+              return (invocation == invocation_id and
+                      isinstance(subjects, list) and
+                      any(isinstance(x, dict) and
+                          x.get("digest", {}).get("sha256") == actual for x in subjects))
+          if not isinstance(entries, list) or not any(
+                  valid(entry) for entry in entries if isinstance(entry, dict)):
+              raise SystemExit("Signed subject not bound to authenticated A/B/C run")
+          PY
+          }
+          verify_subject scan-inputs/context.json "$SCAN_RUN" trivy-digest-security.yml scan
+          verify_subject review-evidence/security/disposition-verification.json \
+            "$REVIEW_RUN" security-disposition-review.yml review
+          for file in security/security-contract.json security/release-lock.json \
+                      security/rendered-release-compose.json security/scanner.json \
+                      security/context.json security/vulnerability-exceptions.json \
+                      security/review/disposition-verification.json; do
+            verify_subject "$file" "$SECURITY_RUN" trivy-digest-security.yml security
+          done
+      - name: Load owner-managed signed disposition lifecycle and reviewer trust
+        shell: bash
+        env:
+          TRUST_B64: ${{ vars.SECURITY_DISPOSITION_TRUST_B64 }}
+          LEDGER_B64: ${{ vars.SECURITY_DISPOSITION_LIFECYCLE_B64 }}
+          LEDGER_SIG_B64: ${{ vars.SECURITY_DISPOSITION_LIFECYCLE_SIG_B64 }}
+          LEDGER_SHA: ${{ vars.SECURITY_DISPOSITION_LIFECYCLE_SHA256 }}
+        run: |
+          set -euo pipefail
+          test -n "$TRUST_B64" && test -n "$LEDGER_B64" && test -n "$LEDGER_SIG_B64"
+          [[ "$LEDGER_SHA" =~ ^sha256:[0-9a-f]{64}$ ]]
+          mkdir -p governance
+          printf %s "$TRUST_B64" | base64 --decode > governance/disposition-trust.json
+          printf %s "$LEDGER_B64" | base64 --decode > governance/disposition-lifecycle.json
+          printf %s "$LEDGER_SIG_B64" | base64 --decode > governance/disposition-lifecycle.sig
+          test "sha256:$(sha256sum governance/disposition-lifecycle.json | cut -d' ' -f1)" = "$LEDGER_SHA"
+      - name: Download and independently authenticate acceptance receipts
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          ACCEPTANCE_RUN: ${{ inputs.acceptance_run_id }}
+        run: |
+          set -euo pipefail
+          mkdir -p acceptance
+          gh run download "$ACCEPTANCE_RUN" --repo "$GITHUB_REPOSITORY" \
+            --name foxden-release-acceptance-v1.0.0 --dir acceptance
+          cp "$RUNNER_TEMP/acceptance-run.json" acceptance/run.json
+          # Both receipts must be independently signed by the trusted
+          # separate acceptance workflow. A report saying "pass" is not a proof.
+          for file in acceptance/release-notes.md acceptance/rollback-report.json; do
+            test -s "$file"
+            gh attestation verify "$file" --repo "$GITHUB_REPOSITORY" \
+              --source-ref refs/heads/main --source-digest "$SOURCE_SHA" \
+              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release-acceptance.yml"
+          done
+      - name: Fetch live owner approvals and native security alert dispositions
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_ISSUE: ${{ inputs.source_approval_issue }}
+        run: |
+          set -euo pipefail
+          mkdir -p governance/alerts
+          gh api "repos/$GITHUB_REPOSITORY/issues/$SOURCE_ISSUE" \
+            > governance/source-issue.json
+          gh api --paginate --slurp \
+            "repos/$GITHUB_REPOSITORY/issues/$SOURCE_ISSUE/comments?per_page=100" \
+            | jq -e 'add // [] | select(type == "array")' \
+            > governance/comments.json
+          # Unavailable APIs or incomplete pagination are blocking, not
+          # permission to describe unknown native security alerts as clear.
+          for family in code-scanning dependabot secret-scanning; do
+            gh api --paginate --slurp \
+              "repos/$GITHUB_REPOSITORY/$family/alerts?state=open&per_page=100" \
+              | jq -e 'add // [] | select(type == "array")' \
+              > "governance/alerts/$family.json"
+          done
+      - name: Verify image provenance, registry identity and release policy
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          PUBLISHER_RUN: ${{ inputs.publisher_run_id }}
+        run: |
+          set -euo pipefail
+          python scripts/verify_image_security.py --contract security/security-contract.json \
+            --lock security/release-lock.json --evidence-dir security/reports \
+            --scanner-metadata security/scanner.json \
+            --policy source-policy/vulnerability-exceptions.json \
+            --candidates candidates --source-sha "$SOURCE_SHA" \
+            --publisher-run-id "$PUBLISHER_RUN"
+          python scripts/release_lock.py security/release-lock.json \
+            --compose deploy/compose.yaml \
+            --rendered security/rendered-release-compose.json \
+            --source-sha "$SOURCE_SHA"
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          lock = json.loads(Path("security/release-lock.json").read_text())
+          for component in ("portal", "music", "media"):
+              candidate = json.loads(Path(f"candidates/{component}.json").read_text())
+              assert lock["images"][component]["ref"] == (
+                  candidate["image"] + "@" + candidate["digest"]
+              ), "Candidate versus lock image drift"
+              assert lock["images"][component]["platform_digest"] == (
+                  candidate["platform_digest"].removeprefix("sha256:")
+              ), "Platform digest differs"
+          print("Candidate images match complete release lock")
+          PY
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io \
+            --username "$GITHUB_ACTOR" --password-stdin
+          mkdir -p provenance integration
+          for component in portal music media; do
+            image="$(jq -er .image "candidates/$component.json")"
+            digest="$(jq -er .digest "candidates/$component.json")"
+            gh attestation verify "oci://$image@$digest" \
+              --repo "$GITHUB_REPOSITORY" \
+              --source-ref "refs/heads/main" \
+              --source-digest "$SOURCE_SHA" \
+              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/ghcr-candidates.yml" \
+              --format json > "provenance/$component.json"
+            # R5 independently requires an R3-signed SPDX predicate, not
+            # only BuildKit's embedded SBOM or the PR #84 scanner report.
+            gh attestation verify "oci://$image@$digest" \
+              --repo "$GITHUB_REPOSITORY" \
+              --source-ref "refs/heads/main" \
+              --source-digest "$SOURCE_SHA" \
+              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/ghcr-candidates.yml" \
+              --predicate-type "https://spdx.dev/Document/v2.3"
+            # An existing mutable commit tag may not be trusted as a release identity.
+            # Refuse tag retargets rather than quietly accepting a mismatched digest.
+            tag_digest="$(docker buildx imagetools inspect "$image:sha-$SOURCE_SHA" \
+              --format '{{json .Manifest}}' | jq -er '.digest')"
+            test "$tag_digest" = "$digest" || {
+              echo "::error::Candidate commit tag was retargeted: $component"; exit 1;
+            }
+            docker buildx imagetools inspect "$image@$digest" --raw > "$RUNNER_TEMP/$component-oci.json"
+            test "$(jq -er '[.manifests[] | select(.platform.os == "linux" and .platform.architecture == "amd64") | .digest] | unique | length' "$RUNNER_TEMP/$component-oci.json")" = 1
+            test "$(jq -er '[.manifests[] | select(.platform.os == "linux" and .platform.architecture == "amd64") | .digest] | first' "$RUNNER_TEMP/$component-oci.json")" = "$(jq -er .platform_digest "candidates/$component.json")"
+          done
+          # The PR #84 producer authenticates all enabled upstream signers.
+          # Recheck them using its reviewed source-bound upstream ledger,
+          # retaining original signed verification results for R5.
+          for component in $(jq -r '.images | keys[] | select(. != "portal" and . != "music" and . != "media")' security/release-lock.json); do
+            ref="$(jq -er --arg name "$component" '.images[$name].ref' security/release-lock.json)"
+            signer_repo="$(jq -er --arg name "$component" '.upstream[$name].source_repo' security/upstream-provenance.json)"
+            signer_ref="$(jq -er --arg name "$component" '.upstream[$name].source_ref' security/upstream-provenance.json)"
+            signer_sha="$(jq -er --arg name "$component" '.upstream[$name].source_sha' security/upstream-provenance.json)"
+            signer_workflow="$(jq -er --arg name "$component" '.upstream[$name].signer_workflow' security/upstream-provenance.json)"
+            test "$ref" = "$(jq -er --arg name "$component" '.upstream[$name].ref' security/upstream-provenance.json)"
+            gh attestation verify "oci://$ref" --repo "$signer_repo" \
+              --source-ref "$signer_ref" --source-digest "$signer_sha" \
+              --signer-workflow "$signer_workflow" --format json \
+              > "provenance/$component.json"
+          done
+      - name: Run disposable integration using pulled digests only
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          set -euo pipefail
+          python -m scripts.no_rebuild_integration --lock security/release-lock.json \
+            --source-sha "$SOURCE_SHA" --r4-run-id "$GITHUB_RUN_ID" \
+            --report integration/no-rebuild.json
+      - name: Stage canonical R4 v1 release-ready bundle only after all gates pass
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          PUBLISHER_RUN: ${{ inputs.publisher_run_id }}
+          SCAN_RUN: ${{ inputs.scan_run_id }}
+          REVIEW_RUN: ${{ inputs.review_run_id }}
+          ACCEPTANCE_RUN: ${{ inputs.acceptance_run_id }}
+          SOURCE_ISSUE: ${{ inputs.source_approval_issue }}
+          LEDGER_SHA: ${{ vars.SECURITY_DISPOSITION_LIFECYCLE_SHA256 }}
+          TRUST_SNAPSHOT: ${{ vars.SECURITY_DISPOSITION_TRUST_B64 }}
+          LIFECYCLE_SNAPSHOT: ${{ vars.SECURITY_DISPOSITION_LIFECYCLE_B64 }}
+          SIGNATURE_SNAPSHOT: ${{ vars.SECURITY_DISPOSITION_LIFECYCLE_SIG_B64 }}
+          STATE_READ_TOKEN: ${{ secrets.SECURITY_DISPOSITION_STATE_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+          test "sha256:$(sha256sum governance/disposition-lifecycle.json | cut -d' ' -f1)" = "$LEDGER_SHA"
+          # Enforce the latest owner-published trust/lifecycle snapshot, not
+          # only a genuine but possibly replayed signed ledger under 24h old.
+          # A protected read-only credential is mandatory; absence fails closed.
+          test -n "$STATE_READ_TOKEN"
+          for name in SECURITY_DISPOSITION_TRUST_B64 \
+                      SECURITY_DISPOSITION_LIFECYCLE_B64 \
+                      SECURITY_DISPOSITION_LIFECYCLE_SIG_B64 \
+                      SECURITY_DISPOSITION_LIFECYCLE_SHA256; do
+            case "$name" in
+              SECURITY_DISPOSITION_TRUST_B64) expected="$TRUST_SNAPSHOT" ;;
+              SECURITY_DISPOSITION_LIFECYCLE_B64) expected="$LIFECYCLE_SNAPSHOT" ;;
+              SECURITY_DISPOSITION_LIFECYCLE_SIG_B64) expected="$SIGNATURE_SNAPSHOT" ;;
+              SECURITY_DISPOSITION_LIFECYCLE_SHA256) expected="$LEDGER_SHA" ;;
+            esac
+            current="$(GH_TOKEN="$STATE_READ_TOKEN" gh api \
+              "repos/$GITHUB_REPOSITORY/actions/variables/$name" --jq '.value')"
+            if [ -z "$expected" ] || [ "$current" != "$expected" ]; then
+              echo "::error::Latest owner disposition state unavailable or changed"
+              exit 1
+            fi
+          done
+          python -m pip install cryptography==50.0.2
+          python -m scripts.r4_release_ready \
+            --source-sha "$SOURCE_SHA" --r3-run-id "$PUBLISHER_RUN" \
+            --scan-run-id "$SCAN_RUN" --review-run-id "$REVIEW_RUN" \
+            --scan-actor "$SCAN_ACTOR" \
+            --r4-run-id "$GITHUB_RUN_ID" --acceptance-run-id "$ACCEPTANCE_RUN" \
+            --approval-issue "$SOURCE_ISSUE" \
+            --security-dir security --scan-dir scan-inputs --review-dir review-evidence \
+            --trust-path governance/disposition-trust.json \
+            --lifecycle-path governance/disposition-lifecycle.json \
+            --lifecycle-signature-path governance/disposition-lifecycle.sig \
+            --candidates-dir candidates --provenance-dir provenance \
+            --integration-path integration/no-rebuild.json \
+            --acceptance-dir acceptance --issue-path governance/source-issue.json \
+            --comments-path governance/comments.json --alerts-dir governance/alerts \
+            --compose-path deploy/compose.yaml \
+            --policy-path source-policy/vulnerability-exceptions.json \
+            --output release-bundle
+          test -s release-bundle/release-ready.json
+      - name: Cryptographically attest exact R4 release-ready root manifest
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: release-bundle/release-ready.json
+      - name: Upload signed canonical release-ready artifact for R5
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: foxden-r4-release-ready-v1.0.0
+          path: release-bundle/
+          if-no-files-found: error
+          retention-days: 30
+      - name: Record R4 identity report (not publication approval)
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          echo "Verified published digest identity and no-build synthetic integration for $SOURCE_SHA" >> "$GITHUB_STEP_SUMMARY"
+          echo "This run neither tags a 1.0.0 release nor approves NAS production cutover." >> "$GITHUB_STEP_SUMMARY"
